@@ -92,6 +92,21 @@ impl BitData {
     pub fn total_bits(&self) -> usize {
         self.data.len()
     }
+
+    /// get number of rows 
+    pub fn get_num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    /// get number of features
+    pub fn get_num_features(&self) -> usize {
+        self.num_features
+    }
+
+    /// get bits per chunk
+    pub fn get_chunk_size(&self) -> usize {
+        self.chunk_size
+    }
 }
 
 impl Display for BitData {
@@ -105,6 +120,9 @@ impl Display for BitData {
         write!(f, "Bit  : ")?;
         for bit_pos in 0..self.chunk_size {
             write!(f, "{} ", bit_pos)?;
+            if bit_pos % self.bits_per_feature == self.bits_per_feature - 1 && bit_pos + 1 != self.chunk_size {
+                write!(f, "| ")?;
+            }
         }
         for row in 0..self.num_rows {
             writeln!(f)?;

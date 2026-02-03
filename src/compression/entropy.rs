@@ -1,6 +1,6 @@
 use crate::preprocessor::BitData;
 
-pub fn calculate_entropy(bit_data: &BitData) -> Vec<f64> {
+pub fn calculate_entropy(bit_data: &BitData) -> Vec<(usize, f64)> {
     let mut entropies = Vec::with_capacity(bit_data.chunk_size);
     for bit in 0..bit_data.chunk_size {
         let mut count_ones = 0;
@@ -11,10 +11,10 @@ pub fn calculate_entropy(bit_data: &BitData) -> Vec<f64> {
         }
         let p = count_ones as f64 / bit_data.num_rows as f64;
         if p == 0.0 || p == 1.0 {
-            entropies.push(0.0);
+            entropies.push((bit, 0.0));
             continue;
         }
-        entropies.push((- p * p.log2()) - (1.0 - p) * (1.0 - p).log2());
+        entropies.push((bit, (- p * p.log2()) - (1.0 - p) * (1.0 - p).log2()));
     }
     entropies
 }
