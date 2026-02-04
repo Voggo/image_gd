@@ -23,12 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nEntropy Analysis:");
     println!("  Total bits: {}", entropies.len());
     println!("  Entropies by bit position:");
-    for (i, &entropy) in entropies.iter().enumerate() {
+    for (i, entropy) in entropies.iter() {
         println!("    Bit {}: {:.6}", i, entropy);
     }
     
     // Calculate average entropy
-    let avg_entropy = entropies.iter().sum::<f64>() / entropies.len() as f64;
+    let avg_entropy = entropies.iter().map(|(_, entropy)| entropy).sum::<f64>() / entropies.len() as f64;
     println!("\n  Average entropy: {:.6}", avg_entropy);
     
     // Calculate entropy per feature
@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for feature in 0..bit_data.num_features {
         let start = feature * bits_per_feature;
         let end = start + bits_per_feature;
-        let feature_entropy: f64 = entropies[start..end].iter().sum();
+        let feature_entropy: f64 = entropies[start..end].iter().map(|(_, entropy)| entropy).sum();
         let feature_avg_entropy = feature_entropy / bits_per_feature as f64;
         println!("    Feature {}: avg = {:.6}, total = {:.6}", feature, feature_avg_entropy, feature_entropy);
     }
