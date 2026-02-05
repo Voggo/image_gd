@@ -1,5 +1,3 @@
-use core::num;
-
 use crate::preprocessor::BitData;
 use bitvec::prelude::*;
 
@@ -7,6 +5,7 @@ use bitvec::prelude::*;
 pub struct BaseBitGroups {
     groups: Vec<Vec<usize>>,
     base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
 }
@@ -16,11 +15,13 @@ impl BaseBitGroups {
         let groups: Vec<Vec<usize>> = vec![(0..bit_data.num_rows).collect()];
 
         let mut base_bit_mask = bitvec![usize, Msb0; 0; bit_data.chunk_size];
+        let mut base_bit_positions = Vec::new();
         let mut num_bits_per_base = 0;
         // Toggle 0 entropy base bits as the first step.
         if let Some(bits) = base_bits {
             for &bit in bits.iter() {
                 base_bit_mask.set(bit, true);
+                base_bit_positions.push(bit);
                 num_bits_per_base += 1;
             }
         }
@@ -28,6 +29,7 @@ impl BaseBitGroups {
         BaseBitGroups {
             groups,
             base_bit_mask,
+            base_bit_positions: base_bit_positions,
             num_bases: num_bits_per_base, // Initially, because they are constant bit positions
             num_bits_per_base,
         }
@@ -36,6 +38,7 @@ impl BaseBitGroups {
     pub fn add_bit_position(&mut self, bit_position: usize, bit_data: &BitData) -> usize {
         self.base_bit_mask.set(bit_position, true);
         self.num_bits_per_base += 1;
+        self.base_bit_positions.push(bit_position);
 
         for group_idx in 0..self.groups.len() {
             let mut group_zeros = Vec::new();
@@ -87,6 +90,10 @@ impl BaseBitGroups {
 
     pub fn get_base_bit_mask(&self) -> &BitVec<usize, Msb0> {
         &self.base_bit_mask
+    }
+
+    pub fn get_base_bit_positions(&self) -> &Vec<usize> {
+        &self.base_bit_positions
     }
 }
 
