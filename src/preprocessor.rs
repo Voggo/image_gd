@@ -40,8 +40,8 @@ impl BitData {
 
         dataset.rows().iter().for_each(|row| {
             let row_parsed: Vec<u8> = row.iter().map(|value_str| {
-                // Parse the value as u64
-                value_str.parse().unwrap_or(0)
+                // Trim whitespace before parsing, since CSV fields may be space-padded
+                value_str.trim().parse().unwrap_or(0)
             }).collect();
             let row_bits: BitVec<u8, Msb0> = BitVec::from_vec(row_parsed);
             data.extend(row_bits);

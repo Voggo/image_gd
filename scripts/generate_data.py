@@ -102,6 +102,114 @@ def generate_zipf_dist(num_rows: int, num_features: int, bits_per_feature: List[
     return data
 
 
+def generate_sparse_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
+    """Generate sparse data with 80% zeros and 20% small values (high compression potential)."""
+    data = []
+    for _ in range(num_rows):
+        features = []
+        for bits in bits_per_feature:
+            max_val = (1 << bits) - 1
+            # 80% chance of 0, 20% chance of small value
+            if random.random() < 0.8:
+                val = 0
+            else:
+                # When non-zero, use only low bits (0-15 for 8-bit)
+                val = random.randint(1, min(15, max_val))
+            features.append(val)
+        data.append(features)
+    return data
+
+
+def generate_skewed_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
+    """Generate heavily skewed data concentrated in lower values."""
+    data = []
+    for _ in range(num_rows):
+        features = []
+        for bits in bits_per_feature:
+            max_val = (1 << bits) - 1
+            # Use exponential with bias towards 0
+            val = int(random.expovariate(2.0 / max_val))
+            val = min(val, max_val)
+            features.append(val)
+        data.append(features)
+    return data
+
+
+def generate_binary_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
+    """Generate binary-like data: mostly 0 or max_val."""
+    data = []
+    for _ in range(num_rows):
+        features = []
+        for bits in bits_per_feature:
+            max_val = (1 << bits) - 1
+            # 70% zeros, 30% max value
+            val = max_val if random.random() < 0.3 else 0
+            features.append(val)
+        data.append(features)
+    return data
+
+
+def generate_low_entropy_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
+    """Generate data using only a few distinct patterns for minimal entropy."""
+    data = []
+    # Define a small set of allowed values (e.g., only 4-5 patterns per feature)
+    patterns = {}
+    for bits in bits_per_feature:
+        max_val = (1 << bits) - 1
+        # Use only 4 evenly spaced patterns
+        patterns[bits] = [0, max_val // 3, 2 * max_val // 3, max_val]
+    
+    for _ in range(num_rows):
+        features = []
+        for bits in bits_per_feature:
+            val = random.choice(patterns[bits])
+            features.append(val)
+        data.append(features)
+    return data
+
+
+def generate_gradient_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
+    """Generate data with repeating gradient patterns."""
+    data = []
+    pattern_length = 20  # Repeat every 20 rows
+    
+    for row in range(num_rows):
+        features = []
+        pattern_pos = row % pattern_length
+        
+        for bits in bits_per_feature:
+            max_val = (1 << bits) - 1
+            # Create a gradient value that repeats
+            val = int((pattern_pos / pattern_length) * max_val)
+            # Add small noise
+            val = max(0, min(val + random.randint(-2, 2), max_val))
+            features.append(val)
+        data.append(features)
+    return data
+
+
+def generate_repeated_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
+    """Generate data with many repeated values and common patterns."""
+    data = []
+    # Create a small set of "templates" that repeat often
+    template_size = min(10, num_rows // 100)
+    templates = []
+    for _ in range(template_size):
+        template = [random.randint(0, (1 << bits) - 1) for bits in bits_per_feature]
+        templates.append(template)
+    
+    for i in range(num_rows):
+        # 70% of time, repeat one of the templates; 30% of time, create new data
+        if random.random() < 0.7 or len(templates) == 0:
+            features = random.choice(templates).copy() if templates else [random.randint(0, (1 << bits) - 1) for bits in bits_per_feature]
+            # Add minor variations to repeated templates
+            features = [max(0, min(f + random.randint(-1, 1), (1 << bits) - 1)) for f, bits in zip(features, bits_per_feature)]
+        else:
+            features = [random.randint(0, (1 << bits) - 1) for bits in bits_per_feature]
+        data.append(features)
+    return data
+
+
 def generate_clustered_dist(num_rows: int, num_features: int, bits_per_feature: List[int]) -> list:
     """Generate clustered data around random centers."""
     data = []
@@ -129,6 +237,12 @@ DISTRIBUTIONS = {
     "beta": generate_beta_dist,
     "zipf": generate_zipf_dist,
     "clustered": generate_clustered_dist,
+    "sparse": generate_sparse_dist,
+    "skewed": generate_skewed_dist,
+    "binary": generate_binary_dist,
+    "low_entropy": generate_low_entropy_dist,
+    "gradient": generate_gradient_dist,
+    "repeated": generate_repeated_dist,
 }
 
 

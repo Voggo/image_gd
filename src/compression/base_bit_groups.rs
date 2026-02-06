@@ -11,21 +11,11 @@ pub struct BaseBitGroups {
 }
 
 impl BaseBitGroups {
-    pub fn new(bit_data: &BitData, base_bits: Option<Vec<usize>>) -> Self {
+    pub fn new(bit_data: &BitData) -> Self {
         let groups: Vec<Vec<usize>> = vec![(0..bit_data.num_rows).collect()];
-
-        let mut base_bit_mask = bitvec![usize, Msb0; 0; bit_data.chunk_size];
-        let mut base_bit_positions = Vec::new();
-        let mut num_bits_per_base = 0;
-        // Toggle 0 entropy base bits as the first step.
-        if let Some(bits) = base_bits {
-            for &bit in bits.iter() {
-                base_bit_mask.set(bit, true);
-                base_bit_positions.push(bit);
-                num_bits_per_base += 1;
-            }
-        }
-
+        let base_bit_mask = bitvec![usize, Msb0; 0; bit_data.chunk_size];
+        let base_bit_positions = Vec::new();
+        let num_bits_per_base = 0;
         BaseBitGroups {
             groups,
             base_bit_mask,
@@ -53,7 +43,7 @@ impl BaseBitGroups {
             if group_zeros.is_empty() && !group_ones.is_empty() {
                 self.groups[group_idx] = group_ones;
             } else if group_ones.is_empty() && !group_zeros.is_empty() {
-                self.groups.push(group_zeros);
+                self.groups[group_idx] = group_zeros;
             } else if !group_zeros.is_empty() && !group_ones.is_empty() {
                 self.groups[group_idx] = group_zeros;
                 self.groups.push(group_ones);
@@ -132,7 +122,7 @@ mod tests {
             chunk_size,
         };
         println!("BitData: {}", bit_data);
-        let mut base_bit_groups = BaseBitGroups::new(&bit_data, None);
+        let mut base_bit_groups = BaseBitGroups::new(&bit_data);
         let num_bases = base_bit_groups.add_bit_position(4, &bit_data);
         assert_eq!(num_bases, 2);
         print_bases(&bit_data, &base_bit_groups);
@@ -164,8 +154,7 @@ mod tests {
             chunk_size,
         };
         println!("BitData: {}", bit_data);
-        let initial_bits = vec![0, 1]; // Use first two bits as initial bases
-        let mut base_bit_groups = BaseBitGroups::new(&bit_data, Some(initial_bits));
+        let mut base_bit_groups = BaseBitGroups::new(&bit_data);
         let num_bases = base_bit_groups.add_bit_position(4, &bit_data);
         assert_eq!(num_bases, 2);
         print_bases(&bit_data, &base_bit_groups);
