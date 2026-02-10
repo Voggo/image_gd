@@ -1,22 +1,20 @@
 use crate::preprocessor::BitData;
 
 pub fn calculate_entropy(bit_data: &BitData) -> Vec<(usize, f64)> {
-    let mut entropies = Vec::with_capacity(bit_data.chunk_size);
-    for bit in 0..bit_data.chunk_size {
-        let mut count_ones = 0;
-        for row in 0..bit_data.num_rows {
-            if bit_data.get_bit(row, bit) {
-                count_ones += 1;
-            }
-        }
-        let p = count_ones as f64 / bit_data.num_rows as f64;
-        if p == 0.0 || p == 1.0 {
-            entropies.push((bit, 0.0));
-            continue;
-        }
-        entropies.push((bit, (- p * p.log2()) - (1.0 - p) * (1.0 - p).log2()));
-    }
-    entropies
+    (0..bit_data.chunk_size)
+        .map(|bit| {
+            let count_ones = (0..bit_data.num_rows)
+                .filter(|&row| bit_data.get_bit(row, bit))
+                .count();
+            let p = count_ones as f64 / bit_data.num_rows as f64;
+            let entropy = if p == 0.0 || p == 1.0 {
+                0.0
+            } else {
+                -p * p.log2() - (1.0 - p) * (1.0 - p).log2()
+            };
+            (bit, entropy)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -39,8 +37,8 @@ mod tests {
         ];
         let bit_data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature: bits_per_feature,
-            num_features: num_features,
+            bits_per_feature,
+            num_features,
             num_rows,
             chunk_size,
         };
@@ -68,8 +66,8 @@ mod tests {
         ];
         let bit_data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature: bits_per_feature,
-            num_features: num_features,
+            bits_per_feature,
+            num_features,
             num_rows,
             chunk_size,
         };

@@ -5,7 +5,7 @@ use csv::ReaderBuilder;
 
 /// A simple dataset where each row is a vector of string representations
 /// Each feature in a row gets its own string
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Dataset {
     /// Row-oriented storage: each row is a Vec<String> where each string represents a feature
     rows: Vec<Vec<String>>,
@@ -71,8 +71,8 @@ impl Dataset {
     }
 
     /// Get a reference to a specific row
-    pub fn row(&self, idx: usize) -> Option<&Vec<String>> {
-        self.rows.get(idx)
+    pub fn row(&self, idx: usize) -> Option<&[String]> {
+        self.rows.get(idx).map(|r| r.as_slice())
     }
 
     /// Get a reference to all rows
@@ -86,14 +86,8 @@ impl Dataset {
     }
 
     /// Get headers
-    pub fn headers(&self) -> Option<&Vec<String>> {
-        self.headers.as_ref()
-    }
-}
-
-impl Default for Dataset {
-    fn default() -> Self {
-        Self::new()
+    pub fn headers(&self) -> Option<&[String]> {
+        self.headers.as_deref()
     }
 }
 
@@ -152,7 +146,7 @@ mod tests {
         assert_eq!(dataset.headers().unwrap().len(), 1);
 
         assert_eq!(dataset.headers().unwrap()[0], "feature1");
-        assert_eq!(dataset.row(0), Some(&vec!["10".to_string()]));
+        assert_eq!(dataset.row(0), Some(["10".to_string()].as_slice()));
     }
 
     #[test]

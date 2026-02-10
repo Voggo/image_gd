@@ -19,7 +19,7 @@ impl BaseBitGroups {
         BaseBitGroups {
             groups,
             base_bit_mask,
-            base_bit_positions: base_bit_positions,
+            base_bit_positions,
             num_bases: num_bits_per_base, // Initially, because they are constant bit positions
             num_bits_per_base,
         }
@@ -66,7 +66,7 @@ impl BaseBitGroups {
         bases
     }
 
-    pub fn get_groups(&self) -> &Vec<Vec<usize>> {
+    pub fn get_groups(&self) -> &[Vec<usize>] {
         &self.groups
     }
 
@@ -78,11 +78,11 @@ impl BaseBitGroups {
         self.num_bits_per_base
     }
 
-    pub fn get_base_bit_mask(&self) -> &BitVec<usize, Msb0> {
+    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
         &self.base_bit_mask
     }
 
-    pub fn get_base_bit_positions(&self) -> &Vec<usize> {
+    pub fn get_base_bit_positions(&self) -> &[usize] {
         &self.base_bit_positions
     }
 }
@@ -94,7 +94,7 @@ mod tests {
 
     fn print_bases(bit_data: &BitData, base_bit_groups: &BaseBitGroups) {
         println!("Bases after adding bit:");
-        for (i, (base, count)) in base_bit_groups.get_bases(&bit_data).iter().enumerate() {
+        for (i, (base, count)) in base_bit_groups.get_bases(bit_data).iter().enumerate() {
             println!("Base {}: {:?}, Count: {}", i, base, count);
         }
     }
@@ -116,8 +116,8 @@ mod tests {
         ];
         let bit_data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature: bits_per_feature,
-            num_features: num_features,
+            bits_per_feature,
+            num_features,
             num_rows,
             chunk_size,
         };
@@ -148,8 +148,8 @@ mod tests {
         ];
         let bit_data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature: bits_per_feature,
-            num_features: num_features,
+            bits_per_feature,
+            num_features,
             num_rows,
             chunk_size,
         };

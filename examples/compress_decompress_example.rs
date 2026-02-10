@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn write_bitdata_to_csv(
     bit_data: &BitData,
     path: &str,
-    headers: Option<&Vec<String>>,
+    headers: Option<&[String]>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::create(path)?;
     

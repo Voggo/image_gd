@@ -96,7 +96,7 @@ impl DeviationData {
 pub fn compress(bit_data: &mut BitData) -> CompressedData {
     // Store the original number of rows BEFORE adding condensed samples
     let original_num_rows = bit_data.num_rows;
-    let original_chunk_size = bit_data.get_chunk_size();
+    let original_chunk_size = bit_data.chunk_size;
     
     let mut base_bit_groups = BaseBitGroups::new(bit_data);
     let entropy = entropy::calculate_entropy(bit_data);
@@ -136,7 +136,7 @@ pub fn compress(bit_data: &mut BitData) -> CompressedData {
         metadata: CompressionMetadata {
             num_features: bit_data.num_features,
             original_size: original_num_rows * original_chunk_size,
-            chunk_size: bit_data.get_chunk_size(),
+            chunk_size: bit_data.chunk_size,
         },
     }
 }
@@ -162,12 +162,12 @@ fn optimize_base_bit_groups(
         entropy.remove(0);
     }
 
-    let mut best_base_bit_groups = (*base_bit_groups).clone();
+    let mut best_base_bit_groups = base_bit_groups.clone();
     let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
-    let mut trial_base_bit_groups = (*base_bit_groups).clone();
-    for (bit_position, _) in entropy.iter() {
-        trial_base_bit_groups.add_bit_position(*bit_position, &bit_data);
-        let trial_compressed_size = calculate_compressed_size(&bit_data, &trial_base_bit_groups);
+    let mut trial_base_bit_groups = base_bit_groups.clone();
+    for &(bit_position, _) in entropy.iter() {
+        trial_base_bit_groups.add_bit_position(bit_position, bit_data);
+        let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
         // debug print the trial compressed size vs best compressed size
         println!(
             "Trial bit position: {}, Trial compressed size: {}, Best compressed size: {}",
@@ -241,13 +241,13 @@ fn get_condensed_sample(
     let entropy_by_feature =
         organize_entropy_by_feature(entropy, bit_data.bits_per_feature, bit_data.num_features);
 
-    for (bit_position, _) in entropy_by_feature.iter() {
+    for &(bit_position, _) in entropy_by_feature.iter() {
         if condensed_bit_groups.get_num_bases() >= m_max {
             break;
         }
-        condensed_bit_groups.add_bit_position(*bit_position, &bit_data);
+        condensed_bit_groups.add_bit_position(bit_position, bit_data);
     }
-    let bases = condensed_bit_groups.get_bases(&bit_data);
+    let bases = condensed_bit_groups.get_bases(bit_data);
     let base_mask: &BitSlice<usize, Msb0> = condensed_bit_groups.get_base_bit_mask();
     for (base_group, base) in condensed_bit_groups.get_groups().iter().zip(bases.iter()) {
         let mut deviation_sum: usize = 0;
@@ -268,7 +268,7 @@ fn get_condensed_sample(
         );
         // Create a BitVec from condensed_sample and ensure it has the same length as a chunk
         let mut condensed_bitvec = BitVec::<usize, Msb0>::from_element(condensed_sample);
-        condensed_bitvec.resize(bit_data.get_chunk_size(), false); // pad with zeros if needed
+        condensed_bitvec.resize(bit_data.chunk_size, false); // pad with zeros if needed
         samples.push(condensed_bitvec);
         weights.push(base_group.len());
     }
@@ -288,7 +288,7 @@ fn encode_data(bit_data: &BitData, base_bit_groups: &BaseBitGroups) -> Deviation
         if bits == 0 { 1 } else { bits }
     };
 
-    let chunk_size = bit_data.get_chunk_size();
+    let chunk_size = bit_data.chunk_size;
     let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
 
     // Calculate deviation bits (all bits that are NOT base bits)
@@ -299,7 +299,7 @@ fn encode_data(bit_data: &BitData, base_bit_groups: &BaseBitGroups) -> Deviation
     };
 
     // Build a mapping from row index to group id so we can encode in original row order
-    let num_rows = bit_data.get_num_rows();
+    let num_rows = bit_data.num_rows;
     let mut row_to_group_id = vec![0usize; num_rows];
     for (id, group) in base_bit_groups.get_groups().iter().enumerate() {
         for &row in group.iter() {
@@ -328,15 +328,16 @@ fn encode_data(bit_data: &BitData, base_bit_groups: &BaseBitGroups) -> Deviation
 
     DeviationData::new(
         encoded_bit_stream,
-        bit_data.get_num_rows(),
+        bit_data.num_rows,
         num_deviation_bits,
         l_id,
     )
 }
 
 /// Calculate the original uncompressed size in bits
+#[cfg(test)]
 fn calculate_original_size(bit_data: &BitData) -> usize {
-    bit_data.get_num_rows() * bit_data.get_chunk_size()
+    bit_data.num_rows * bit_data.chunk_size
 }
 
 /// Calculate the compressed size in bits
@@ -345,12 +346,12 @@ fn calculate_original_size(bit_data: &BitData) -> usize {
 fn calculate_compressed_size(bit_data: &BitData, base_bit_groups: &BaseBitGroups) -> usize {
     let n_b = base_bit_groups.get_num_bases(); // number of bases 
     let l_b = base_bit_groups.get_num_bits_per_base(); // bits per base
-    let n = bit_data.get_num_rows(); // number of rows/samples
+    let n = bit_data.num_rows; // number of rows/samples
     let m = 0usize; // number of bases in condensed sample
-    let chunk_size = bit_data.get_chunk_size();
+    let chunk_size = bit_data.chunk_size;
 
     // Ensure l_b doesn't exceed chunk_size to prevent underflow
-    let l_b = std::cmp::min(l_b, chunk_size);
+    let l_b = l_b.min(chunk_size);
     let l_d = chunk_size - l_b; // bits per deviation
     let l_id = (n_b as f64).log2().ceil() as usize; // bits per id
     let s_params = 0usize; // size of additional parameters in bits (not implemented yet)
@@ -558,7 +559,7 @@ mod tests {
         // Check that we get a CompressedData struct with valid fields
         assert_eq!(compressed.metadata.num_features, 16);
         assert_eq!(compressed.metadata.original_size, 100 * 32);
-        assert!(compressed.base_table.len() > 0);
+        assert!(!compressed.base_table.is_empty());
         assert!(compressed.encoded_data.get_encoded_size() > 0);
     }
 
@@ -646,7 +647,7 @@ mod tests {
         let compressed = compress(&mut bit_data);
 
         // Base table should contain entries for each base group
-        assert!(compressed.base_table.len() > 0);
+        assert!(!compressed.base_table.is_empty());
 
         // Each base table entry should have a count > 0
         for (_base, count) in &compressed.base_table {
@@ -794,7 +795,7 @@ mod tests {
         let compressed = compress(&mut bit_data);
 
         // Verify CompressedData has all required fields
-        assert!(compressed.base_table.len() > 0);
+        assert!(!compressed.base_table.is_empty());
         assert!(compressed.encoded_data.get_num_samples() > 0);
         assert_eq!(compressed.metadata.num_features, 16);
         assert!(compressed.metadata.original_size > 0);
@@ -972,8 +973,8 @@ mod tests {
         ];
         let mut bit_data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature: bits_per_feature,
-            num_features: num_features,
+            bits_per_feature,
+            num_features,
             num_rows,
             chunk_size,
         };

@@ -38,14 +38,14 @@ impl BitData {
 
         let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
 
-        dataset.rows().iter().for_each(|row| {
+        for row in dataset.rows() {
             let row_parsed: Vec<u8> = row.iter().map(|value_str| {
                 // Trim whitespace before parsing, since CSV fields may be space-padded
                 value_str.trim().parse().unwrap_or(0)
             }).collect();
             let row_bits: BitVec<u8, Msb0> = BitVec::from_vec(row_parsed);
             data.extend(row_bits);
-        });
+        }
 
         BitData {
             data,
@@ -97,21 +97,6 @@ impl BitData {
     /// Get the total number of bits stored
     pub fn total_bits(&self) -> usize {
         self.data.len()
-    }
-
-    /// get number of rows 
-    pub fn get_num_rows(&self) -> usize {
-        self.num_rows
-    }
-
-    /// get number of features
-    pub fn get_num_features(&self) -> usize {
-        self.num_features
-    }
-
-    /// get bits per chunk
-    pub fn get_chunk_size(&self) -> usize {
-        self.chunk_size
     }
 }
 
