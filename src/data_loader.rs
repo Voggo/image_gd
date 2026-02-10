@@ -1,7 +1,8 @@
-use std::error::Error;
 use std::fs::File;
 use std::path::Path;
 use csv::ReaderBuilder;
+
+use crate::error::EntroGdError;
 
 /// A simple dataset where each row is a vector of string representations
 /// Each feature in a row gets its own string
@@ -39,7 +40,7 @@ impl Dataset {
     }
 
     /// Load a dataset from a CSV file
-    pub fn load_csv<P: AsRef<Path>>(path: P, has_headers: bool) -> Result<Self, Box<dyn Error>> {
+    pub fn load_csv<P: AsRef<Path>>(path: P, has_headers: bool) -> Result<Self, EntroGdError> {
         let file = File::open(path)?;
         let mut reader = ReaderBuilder::new().has_headers(has_headers).from_reader(file);
 

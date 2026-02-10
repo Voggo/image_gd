@@ -1,12 +1,12 @@
-use crate::preprocessor::BitData;
+use crate::preprocessor::BitDataView;
 
-pub fn calculate_entropy(bit_data: &BitData) -> Vec<(usize, f64)> {
-    (0..bit_data.chunk_size)
+pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
+    (0..bit_data.chunk_size())
         .map(|bit| {
-            let count_ones = (0..bit_data.num_rows)
+            let count_ones = (0..bit_data.num_rows())
                 .filter(|&row| bit_data.get_bit(row, bit))
                 .count();
-            let p = count_ones as f64 / bit_data.num_rows as f64;
+            let p = count_ones as f64 / bit_data.num_rows() as f64;
             let entropy = if p == 0.0 || p == 1.0 {
                 0.0
             } else {

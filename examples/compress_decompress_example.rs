@@ -1,13 +1,14 @@
 use bitvec::field::BitField;
+use entro_gd::compression::compress::{compress, decompress_analytics, decompress_file};
 use entro_gd::data_loader::Dataset;
+use entro_gd::error::EntroGdError;
 use entro_gd::preprocessor::BitData;
-use entro_gd::compression::compress::{compress, decompress_file, decompress_analytics};
 use std::fs::File;
 use std::io::Write;
 use std::{env, u64};
 use std::path::Path;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), EntroGdError> {
     // Get input path from command line argument
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -37,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Convert dataset to BitData with 8 bits per feature
     let bits_per_feature = 8;
-    let mut bit_data = BitData::from_dataset(&dataset, bits_per_feature);
+    let bit_data = BitData::from_dataset(&dataset, bits_per_feature)?;
     
     println!("\nOriginal BitData:");
     println!("  Total bits: {}", bit_data.total_bits());
@@ -47,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Compress the data
     println!("\nCompressing data...");
-    let compressed = compress(&mut bit_data);
+    let compressed = compress(&bit_data);
     
     println!("Compression complete!");
     println!("  Original size: {} bits", compressed.metadata.original_size);
@@ -106,7 +107,7 @@ fn write_bitdata_to_csv(
     bit_data: &BitData,
     path: &str,
     headers: Option<&[String]>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), EntroGdError> {
     let mut file = File::create(path)?;
     
     // Write headers if available
