@@ -55,7 +55,13 @@ impl BitData {
             num_rows,
         }
     }
-    
+    /// Extend the BitData with additional bits from a BitSlice (used for adding condensed samples)
+    pub fn extend_from_bitslice(&mut self, bits: &BitSlice<usize, Msb0>) {
+        assert!(bits.len() == self.chunk_size, "Extended bits must match chunk size");
+        self.data.extend(bits);
+        self.num_rows += 1; // Treat the new bits as an additional row/chunk
+    }
+
     /// Get a slice of bits for a specific row/chunk
     pub fn get_chunk(&self, row: usize) -> &BitSlice<usize, Msb0> {
         let start = row * self.chunk_size;

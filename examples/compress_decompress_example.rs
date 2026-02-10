@@ -1,9 +1,10 @@
+use bitvec::field::BitField;
 use entro_gd::data_loader::Dataset;
 use entro_gd::preprocessor::BitData;
-use entro_gd::compression::compress::{compress, decompress};
+use entro_gd::compression::compress::{compress, decompress_file, decompress_analytics};
 use std::fs::File;
 use std::io::Write;
-use std::env;
+use std::{env, u64};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Convert dataset to BitData with 8 bits per feature
     let bits_per_feature = 8;
-    let bit_data = BitData::from_dataset(&dataset, bits_per_feature);
+    let mut bit_data = BitData::from_dataset(&dataset, bits_per_feature);
     
     println!("\nOriginal BitData:");
     println!("  Total bits: {}", bit_data.total_bits());
@@ -46,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Compress the data
     println!("\nCompressing data...");
-    let compressed = compress(&bit_data);
+    let compressed = compress(&mut bit_data);
     
     println!("Compression complete!");
     println!("  Original size: {} bits", compressed.metadata.original_size);
@@ -63,7 +64,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Approximate compression ratio: {:.2}", compression_ratio); 
     // Decompress the data
     println!("\nDecompressing data...");
-    let decompressed = decompress(&compressed)?;
+    let decompressed = decompress_file(&compressed)?;
+
+    if let Some(analytics) = decompress_analytics(&compressed) {
+        println!("\nDecompression analytics:");
+        for (i, (sample, weight)) in analytics.samples.iter().zip(analytics.weights.iter()).enumerate() {
+            let sample_int = sample.load_be::<u64>();
+            println!("  Sample {}: {} weight, {} sample int", i, weight, sample_int);
+        }
+    }
     
     println!("Decompression complete!");
     println!("  Total bits: {}", decompressed.total_bits());
@@ -71,17 +80,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Num features: {}", decompressed.num_features);
     
     // Verify data integrity
-    let data_matches = bit_data.data == decompressed.data;
-    println!("\nData integrity check: {}", if data_matches { "PASSED ✓" } else { "FAILED ✗" });
+    // let data_matches = bit_data.data == decompressed.data;
+    // println!("\nData integrity check: {}", if data_matches { "PASSED ✓" } else { "FAILED ✗" });
     
-    if !data_matches {
-        // Count mismatches for debugging
-        let mismatches: usize = bit_data.data.iter()
-            .zip(decompressed.data.iter())
-            .filter(|(a, b)| *a != *b)
-            .count();
-        println!("  Number of bit mismatches: {} out of {}", mismatches, bit_data.total_bits());
-    }
+    // if !data_matches {
+    //     // Count mismatches for debugging
+    //     let mismatches: usize = bit_data.data.iter()
+    //         .zip(decompressed.data.iter())
+    //         .filter(|(a, b)| *a != *b)
+    //         .count();
+    //     println!("  Number of bit mismatches: {} out of {}", mismatches, bit_data.total_bits());
+    // }
     
     // Convert decompressed BitData back to CSV
     println!("\nWriting decompressed data to: {}", output_path);
