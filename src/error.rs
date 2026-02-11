@@ -11,6 +11,12 @@ pub enum EntroGdError {
         column: usize,
         source: std::num::ParseIntError,
     },
+    ParseFloatValue {
+        value: String,
+        row: usize,
+        column: usize,
+        source: std::num::ParseFloatError,
+    },
     BitSliceLengthMismatch {
         expected: usize,
         actual: usize,
@@ -23,6 +29,9 @@ pub enum EntroGdError {
         table_len: usize,
     },
     InvalidMetadata {
+        message: String,
+    },
+    InvalidFeatureSpec {
         message: String,
     },
 }
@@ -40,6 +49,16 @@ impl Display for EntroGdError {
             } => write!(
                 f,
                 "Failed to parse value '{}' at row {}, column {}: {}",
+                value, row, column, source
+            ),
+            EntroGdError::ParseFloatValue {
+                value,
+                row,
+                column,
+                source,
+            } => write!(
+                f,
+                "Failed to parse float value '{}' at row {}, column {}: {}",
                 value, row, column, source
             ),
             EntroGdError::BitSliceLengthMismatch { expected, actual } => write!(
@@ -60,6 +79,9 @@ impl Display for EntroGdError {
             EntroGdError::InvalidMetadata { message } => {
                 write!(f, "Invalid compression metadata: {}", message)
             }
+            EntroGdError::InvalidFeatureSpec { message } => {
+                write!(f, "Invalid feature specification: {}", message)
+            }
         }
     }
 }
@@ -70,6 +92,7 @@ impl Error for EntroGdError {
             EntroGdError::Io(err) => Some(err),
             EntroGdError::Csv(err) => Some(err),
             EntroGdError::ParseValue { source, .. } => Some(source),
+            EntroGdError::ParseFloatValue { source, .. } => Some(source),
             _ => None,
         }
     }

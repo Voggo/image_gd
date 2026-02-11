@@ -104,7 +104,7 @@ impl<'a> BaseBitGroups<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preprocessor::BitData;
+    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec};
 
     fn print_bases(base_bit_groups: &BaseBitGroups) {
         println!("Bases after adding bit:");
@@ -128,13 +128,20 @@ mod tests {
             false, true, false, false, true, true, false, true, // Row 4
             true, true, false, true, true, true, false, false, // Row 5
         ];
-        let bit_data = BitData {
+        let data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature,
-            num_features,
-            num_rows,
             chunk_size,
+            num_rows,
         };
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits: bits_per_feature,
+            };
+            num_features
+        ];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
         println!("BitData: {}", bit_data);
         let mut base_bit_groups = BaseBitGroups::new(&bit_data);
         let num_bases = base_bit_groups.add_bit_position(4);
@@ -160,13 +167,20 @@ mod tests {
             false, true, false, false, true, true, false, true, // Row 4
             true, true, false, true, true, true, false, false, // Row 5
         ];
-        let bit_data = BitData {
+        let data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature,
-            num_features,
-            num_rows,
             chunk_size,
+            num_rows,
         };
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits: bits_per_feature,
+            };
+            num_features
+        ];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
         println!("BitData: {}", bit_data);
         let mut base_bit_groups = BaseBitGroups::new(&bit_data);
         let num_bases = base_bit_groups.add_bit_position(4);

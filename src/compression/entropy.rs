@@ -20,7 +20,7 @@ pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preprocessor::BitData;
+    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec};
 
     #[test]
     fn test_entropy_calculation_1() {
@@ -35,13 +35,20 @@ mod tests {
             false, false, true, // Row 2
             false, true, false, // Row 3
         ];
-        let bit_data = BitData {
+        let data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature,
-            num_features,
-            num_rows,
             chunk_size,
+            num_rows,
         };
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits: bits_per_feature,
+            };
+            num_features
+        ];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
         println!("Entropies: {:?}", entropies);
@@ -64,13 +71,20 @@ mod tests {
             false, true, false, false, true, true, false, true, // Row 4
             true, true, false, true, true, true, false, false,  // Row 5
         ];
-        let bit_data = BitData {
+        let data = BitData {
             data: data.into_iter().collect(),
-            bits_per_feature,
-            num_features,
-            num_rows,
             chunk_size,
+            num_rows,
         };
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits: bits_per_feature,
+            };
+            num_features
+        ];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
         println!("Entropies: {:?}", entropies);

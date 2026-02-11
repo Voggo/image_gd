@@ -2,7 +2,7 @@ use bitvec::field::BitField;
 use entro_gd::compression::compress::{compress, decompress_analytics, decompress_file};
 use entro_gd::data_loader::Dataset;
 use entro_gd::error::EntroGdError;
-use entro_gd::preprocessor::BitData;
+use entro_gd::preprocessor::{BitDataSet, FeatureDataType};
 use std::fs::File;
 use std::io::Write;
 use std::{env, u64};
@@ -41,17 +41,17 @@ fn main() -> Result<(), EntroGdError> {
     let bit_data = BitData::from_dataset(&dataset, bits_per_feature)?;
     
     println!("\nOriginal BitData:");
-    println!("  Total bits: {}", bit_data.total_bits());
-    println!("  Chunk size: {}", bit_data.chunk_size);
-    println!("  Num rows: {}", bit_data.num_rows);
-    println!("  Num features: {}", bit_data.num_features);
+    println!("  Total bits: {}", bit_data.data.total_bits());
+    println!("  Chunk size: {}", bit_data.data.chunk_size);
+    println!("  Num rows: {}", bit_data.data.num_rows);
+    println!("  Num features: {}", bit_data.info.num_features());
     
     // Compress the data
     println!("\nCompressing data...");
     let compressed = compress(&bit_data);
     
     println!("Compression complete!");
-    println!("  Original size: {} bits", compressed.metadata.original_size);
+    println!("  Original size: {} bits", compressed.metadata.data_info.original_size_bits);
     println!("  Encoded stream size: {} bits", compressed.encoded_data.get_encoded_size());
     println!("  Base table entries: {}", compressed.base_table.len());
     println!("  Base bit positions: {:?}", compressed.base_bit_positions);
@@ -61,7 +61,7 @@ fn main() -> Result<(), EntroGdError> {
         .map(|(pattern, _)| pattern.len())
         .sum::<usize>();
     let total_compressed_size = compressed.encoded_data.get_encoded_size() + base_table_size;
-    let compression_ratio = total_compressed_size as f64 / compressed.metadata.original_size as f64;
+    let compression_ratio = total_compressed_size as f64 / compressed.metadata.data_info.original_size_bits as f64;
     println!("  Approximate compression ratio: {:.2}", compression_ratio); 
     // Decompress the data
     println!("\nDecompressing data...");
@@ -76,9 +76,9 @@ fn main() -> Result<(), EntroGdError> {
     }
     
     println!("Decompression complete!");
-    println!("  Total bits: {}", decompressed.total_bits());
-    println!("  Num rows: {}", decompressed.num_rows);
-    println!("  Num features: {}", decompressed.num_features);
+    println!("  Total bits: {}", decompressed.data.total_bits());
+    println!("  Num rows: {}", decompressed.data.num_rows);
+    println!("  Num features: {}", decompressed.info.num_features());
     
     // Verify data integrity
     // let data_matches = bit_data.data == decompressed.data;
@@ -104,7 +104,7 @@ fn main() -> Result<(), EntroGdError> {
 
 /// Convert BitData back to a CSV file
 fn write_bitdata_to_csv(
-    bit_data: &BitData,
+    bit_data: &BitDataSet,
     path: &str,
     headers: Option<&[String]>,
 ) -> Result<(), EntroGdError> {
@@ -116,19 +116,38 @@ fn write_bitdata_to_csv(
     }
     
     // Write each row
-    for row in 0..bit_data.num_rows {
-        let mut values: Vec<String> = Vec::with_capacity(bit_data.num_features);
-        for feature in 0..bit_data.num_features {
-            // Extract the bits for this feature and convert to u8
+    for row in 0..bit_data.data.num_rows {
+        let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
+        for feature in 0..bit_data.info.num_features() {
             let feature_bits = bit_data.get_feature(row, feature);
+            let spec = &bit_data.info.features[feature];
             let mut value: u64 = 0;
-            // Use bits_per_feature to reconstruct the value, assuming MSB first
             for (i, bit) in feature_bits.iter().enumerate() {
                 if *bit {
-                    value |= 1 << (bit_data.bits_per_feature - 1 - i);
+                    value |= 1 << (spec.bits - 1 - i);
                 }
             }
-            values.push(value.to_string());
+            let formatted = match spec.data_type {
+                FeatureDataType::UnsignedInt => value.to_string(),
+                FeatureDataType::SignedInt => {
+                    let signed = if spec.bits == 64 {
+                        value as i64
+                    } else {
+                        let shift = 64 - spec.bits;
+                        ((value << shift) as i64) >> shift
+                    };
+                    signed.to_string()
+                }
+                FeatureDataType::F32 => {
+                    let f = f32::from_bits(value as u32);
+                    f.to_string()
+                }
+                FeatureDataType::F64 => {
+                    let f = f64::from_bits(value);
+                    f.to_string()
+                }
+            };
+            values.push(formatted);
         }
         writeln!(file, "{}", values.join(","))?;
     }

@@ -1,6 +1,6 @@
 use entro_gd::data_loader::Dataset;
 use entro_gd::error::EntroGdError;
-use entro_gd::preprocessor::BitData;
+use entro_gd::preprocessor::BitDataSet;
 use entro_gd::compression::entropy::calculate_entropy;
 
 fn main() -> Result<(), EntroGdError> {
@@ -13,7 +13,7 @@ fn main() -> Result<(), EntroGdError> {
     
     // Convert dataset to BitData with 8 bits per feature
     let bits_per_feature = 8;
-    let bit_data = BitData::from_dataset(&dataset, bits_per_feature)?;
+    let bit_data = BitDataSet::from_dataset(&dataset, bits_per_feature)?;
     
     println!("\nBitData representation:");
     println!("{}", bit_data);
@@ -34,11 +34,11 @@ fn main() -> Result<(), EntroGdError> {
     
     // Calculate entropy per feature
     println!("\n  Entropy per feature:");
-    for feature in 0..bit_data.num_features {
-        let start = feature * bits_per_feature;
-        let end = start + bits_per_feature;
+    for feature in 0..bit_data.info.num_features() {
+        let start = bit_data.info.feature_offset(feature);
+        let end = start + bit_data.info.feature_bits(feature);
         let feature_entropy: f64 = entropies[start..end].iter().map(|(_, entropy)| entropy).sum();
-        let feature_avg_entropy = feature_entropy / bits_per_feature as f64;
+        let feature_avg_entropy = feature_entropy / bit_data.info.feature_bits(feature) as f64;
         println!("    Feature {}: avg = {:.6}, total = {:.6}", feature, feature_avg_entropy, feature_entropy);
     }
     
