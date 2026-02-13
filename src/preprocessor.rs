@@ -1,17 +1,10 @@
 use bitvec::prelude::*;
 use std::fmt::Display;
+use std::path::Path;
 
-use crate::data_loader::Dataset;
+pub use crate::data_loader::FeatureDataType;
+use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
 use crate::error::EntroGdError;
-
-/// Supported feature data types for parsing and bit packing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FeatureDataType {
-    SignedInt,
-    UnsignedInt,
-    F32,
-    F64,
-}
 
 /// Per-feature schema entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,16 +157,19 @@ pub struct BitDataSet {
 }
 
 impl BitDataSet {
-    /// Create BitDataSet from a Dataset using a uniform bits-per-feature schema.
-    pub fn from_dataset(dataset: &Dataset, bits_per_feature: usize) -> Result<Self, EntroGdError> {
+    /// Create BitDataSet from a Dataset using column data types to derive the schema.
+    pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
         let num_features = dataset.num_columns();
-        let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: bits_per_feature,
+        let mut features = Vec::with_capacity(num_features);
+        for feature_idx in 0..num_features {
+            let data_type = dataset.column_type(feature_idx);
+            let bits = match data_type {
+                FeatureDataType::F32 => 32,
+                FeatureDataType::F64 => 64,
+                FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => 64,
             };
-            num_features
-        ];
+            features.push(FeatureSpec { data_type, bits });
+        }
         Self::from_dataset_with_schema(dataset, features)
     }
 
@@ -192,34 +188,29 @@ impl BitDataSet {
                 ),
             });
         }
+
+        for (idx, spec) in features.iter().enumerate() {
+            let col_type = dataset.column_type(idx);
+            if col_type != spec.data_type {
+                return Err(EntroGdError::InvalidFeatureSpec {
+                    message: format!(
+                        "feature {} type {:?} does not match dataset column type {:?}",
+                        idx, spec.data_type, col_type
+                    ),
+                });
+            }
+        }
         let info = BitDataInfo::new(features, 0)?;
         let chunk_size = info.chunk_size();
         let num_rows = dataset.num_rows();
         let total_bits = chunk_size * num_rows;
 
         let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
-        for (row_idx, row) in dataset.rows().iter().enumerate() {
-            for (col_idx, value_str) in row.iter().enumerate() {
+        for row_idx in 0..num_rows {
+            for col_idx in 0..num_features {
                 let spec = &info.features[col_idx];
-                let bits = match parse_value_to_bits(value_str, spec) {
-                    Ok(bits) => bits,
-                    Err(ParseValueError::Int(source)) => {
-                        return Err(EntroGdError::ParseValue {
-                            value: value_str.to_string(),
-                            row: row_idx,
-                            column: col_idx,
-                            source,
-                        });
-                    }
-                    Err(ParseValueError::Float(source)) => {
-                        return Err(EntroGdError::ParseFloatValue {
-                            value: value_str.to_string(),
-                            row: row_idx,
-                            column: col_idx,
-                            source,
-                        });
-                    }
-                };
+                let value = dataset.value_at(row_idx, col_idx);
+                let bits = value_to_bits(value, spec);
                 push_bits(&mut data, bits, spec.bits);
             }
         }
@@ -232,6 +223,27 @@ impl BitDataSet {
         let info = info.with_original_size_bits(chunk_size * num_rows);
 
         Ok(BitDataSet { data, info })
+    }
+
+    /// Load data via a DataLoader and build BitDataSet using column data types.
+    pub fn from_loader<L: DataLoader, P: AsRef<Path>>(
+        loader: &L,
+        path: P,
+    ) -> Result<(Self, DatasetMetadata), EntroGdError> {
+        let loaded = loader.load(path)?;
+        let bit_data = Self::from_dataset(&loaded.dataset)?;
+        Ok((bit_data, loaded.metadata))
+    }
+
+    /// Load data via a DataLoader and build BitDataSet using a provided schema.
+    pub fn from_loader_with_schema<L: DataLoader, P: AsRef<Path>>(
+        loader: &L,
+        path: P,
+        features: Vec<FeatureSpec>,
+    ) -> Result<(Self, DatasetMetadata), EntroGdError> {
+        let loaded = loader.load(path)?;
+        let bit_data = Self::from_dataset_with_schema(&loaded.dataset, features)?;
+        Ok((bit_data, loaded.metadata))
     }
 
     /// Get a slice of bits for a specific feature within a row
@@ -322,32 +334,20 @@ impl Display for BitDataSet {
     }
 }
 
-enum ParseValueError {
-    Int(std::num::ParseIntError),
-    Float(std::num::ParseFloatError),
-}
-
-fn parse_value_to_bits(value: &str, spec: &FeatureSpec) -> Result<u64, ParseValueError> {
-    match spec.data_type {
-        FeatureDataType::UnsignedInt => value.trim().parse::<u64>().map_err(ParseValueError::Int),
-        FeatureDataType::SignedInt => {
-            let v = value.trim().parse::<i64>().map_err(ParseValueError::Int)?;
-            let bits = if spec.bits == 64 {
+fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
+    match (value, spec.data_type) {
+        (DataValue::Unsigned(v), FeatureDataType::UnsignedInt) => v,
+        (DataValue::Signed(v), FeatureDataType::SignedInt) => {
+            if spec.bits == 64 {
                 v as u64
             } else {
                 let mask = (1u128 << spec.bits) - 1;
                 (v as i128 as u128 & mask) as u64
-            };
-            Ok(bits)
+            }
         }
-        FeatureDataType::F32 => {
-            let v: f32 = value.trim().parse().map_err(ParseValueError::Float)?;
-            Ok(v.to_bits() as u64)
-        }
-        FeatureDataType::F64 => {
-            let v: f64 = value.trim().parse().map_err(ParseValueError::Float)?;
-            Ok(v.to_bits())
-        }
+        (DataValue::F32(v), FeatureDataType::F32) => v.to_bits() as u64,
+        (DataValue::F64(v), FeatureDataType::F64) => v.to_bits(),
+        _ => unreachable!("feature type mismatch when packing bits"),
     }
 }
 
@@ -370,14 +370,16 @@ fn push_bits(stream: &mut BitVec<usize, Msb0>, mut value: u64, bits: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem::size_of;
+    use crate::data_loader::{ColumnData, CsvDataLoader};
 
     #[test]
     fn print_bitdata_head() {
-        let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true).expect("Failed to load dataset");
-        let bits_per_feature = size_of::<u8>() * 8;
-
-        let bit_data = BitDataSet::from_dataset(&dataset, bits_per_feature)
+        let loader = CsvDataLoader::new(true);
+        let loaded = loader
+            .load("data/data-10000-8-int.csv")
+            .expect("Failed to load dataset");
+        let dataset = loaded.dataset;
+        let bit_data = BitDataSet::from_dataset(&dataset)
             .expect("Failed to create BitData from dataset");
 
         println!("\nFirst 5 rows in bit representation (MSB first):");
@@ -400,43 +402,54 @@ mod tests {
 
     #[test]
     fn test_bitdata_from_dataset() {
-        let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true).unwrap();
-        let bits_per_feature = 8;
-
-        let bit_data = BitDataSet::from_dataset(&dataset, bits_per_feature)
+        let loader = CsvDataLoader::new(true);
+        let dataset = loader
+            .load("data/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
+        let bit_data = BitDataSet::from_dataset(&dataset)
             .expect("Failed to create BitData from dataset");
 
         assert_eq!(bit_data.info.num_features(), 8);
-        assert_eq!(bit_data.info.feature_bits(0), 8);
-        assert_eq!(bit_data.data.chunk_size, 8 * 8); // 64 bits per row
+        assert_eq!(bit_data.info.feature_bits(0), 64);
+        assert_eq!(bit_data.data.chunk_size, 8 * 64);
         assert_eq!(bit_data.data.num_rows, 10000);
-        assert_eq!(bit_data.data.total_bits(), 10000 * 64);
+        assert_eq!(bit_data.data.total_bits(), 10000 * 512);
     }
 
     #[test]
     fn test_chunk_access() {
-        let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true).unwrap();
-        let bit_data = BitDataSet::from_dataset(&dataset, 8)
+        let loader = CsvDataLoader::new(true);
+        let dataset = loader
+            .load("data/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
+        let bit_data = BitDataSet::from_dataset(&dataset)
             .expect("Failed to create BitData from dataset");
 
         let chunk = bit_data.data.get_chunk(0);
-        assert_eq!(chunk.len(), 64); // 8 features * 8 bits
+        assert_eq!(chunk.len(), 512); // 8 features * 64 bits
 
         let feature = bit_data.get_feature(0, 0);
-        assert_eq!(feature.len(), 8);
+        assert_eq!(feature.len(), 64);
     }
 
     #[test]
     fn test_get_bit_individual_access() {
-        let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true).unwrap();
-        let bit_data = BitDataSet::from_dataset(&dataset, 8)
+        let loader = CsvDataLoader::new(true);
+        let dataset = loader
+            .load("data/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
+        let bit_data = BitDataSet::from_dataset(&dataset)
             .expect("Failed to create BitData from dataset");
 
         // Verify get_bit is consistent with get_feature
+        let feature_bits = bit_data.info.feature_bits(0);
         for row in 0..10 {
             for feat in 0..8 {
                 let feature_slice = bit_data.get_feature(row, feat);
-                for bit in 0..8 {
+                for bit in 0..feature_bits {
                     assert_eq!(
                         bit_data.get_bit_by_feature(row, feat, bit),
                         feature_slice[bit],
@@ -450,51 +463,62 @@ mod tests {
 
     #[test]
     fn test_raw_access() {
-        let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true).unwrap();
-        let bit_data = BitDataSet::from_dataset(&dataset, 8)
+        let loader = CsvDataLoader::new(true);
+        let dataset = loader
+            .load("data/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
+        let bit_data = BitDataSet::from_dataset(&dataset)
             .expect("Failed to create BitData from dataset");
 
         let raw = bit_data.data.raw();
         assert_eq!(raw.len(), bit_data.data.total_bits());
 
         // Verify raw access matches get_bit
+        let feature_bits = bit_data.info.feature_bits(0);
         for i in 0..100 {
-            let row = i / 64;
-            let within_chunk = i % 64;
-            let feat = within_chunk / 8;
-            let bit = within_chunk % 8;
+            let row = i / bit_data.data.chunk_size;
+            let within_chunk = i % bit_data.data.chunk_size;
+            let feat = within_chunk / feature_bits;
+            let bit = within_chunk % feature_bits;
             assert_eq!(raw[i], bit_data.get_bit_by_feature(row, feat, bit));
         }
     }
 
     #[test]
     fn test_single_bit_precision() {
-        let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true).unwrap();
-        let bit_data = BitDataSet::from_dataset(&dataset, 1)
+        let loader = CsvDataLoader::new(true);
+        let dataset = loader
+            .load("data/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
+        let bit_data = BitDataSet::from_dataset(&dataset)
             .expect("Failed to create BitData from dataset");
 
         // With 1 bit, values should only be 0 or 1
-        assert_eq!(bit_data.info.feature_bits(0), 1);
-        assert_eq!(bit_data.data.chunk_size, 8);
+        assert_eq!(bit_data.info.feature_bits(0), 64);
+        assert_eq!(bit_data.data.chunk_size, 8 * 64);
     }
 
     #[test]
     fn test_schema_with_floats() {
-        let rows = vec![
-            vec!["1".to_string(), "3.5".to_string(), "-2".to_string(), "1.25".to_string()],
-            vec!["2".to_string(), "-1.0".to_string(), "5".to_string(), "0.5".to_string()],
+        let columns = vec![
+            ColumnData::Unsigned(vec![1, 2]),
+            ColumnData::F64(vec![3.5, -1.0]),
+            ColumnData::Signed(vec![-2, 5]),
+            ColumnData::F64(vec![1.25, 0.5]),
         ];
-        let dataset = Dataset::from_rows(rows);
+        let dataset = Dataset::from_columns(columns).unwrap();
         let features = vec![
             FeatureSpec { data_type: FeatureDataType::UnsignedInt, bits: 8 },
-            FeatureSpec { data_type: FeatureDataType::F32, bits: 32 },
+            FeatureSpec { data_type: FeatureDataType::F64, bits: 64 },
             FeatureSpec { data_type: FeatureDataType::SignedInt, bits: 8 },
             FeatureSpec { data_type: FeatureDataType::F64, bits: 64 },
         ];
 
         let bit_data = BitDataSet::from_dataset_with_schema(&dataset, features).unwrap();
         assert_eq!(bit_data.info.num_features(), 4);
-        assert_eq!(bit_data.data.chunk_size, 112);
+        assert_eq!(bit_data.data.chunk_size, 144);
         assert_eq!(bit_data.data.num_rows, 2);
     }
 }

@@ -1,8 +1,7 @@
-use bitvec::field::BitField;
 use entro_gd::compression::compress::{compress, decompress_analytics, decompress_file};
-use entro_gd::data_loader::Dataset;
+use entro_gd::data_loader::{CsvDataLoader, DataLoader, FeatureDataType};
 use entro_gd::error::EntroGdError;
-use entro_gd::preprocessor::{BitDataSet, FeatureDataType};
+use entro_gd::preprocessor::BitDataSet;
 use std::fs::File;
 use std::io::Write;
 use std::{env, u64};
@@ -30,15 +29,14 @@ fn main() -> Result<(), EntroGdError> {
     };
     
     println!("Loading CSV data from: {}", input_path);
-    let dataset = Dataset::load_csv(input_path, true)?;
+    let loader = CsvDataLoader::new(true).with_float_type(FeatureDataType::F32);
+    let entro_gd::data_loader::LoadedDataset { dataset, metadata } = loader.load(input_path)?;
     
     println!("Dataset loaded successfully!");
     println!("  Rows: {}", dataset.num_rows());
     println!("  Columns: {}", dataset.num_columns());
     
-    // Convert dataset to BitData with 8 bits per feature
-    let bits_per_feature = 8;
-    let bit_data = BitData::from_dataset(&dataset, bits_per_feature)?;
+    let bit_data = BitDataSet::from_dataset(&dataset)?;
     
     println!("\nOriginal BitData:");
     println!("  Total bits: {}", bit_data.data.total_bits());
@@ -70,7 +68,10 @@ fn main() -> Result<(), EntroGdError> {
     if let Some(analytics) = decompress_analytics(&compressed) {
         println!("\nDecompression analytics:");
         for (i, (sample, weight)) in analytics.samples.iter().zip(analytics.weights.iter()).enumerate() {
-            let sample_int = sample.load_be::<u64>();
+            let mut sample_int = 0u64;
+            for bit in sample.iter().take(64) {
+                sample_int = (sample_int << 1) | (*bit as u64);
+            }
             println!("  Sample {}: {} weight, {} sample int", i, weight, sample_int);
         }
     }
@@ -95,7 +96,7 @@ fn main() -> Result<(), EntroGdError> {
     
     // Convert decompressed BitData back to CSV
     println!("\nWriting decompressed data to: {}", output_path);
-    write_bitdata_to_csv(&decompressed, &output_path, dataset.headers())?;
+    write_bitdata_to_csv(&decompressed, &output_path, metadata.headers.as_deref())?;
     
     println!("Done!");
     

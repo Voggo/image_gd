@@ -104,7 +104,8 @@ impl<'a> BaseBitGroups<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
+    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     fn print_bases(base_bit_groups: &BaseBitGroups) {
         println!("Bases after adding bit:");

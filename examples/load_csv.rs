@@ -1,19 +1,19 @@
-use entro_gd::data_loader::Dataset;
+use entro_gd::data_loader::{CsvDataLoader, DataLoader};
 use entro_gd::error::EntroGdError;
 use entro_gd::preprocessor::BitDataSet;
 use entro_gd::compression::entropy::calculate_entropy;
 
 fn main() -> Result<(), EntroGdError> {
     // Load the CSV file with headers
-    let dataset = Dataset::load_csv("data/data-10000-8-int.csv", true)?;
+    let loader = CsvDataLoader::new(true);
+    let dataset = loader.load("data/data-10000-8-int.csv")?.dataset;
     
     println!("Dataset loaded successfully!");
     println!("  Rows: {}", dataset.num_rows());
     println!("  Columns: {}", dataset.num_columns());
     
-    // Convert dataset to BitData with 8 bits per feature
-    let bits_per_feature = 8;
-    let bit_data = BitDataSet::from_dataset(&dataset, bits_per_feature)?;
+    // Convert dataset to BitData based on column data types
+    let bit_data = BitDataSet::from_dataset(&dataset)?;
     
     println!("\nBitData representation:");
     println!("{}", bit_data);

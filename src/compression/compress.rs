@@ -166,8 +166,12 @@ pub fn compress(bit_data: &BitDataSet) -> CompressedData {
     debug!("Initial entropy per bit position: {:?}", entropy);
     // Phase 1: Optimize the base bit groups for best compression ratio
     let mut condensed_base_bit_groups = BaseBitGroups::new(bit_data);
-    let condensed_samples =
-        get_condensed_sample(bit_data, &mut condensed_base_bit_groups, entropy.clone(), 10);
+    let condensed_samples = get_condensed_sample(
+        bit_data,
+        &mut condensed_base_bit_groups,
+        entropy.clone(),
+        10,
+    );
 
     // Create a lightweight extended view that includes condensed samples
     // without cloning the original data
@@ -248,16 +252,22 @@ fn optimize_base_bit_groups<'a>(
 /// Organize entropy values by feature and return as flattened vector
 /// Orders bits by alternating through features (feature 1, 2, 3, ... n, repeat)
 /// Within each feature, bits are sorted from lowest to highest entropy
+/// Zero entropy bits are placed first
 fn organize_entropy_by_feature(
     entropy: Vec<(usize, f64)>,
     bit_data: &impl BitDataView,
 ) -> Vec<(usize, f64)> {
     let num_features = bit_data.num_features();
     let mut entropy_by_feature: Vec<Vec<(usize, f64)>> = vec![Vec::new(); num_features];
+    let mut zero_entropy = Vec::new();
 
     for (bit_pos, entropy_val) in entropy {
         if let Some(feature_idx) = bit_data.feature_index_for_bit(bit_pos) {
-            entropy_by_feature[feature_idx].push((bit_pos, entropy_val));
+            if entropy_val == 0.0 {
+                zero_entropy.push((bit_pos, entropy_val));
+            } else {
+                entropy_by_feature[feature_idx].push((bit_pos, entropy_val));
+            }
         }
     }
 
@@ -266,8 +276,10 @@ fn organize_entropy_by_feature(
         feature_entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
     }
 
+    // Start with zero entropy bits
+    let mut result = zero_entropy;
+
     // Flatten with round-robin selection: feature 1, 2, 3, ..., n, repeat
-    let mut result = Vec::new();
     let max_bits_per_feature = entropy_by_feature
         .iter()
         .map(|f| f.len())
@@ -291,39 +303,64 @@ fn get_condensed_sample<'a>(
     entropy: Vec<(usize, f64)>,
     m_max: usize,
 ) -> CondensedSamples {
+    // IMPORTANT: there is a difference between the chunks function used in this function and the get_chunk function in BitDataView.
+    // The chunks function is used to iterate over the bits of a sample in groups of 64 bits,
+    // while the get_chunk function retrieves the entire chunk for a given sample index.
+    // The chunks function is used to calculate the deviation from the base pattern for each sample,
+    // while the get_chunk function is used to retrieve the original chunk for each sample
+    // when calculating the deviation sum and creating the condensed sample.
+
     let mut samples = Vec::new();
     let mut weights = Vec::new();
 
-    let entropy_by_feature = organize_entropy_by_feature(entropy, bit_data);
+    let organized_entropy_by_feature = organize_entropy_by_feature(entropy, bit_data);
 
-    for &(bit_position, _) in entropy_by_feature.iter() {
+    for &(bit_position, _) in organized_entropy_by_feature.iter() {
         if condensed_bit_groups.get_num_bases() >= m_max {
             break;
         }
         condensed_bit_groups.add_bit_position(bit_position);
     }
     let bases = condensed_bit_groups.get_bases();
-    let base_mask: &BitSlice<usize, Msb0> = condensed_bit_groups.get_base_bit_mask();
+    let base_mask_chunked_int = condensed_bit_groups
+        .get_base_bit_mask()
+        .chunks(64)
+        .map(|chunk| chunk.load_be::<u64>())
+        .collect::<Vec<u64>>();
+
     for (base_group, base) in condensed_bit_groups.get_groups().iter().zip(bases.iter()) {
-        let mut deviation_sum: usize = 0;
-        for sample in base_group.iter() {
-            let chunk = bit_data.get_chunk(*sample).to_bitvec();
-            let masked = chunk & base_mask;
-            deviation_sum += masked.load_be::<usize>();
+        // Convert Vec<u64> back to BitVec<usize, Msb0>
+        let mut condensed_bitvec = BitVec::<usize, Msb0>::with_capacity(bit_data.chunk_size());
+        let mut acumulators = vec![0u128; base_mask_chunked_int.len()];
+
+        for &sample_idx in base_group.iter() {
+            let sample = bit_data.get_chunk(sample_idx);
+            for (i, (sample_chunk, base_mask_chunk)) in sample
+                .chunks(64)
+                .zip(base_mask_chunked_int.iter())
+                .enumerate()
+            {
+                let chunk_deviation = sample_chunk.load_be::<u64>() & !base_mask_chunk;
+                acumulators[i] += chunk_deviation as u128;
+            }
         }
-        let base_int = base.0.load_be::<usize>();
-        let average_deviation = deviation_sum as f64 / base_group.len() as f64;
-        let condensed_sample = base_int + average_deviation.round() as usize;
-        debug!(
-            "Base group size: {}, Base value: {}, Average deviation: {:.2}, Condensed sample: {}",
-            base_group.len(),
-            base_int,
-            average_deviation,
-            condensed_sample
-        );
-        // Create a BitVec from condensed_sample and ensure it has the same length as a chunk
-        let mut condensed_bitvec = BitVec::<usize, Msb0>::from_element(condensed_sample);
-        condensed_bitvec.resize(bit_data.chunk_size(), false); // pad with zeros if needed
+        let base_chunks = base
+            .0
+            .chunks(64)
+            .map(|chunk| chunk.load_be::<u64>())
+            .collect::<Vec<u64>>();
+        let averaged_chunks: Vec<u64> = acumulators
+            .iter()
+            .zip(base_chunks.iter())
+            .map(|(&acc, &base)| base + (acc as f64 / base_group.len() as f64) as u64)
+            .collect();
+
+
+        // Add all complete 64-bit chunks
+        averaged_chunks.iter().for_each(|&chunk| {
+            condensed_bitvec.extend_from_bitslice(&BitSlice::<u64, Msb0>::from_element(&chunk));
+        });
+        condensed_bitvec.truncate(bit_data.chunk_size());
         samples.push(condensed_bitvec);
         weights.push(base_group.len());
     }
@@ -508,7 +545,8 @@ pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
+    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use pretty_assertions::assert_eq;
 
     // Helper function to create test BitData
@@ -692,10 +730,10 @@ mod tests {
         // Verify decompress_file returns correct number of rows
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 20);
-        
+
         // Verify decompressed data structure
         assert_eq!(decompressed.info.num_features(), 16);
-        assert_eq!(decompressed.data.chunk_size, 32);  // bits_per_feature * num_features = 2 * 16 = 32
+        assert_eq!(decompressed.data.chunk_size, 32); // bits_per_feature * num_features = 2 * 16 = 32
     }
 
     #[test]
@@ -706,7 +744,7 @@ mod tests {
         // Verify decompress_file returns correct number of rows
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 10);
-        
+
         // Verify metadata is correct
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
         assert_eq!(compressed.metadata.data_info.original_size_bits, 10 * 32);
@@ -743,7 +781,10 @@ mod tests {
             let compressed = compress(&bit_data);
 
             assert_eq!(compressed.metadata.data_info.num_features(), 16);
-            assert_eq!(compressed.metadata.data_info.original_size_bits, num_rows * 32);
+            assert_eq!(
+                compressed.metadata.data_info.original_size_bits,
+                num_rows * 32
+            );
 
             // Verify decompress_file returns correct number of rows
             let decompressed = decompress_file(&compressed).unwrap();
@@ -800,7 +841,10 @@ mod tests {
             let bit_data = create_test_bit_data(num_rows, 2, 16);
             let compressed = compress(&bit_data);
 
-            assert_eq!(compressed.metadata.data_info.original_size_bits, num_rows * 32);
+            assert_eq!(
+                compressed.metadata.data_info.original_size_bits,
+                num_rows * 32
+            );
             // Verify decompressed matches original
             let decompressed = decompress_file(&compressed).unwrap();
             assert_eq!(decompressed.data.num_rows, num_rows);
@@ -854,7 +898,7 @@ mod tests {
         // Verify decompress_file returns correct number of rows
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 50);
-        
+
         // Verify metadata is correct
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
         assert_eq!(compressed.metadata.data_info.original_size_bits, 50 * 32);
@@ -1002,11 +1046,13 @@ mod tests {
         }
 
         // Verify the original rows match by checking only the first num_original_rows rows
-        let original_bits: Vec<bool> = bit_data.data.data[0..(num_original_rows * bit_data.data.chunk_size)]
+        let original_bits: Vec<bool> = bit_data.data.data
+            [0..(num_original_rows * bit_data.data.chunk_size)]
             .iter()
             .map(|b| *b)
             .collect();
-        let decompressed_bits: Vec<bool> = decompressed.data.data[0..(num_original_rows * bit_data.data.chunk_size)]
+        let decompressed_bits: Vec<bool> = decompressed.data.data
+            [0..(num_original_rows * bit_data.data.chunk_size)]
             .iter()
             .map(|b| *b)
             .collect();

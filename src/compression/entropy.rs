@@ -20,7 +20,8 @@ pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
+    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     #[test]
     fn test_entropy_calculation_1() {

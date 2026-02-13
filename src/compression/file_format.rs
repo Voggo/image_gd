@@ -287,7 +287,8 @@ fn pad_to_byte(bit_count: usize) -> usize {
 mod tests {
     use super::*;
     use crate::compression::compress::compress;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
+    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     #[test]
     fn test_file_layout_sizes() {
