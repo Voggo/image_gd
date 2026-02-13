@@ -1,6 +1,6 @@
 use crate::compression::base_bit_groups::BaseBitGroups;
 use crate::compression::compress::{
-    CompressedData, CompressionMetadata, CondensedSamples, DeviationData, ExtendedBitData,
+    CompressedData, CondensedSamples, DeviationData, ExtendedBitData,
 };
 use crate::compression::entropy;
 use crate::compression::pipeline::interface::{
@@ -382,9 +382,7 @@ impl CompressionRunner for CompressionPipeline {
             },
             base_table,
             base_bit_positions,
-            metadata: CompressionMetadata {
-                data_info: bit_data.info.clone(),
-            },
+            metadata: bit_data.info.clone(),
         }
     }
 }

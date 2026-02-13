@@ -49,7 +49,7 @@ fn main() -> Result<(), EntroGdError> {
     let compressed = compress(&bit_data);
     
     println!("Compression complete!");
-    println!("  Original size: {} bits", compressed.metadata.data_info.original_size_bits);
+    println!("  Original size: {} bits", compressed.metadata.original_size_bits);
     println!("  Encoded stream size: {} bits", compressed.encoded_data.get_encoded_size());
     println!("  Base table entries: {}", compressed.base_table.len());
     println!("  Base bit positions: {:?}", compressed.base_bit_positions);
@@ -59,7 +59,7 @@ fn main() -> Result<(), EntroGdError> {
         .map(|(pattern, _)| pattern.len())
         .sum::<usize>();
     let total_compressed_size = compressed.encoded_data.get_encoded_size() + base_table_size;
-    let compression_ratio = total_compressed_size as f64 / compressed.metadata.data_info.original_size_bits as f64;
+    let compression_ratio = total_compressed_size as f64 / compressed.metadata.original_size_bits as f64;
     println!("  Approximate compression ratio: {:.2}", compression_ratio); 
     // Decompress the data
     println!("\nDecompressing data...");
