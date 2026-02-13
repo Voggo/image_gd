@@ -3,7 +3,7 @@ use bitvec::prelude::*;
 
 #[derive(Clone)]
 pub struct BaseBitGroups<'a> {
-    bit_data: &'a dyn BitDataView,
+    bit_data: &'a (dyn BitDataView + 'a),
     groups: Vec<Vec<usize>>,
     base_bit_mask: BitVec<usize, Msb0>,
     base_bit_positions: Vec<usize>,
@@ -24,7 +24,7 @@ impl std::fmt::Debug for BaseBitGroups<'_> {
 }
 
 impl<'a> BaseBitGroups<'a> {
-    pub fn new(bit_data: &'a impl BitDataView) -> Self {
+    pub fn new(bit_data: &'a (dyn BitDataView + 'a)) -> Self {
         let groups: Vec<Vec<usize>> = vec![(0..bit_data.num_rows()).collect()];
         let base_bit_mask = bitvec![usize, Msb0; 0; bit_data.chunk_size()];
         let base_bit_positions = Vec::new();
