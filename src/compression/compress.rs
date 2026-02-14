@@ -224,12 +224,11 @@ fn decompress_samples_batch(
         }
         let mut deviation_bit_idx = 0;
         for bit_pos in 0..chunk_size {
-            if !base_bit_mask[bit_pos] {
-                if deviation_bit_idx < sample.deviation.len() {
+            if !base_bit_mask[bit_pos]
+                && deviation_bit_idx < sample.deviation.len() {
                     chunk.set(bit_pos, sample.deviation[deviation_bit_idx]);
                     deviation_bit_idx += 1;
                 }
-            }
         }
         reconstructed_bits.extend_from_bitslice(&chunk);
     }

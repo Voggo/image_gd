@@ -128,7 +128,7 @@ impl DefaultCondensedSampleSelector {
 
             // Add all complete 64-bit chunks
             averaged_chunks.iter().for_each(|&chunk| {
-                condensed_bitvec.extend_from_bitslice(&BitSlice::<u64, Msb0>::from_element(&chunk));
+                condensed_bitvec.extend_from_bitslice(BitSlice::<u64, Msb0>::from_element(&chunk));
             });
             condensed_bitvec.truncate(bit_data.chunk_size());
             samples.push(condensed_bitvec);
@@ -249,11 +249,7 @@ impl DefaultEncoder {
         let chunk_size = bit_data.chunk_size();
         let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
 
-        let num_deviation_bits = if num_bits_per_base > chunk_size {
-            0
-        } else {
-            chunk_size - num_bits_per_base
-        };
+        let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
 
         let num_rows = bit_data.num_rows();
         let mut row_to_group_id = vec![0usize; num_rows];

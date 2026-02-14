@@ -42,6 +42,10 @@ impl ColumnData {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn data_type(&self) -> FeatureDataType {
         match self {
             ColumnData::Signed(_) => FeatureDataType::SignedInt,

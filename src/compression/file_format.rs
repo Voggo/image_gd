@@ -2,8 +2,10 @@ use bitvec::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compression::compress::CompressedData;
+use crate::compression::compress::{CompressedData, DeviationData};
+use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
+use crate::preprocessor::{BitDataInfo, FeatureSpec};
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
@@ -113,6 +115,209 @@ impl EgdFile {
         })
     }
 
+    /// Build an EGD file wrapper from raw bytes.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        EgdFile { bytes }
+    }
+
+    /// Load an `.egd` file from disk.
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, EntroGdError> {
+        let bytes = fs::read(path)?;
+        Ok(EgdFile { bytes })
+    }
+
+    /// Parse this EGD file into an in-memory `CompressedData` object.
+    pub fn to_compressed_data(&self) -> Result<CompressedData, EntroGdError> {
+        let mut reader = BitReader::new(&self.bytes);
+
+        // Header
+        let m0 = reader.read_u8()?;
+        let m1 = reader.read_u8()?;
+        let m2 = reader.read_u8()?;
+        if [m0, m1, m2] != MAGIC_BYTES {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "invalid magic bytes (expected EGD)".to_string(),
+            });
+        }
+        let version = reader.read_u8()?;
+        if version != FORMAT_VERSION {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "unsupported format version {} (expected {})",
+                    version, FORMAT_VERSION
+                ),
+            });
+        }
+
+        // Global
+        let n = usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
+            message: "n does not fit into usize".to_string(),
+        })?;
+        let m = usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
+            message: "m does not fit into usize".to_string(),
+        })?;
+        let num_features =
+            usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
+                message: "num_features does not fit into usize".to_string(),
+            })?;
+        if num_features == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "num_features is 0".to_string(),
+            });
+        }
+
+        // Feature metadata
+        let mut features = Vec::with_capacity(num_features);
+        let mut base_bit_positions = Vec::new();
+        let mut running_offset = 0usize;
+        for feature_idx in 0..num_features {
+            let tag = reader.read_u8()?;
+            if tag != 1 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!("unsupported feature metadata tag {} at index {}", tag, feature_idx),
+                });
+            }
+            let bits = usize::from(reader.read_u16()?);
+            if bits == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!("feature {} has 0 bits", feature_idx),
+                });
+            }
+
+            features.push(FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits,
+            });
+
+            for local_bit in 0..bits {
+                if reader.read_bit()? {
+                    base_bit_positions.push(running_offset + local_bit);
+                }
+            }
+            running_offset = running_offset.checked_add(bits).ok_or_else(|| {
+                EntroGdError::InvalidMetadata {
+                    message: "chunk size overflow while parsing features".to_string(),
+                }
+            })?;
+        }
+
+        // Align after feature metadata
+        reader.align_to_byte();
+
+        // Condensed sample weights
+        let weight_bits = bits_needed(n);
+        let mut weights = Vec::with_capacity(m);
+        for _ in 0..m {
+            weights.push(reader.read_usize_bits(weight_bits)?);
+        }
+
+        // Align after weights
+        reader.align_to_byte();
+
+        // Base table
+        let num_bases =
+            usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
+                message: "num_bases does not fit into usize".to_string(),
+            })?;
+
+        let chunk_size = features.iter().map(|f| f.bits).sum::<usize>();
+        if base_bit_positions.len() > chunk_size {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "base bit positions exceed chunk size".to_string(),
+            });
+        }
+
+        let mut base_table = Vec::with_capacity(num_bases);
+        for _ in 0..num_bases {
+            let mut base_bits = bitvec![usize, Msb0; 0; chunk_size];
+            for &bit_pos in &base_bit_positions {
+                let bit = reader.read_bit()?;
+                base_bits.set(bit_pos, bit);
+            }
+            base_table.push((base_bits, 0usize));
+        }
+
+        let num_samples = n.checked_add(m).ok_or_else(|| EntroGdError::InvalidMetadata {
+            message: "n + m overflows usize".to_string(),
+        })?;
+        let num_id_bits = bits_needed(num_bases);
+        let num_deviation_bits = chunk_size.saturating_sub(base_bit_positions.len());
+
+        let bits_per_sample = num_deviation_bits + num_id_bits;
+        let expected_encoded_len = num_samples.checked_mul(bits_per_sample).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
+                message: "encoded stream expected length overflow".to_string(),
+            }
+        })?;
+
+        // Encoded data stream (exact logical bit-length).
+        let encoded_stream = reader.read_bits(expected_encoded_len)?;
+
+        // Any remaining bits must be zero-padding in the final byte.
+        while reader.remaining_bits() > 0 {
+            if reader.read_bit()? {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "non-zero trailing bits after encoded stream".to_string(),
+                });
+            }
+        }
+
+        if encoded_stream.len() != expected_encoded_len {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "encoded stream length mismatch: expected {}, got {}",
+                    expected_encoded_len,
+                    encoded_stream.len()
+                ),
+            });
+        }
+
+        // Reconstruct base frequencies from encoded IDs.
+        if num_bases > 0 {
+            let mut counts = vec![0usize; num_bases];
+            for sample_idx in 0..num_samples {
+                let id_start = sample_idx * bits_per_sample + num_deviation_bits;
+                let id_end = id_start + num_id_bits;
+                let mut base_id = 0usize;
+                for bit in &encoded_stream[id_start..id_end] {
+                    base_id = (base_id << 1) | (*bit as usize);
+                }
+                if base_id >= num_bases {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "encoded base id {} out of range for {} bases",
+                            base_id, num_bases
+                        ),
+                    });
+                }
+                counts[base_id] += 1;
+            }
+            for (idx, count) in counts.into_iter().enumerate() {
+                base_table[idx].1 = count;
+            }
+        }
+
+        let original_size_bits = n.checked_mul(chunk_size).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
+                message: "original size overflow".to_string(),
+            }
+        })?;
+        let metadata = BitDataInfo::new(features, original_size_bits)?;
+
+        Ok(CompressedData {
+            encoded_data: DeviationData::new(
+                encoded_stream,
+                num_samples,
+                num_deviation_bits,
+                num_id_bits,
+            ),
+            condensed_sample_weights: if m == 0 { None } else { Some(weights) },
+            base_table,
+            base_bit_positions,
+            metadata,
+        })
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -132,6 +337,13 @@ pub fn save_compressed_as_egd<P: AsRef<Path>>(
     output_path: P,
 ) -> Result<PathBuf, EntroGdError> {
     EgdFile::from_compressed_data(compressed)?.save(output_path)
+}
+
+/// Load an `.egd` file from disk and parse it into `CompressedData`.
+pub fn load_compressed_from_egd<P: AsRef<Path>>(
+    input_path: P,
+) -> Result<CompressedData, EntroGdError> {
+    EgdFile::load(input_path)?.to_compressed_data()
 }
 
 fn ensure_egd_extension(path: &Path) -> PathBuf {
@@ -157,6 +369,95 @@ fn bits_needed(value: usize) -> usize {
 struct BitWriter {
     bytes: Vec<u8>,
     bit_len: usize,
+}
+
+#[derive(Debug)]
+struct BitReader<'a> {
+    bytes: &'a [u8],
+    bit_pos: usize,
+}
+
+impl<'a> BitReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, bit_pos: 0 }
+    }
+
+    fn read_bit(&mut self) -> Result<bool, EntroGdError> {
+        if self.bit_pos >= self.bytes.len() * 8 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "unexpected end of EGD bitstream".to_string(),
+            });
+        }
+        let byte_index = self.bit_pos / 8;
+        let bit_in_byte = self.bit_pos % 8;
+        let bit = ((self.bytes[byte_index] >> (7 - bit_in_byte)) & 1) == 1;
+        self.bit_pos += 1;
+        Ok(bit)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, EntroGdError> {
+        let mut value = 0u8;
+        for _ in 0..8 {
+            value = (value << 1) | (self.read_bit()? as u8);
+        }
+        Ok(value)
+    }
+
+    fn read_u16(&mut self) -> Result<u16, EntroGdError> {
+        let mut value = 0u16;
+        for _ in 0..16 {
+            value = (value << 1) | (self.read_bit()? as u16);
+        }
+        Ok(value)
+    }
+
+    fn read_u64(&mut self) -> Result<u64, EntroGdError> {
+        let mut value = 0u64;
+        for _ in 0..64 {
+            value = (value << 1) | (self.read_bit()? as u64);
+        }
+        Ok(value)
+    }
+
+    fn read_usize_bits(&mut self, width: usize) -> Result<usize, EntroGdError> {
+        if width > usize::BITS as usize {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!("cannot read {} bits into usize", width),
+            });
+        }
+        let mut value = 0usize;
+        for _ in 0..width {
+            value = (value << 1) | (self.read_bit()? as usize);
+        }
+        Ok(value)
+    }
+
+    fn align_to_byte(&mut self) {
+        while !self.bit_pos.is_multiple_of(8) {
+            self.bit_pos += 1;
+        }
+    }
+
+    fn remaining_bits(&self) -> usize {
+        self.bytes.len() * 8 - self.bit_pos
+    }
+
+    fn read_bits(&mut self, len: usize) -> Result<BitVec<usize, Msb0>, EntroGdError> {
+        if len > self.remaining_bits() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "requested {} bits, but only {} remain",
+                    len,
+                    self.remaining_bits()
+                ),
+            });
+        }
+        let mut out = BitVec::<usize, Msb0>::with_capacity(len);
+        for _ in 0..len {
+            out.push(self.read_bit()?);
+        }
+        Ok(out)
+    }
 }
 
 impl BitWriter {
@@ -216,7 +517,8 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::compress::compress;
+    use crate::compression::compress::compress_with_pipeline;
+    use crate::compression::pipeline::{CompressionParams, CompressionPipeline};
     use crate::data_loader::FeatureDataType;
     use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
@@ -237,7 +539,8 @@ mod tests {
         let info = BitDataInfo::new(features, 64).unwrap();
         let bit_data = BitDataSet { data, info };
 
-        let compressed = compress(&bit_data);
+        let pipeline = CompressionPipeline::new(CompressionParams::new(10, 10, false));
+        let compressed = compress_with_pipeline(&bit_data, &pipeline);
         let egd = EgdFile::from_compressed_data(&compressed).unwrap();
 
         assert!(egd.as_bytes().len() >= 4);
@@ -249,5 +552,50 @@ mod tests {
         assert_eq!(saved.extension().and_then(|s| s.to_str()), Some("egd"));
         assert!(saved.exists());
         let _ = std::fs::remove_file(saved);
+    }
+
+    #[test]
+    fn test_roundtrip_egd_to_compressed_data() {
+        let data = BitData {
+            data: bitvec![usize, Msb0;
+                1,0,1,0,
+                1,0,1,1,
+                0,0,1,0,
+                0,1,1,1
+            ],
+            num_rows: 4,
+            chunk_size: 4,
+        };
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits: 2,
+            },
+            FeatureSpec {
+                data_type: FeatureDataType::UnsignedInt,
+                bits: 2,
+            },
+        ];
+        let info = BitDataInfo::new(features, 16).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let pipeline = CompressionPipeline::new(CompressionParams::new(10, 10, false));
+        let compressed = compress_with_pipeline(&bit_data, &pipeline);
+
+        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let loaded = egd.to_compressed_data().unwrap();
+
+        assert_eq!(loaded.metadata, compressed.metadata);
+        assert_eq!(loaded.base_bit_positions, compressed.base_bit_positions);
+        assert_eq!(loaded.condensed_sample_weights, compressed.condensed_sample_weights);
+        assert_eq!(loaded.encoded_data.encoded_bit_stream(), compressed.encoded_data.encoded_bit_stream());
+        assert_eq!(loaded.encoded_data.get_num_samples(), compressed.encoded_data.get_num_samples());
+        assert_eq!(loaded.encoded_data.get_num_deviation_bits(), compressed.encoded_data.get_num_deviation_bits());
+        assert_eq!(loaded.encoded_data.get_num_id_bits(), compressed.encoded_data.get_num_id_bits());
+        assert_eq!(loaded.base_table.len(), compressed.base_table.len());
+        for (lhs, rhs) in loaded.base_table.iter().zip(compressed.base_table.iter()) {
+            assert_eq!(lhs.0, rhs.0);
+            assert_eq!(lhs.1, rhs.1);
+        }
     }
 }
