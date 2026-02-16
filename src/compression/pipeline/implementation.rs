@@ -87,11 +87,15 @@ impl DefaultCondensedSampleSelector {
 
         let organized_entropy_by_feature = self.organize_entropy_by_feature(entropy, bit_data);
 
-        for &(bit_position, _) in organized_entropy_by_feature.iter() {
+        for &(bit_position, entropy_val) in organized_entropy_by_feature.iter() {
             if condensed_bit_groups.get_num_bases() >= m_max {
                 break;
             }
-            condensed_bit_groups.add_bit_position(bit_position);
+            if entropy_val == 0.0 {
+                condensed_bit_groups.add_constant_bit_position(bit_position);
+            } else {
+                condensed_bit_groups.add_bit_position(bit_position);
+            }
         }
         let bases = condensed_bit_groups.get_bases();
         let base_mask_chunked_int = condensed_bit_groups
