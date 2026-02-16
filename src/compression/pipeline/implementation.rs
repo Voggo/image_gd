@@ -185,7 +185,7 @@ impl DefaultBaseBitGroupOptimizer {
 
         entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
         while let Some((bit_pos, 0.0)) = entropy.first() {
-            base_bit_groups.add_bit_position(*bit_pos);
+            base_bit_groups.add_constant_bit_position(*bit_pos);
             entropy.remove(0);
         }
 

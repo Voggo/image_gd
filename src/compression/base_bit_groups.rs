@@ -69,6 +69,14 @@ impl<'a> BaseBitGroups<'a> {
         self.num_bases
     }
 
+    pub fn add_constant_bit_position(&mut self, bit_position: usize) -> usize {
+        let _timer = ScopedTimer::trace(format!("Adding constant bit position {}", bit_position));
+        self.base_bit_mask.set(bit_position, true);
+        self.num_bits_per_base += 1;
+        self.base_bit_positions.push(bit_position);
+        self.num_bases = self.groups.len(); // Number of bases doesn't change for constant bits
+        self.num_bases
+    }
     /// Get the bases as BitVecs along with their counts
     pub fn get_bases(&self) -> Vec<(BitVec<usize, Msb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
