@@ -1,8 +1,8 @@
 use entro_gd::compression::compress::{compress, decompress_analytics, decompress_file};
 use entro_gd::compression::file_format::{save_compressed_as_egd, load_compressed_from_egd};
-use entro_gd::data_loader::{CsvDataLoader, DataLoader, FeatureDataType};
+use entro_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FeatureDataType};
 use entro_gd::error::EntroGdError;
-use entro_gd::preprocessor::BitDataSet;
+use entro_gd::preprocessor::{decode_value_from_bits, BitDataSet};
 use std::fs::File;
 use std::io::Write;
 use std::{env, u64};
@@ -158,31 +158,11 @@ fn write_bitdata_to_csv(
         for feature in 0..bit_data.info.num_features() {
             let feature_bits = bit_data.get_feature(row, feature);
             let spec = &bit_data.info.features[feature];
-            let mut value: u64 = 0;
-            for (i, bit) in feature_bits.iter().enumerate() {
-                if *bit {
-                    value |= 1 << (spec.bits - 1 - i);
-                }
-            }
-            let formatted = match spec.data_type {
-                FeatureDataType::UnsignedInt => value.to_string(),
-                FeatureDataType::SignedInt => {
-                    let signed = if spec.bits == 64 {
-                        value as i64
-                    } else {
-                        let shift = 64 - spec.bits;
-                        ((value << shift) as i64) >> shift
-                    };
-                    signed.to_string()
-                }
-                FeatureDataType::F32 => {
-                    let f = f32::from_bits(value as u32);
-                    f.to_string()
-                }
-                FeatureDataType::F64 => {
-                    let f = f64::from_bits(value);
-                    f.to_string()
-                }
+            let formatted = match decode_value_from_bits(feature_bits, spec) {
+                DataValue::Unsigned(v) => v.to_string(),
+                DataValue::Signed(v) => v.to_string(),
+                DataValue::F32(v) => v.to_string(),
+                DataValue::F64(v) => v.to_string(),
             };
             values.push(formatted);
         }

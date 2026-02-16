@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::compression::compress::{CompressedData, DeviationData};
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
-use crate::preprocessor::{BitDataInfo, FeatureSpec};
+use crate::preprocessor::{BitDataInfo, FeatureSpec, FeatureTransform};
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
@@ -22,7 +22,8 @@ impl EgdFile {
     /// Bitstream layout:
     /// 1) header: magic ("EGD") + version
     /// 2) global: n (u64), m (u64), num_features (u64)
-    /// 3) feature metadata (per feature): tag=1 (u8), bits_per_feature (u16), base_bit_mask bits
+    /// 3) feature metadata (per feature):
+    ///    tag=1 (u8), data_type (u8), transform_tag (u8), [transform params], bits_per_feature (u16), base_bit_mask bits
     /// 4) zero-padding to next byte
     /// 5) condensed weights bitstream (m * ceil(log2(n)) bits)
     /// 6) zero-padding to next byte
@@ -69,12 +70,21 @@ impl EgdFile {
 
         // Feature metadata
         for feature_idx in 0..num_features {
+            let feature_spec = &data_info.features[feature_idx];
             let feature_bits = data_info.feature_bits(feature_idx);
             let bits_per_feature = u16::try_from(feature_bits).map_err(|_| EntroGdError::InvalidMetadata {
                 message: format!("feature {} bits {} does not fit into u16", feature_idx, feature_bits),
             })?;
 
             writer.write_u8(1); // BitInfo tag
+            writer.write_u8(encode_data_type(feature_spec.data_type));
+            match feature_spec.transform {
+                FeatureTransform::None => writer.write_u8(0),
+                FeatureTransform::ScaledSignedInt { decimal_scale } => {
+                    writer.write_u8(1);
+                    writer.write_u8(decimal_scale);
+                }
+            }
             writer.write_u16(bits_per_feature);
 
             let offset = data_info.feature_offset(feature_idx);
@@ -177,6 +187,22 @@ impl EgdFile {
                     message: format!("unsupported feature metadata tag {} at index {}", tag, feature_idx),
                 });
             }
+            let data_type = decode_data_type(reader.read_u8()?)?;
+            let transform = match reader.read_u8()? {
+                0 => FeatureTransform::None,
+                1 => {
+                    let decimal_scale = reader.read_u8()?;
+                    FeatureTransform::ScaledSignedInt { decimal_scale }
+                }
+                transform_tag => {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "unsupported transform tag {} at feature {}",
+                            transform_tag, feature_idx
+                        ),
+                    });
+                }
+            };
             let bits = usize::from(reader.read_u16()?);
             if bits == 0 {
                 return Err(EntroGdError::InvalidMetadata {
@@ -185,8 +211,9 @@ impl EgdFile {
             }
 
             features.push(FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
+                data_type,
                 bits,
+                transform,
             });
 
             for local_bit in 0..bits {
@@ -365,6 +392,27 @@ fn bits_needed(value: usize) -> usize {
     }
 }
 
+fn encode_data_type(data_type: FeatureDataType) -> u8 {
+    match data_type {
+        FeatureDataType::SignedInt => 0,
+        FeatureDataType::UnsignedInt => 1,
+        FeatureDataType::F32 => 2,
+        FeatureDataType::F64 => 3,
+    }
+}
+
+fn decode_data_type(tag: u8) -> Result<FeatureDataType, EntroGdError> {
+    match tag {
+        0 => Ok(FeatureDataType::SignedInt),
+        1 => Ok(FeatureDataType::UnsignedInt),
+        2 => Ok(FeatureDataType::F32),
+        3 => Ok(FeatureDataType::F64),
+        _ => Err(EntroGdError::InvalidMetadata {
+            message: format!("unsupported feature data type tag {}", tag),
+        }),
+    }
+}
+
 #[derive(Debug, Default)]
 struct BitWriter {
     bytes: Vec<u8>,
@@ -530,10 +578,7 @@ mod tests {
             chunk_size: 8,
         };
         let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: 1,
-            };
+            FeatureSpec::new(FeatureDataType::UnsignedInt, 1);
             8
         ];
         let info = BitDataInfo::new(features, 64).unwrap();
@@ -567,14 +612,8 @@ mod tests {
             chunk_size: 4,
         };
         let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: 2,
-            },
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: 2,
-            },
+            FeatureSpec::new(FeatureDataType::UnsignedInt, 2),
+            FeatureSpec::new(FeatureDataType::UnsignedInt, 2),
         ];
         let info = BitDataInfo::new(features, 16).unwrap();
         let bit_data = BitDataSet { data, info };

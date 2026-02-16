@@ -291,10 +291,7 @@ mod tests {
             num_rows,
         };
         let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: bits_per_feature,
-            };
+            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
             num_features
         ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
@@ -677,10 +674,7 @@ mod tests {
             num_rows,
         };
         let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: bits_per_feature,
-            };
+            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
             num_features
         ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
@@ -831,10 +825,7 @@ mod tests {
             num_rows,
         };
         let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: bits_per_feature,
-            };
+            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
             num_features
         ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();

@@ -6,11 +6,31 @@ pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
 use crate::error::EntroGdError;
 
+const MAX_DECIMAL_SCALE: u8 = 9;
+
+/// Optional transform metadata used for a feature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureTransform {
+    None,
+    ScaledSignedInt { decimal_scale: u8 },
+}
+
 /// Per-feature schema entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeatureSpec {
     pub data_type: FeatureDataType,
     pub bits: usize,
+    pub transform: FeatureTransform,
+}
+
+impl FeatureSpec {
+    pub fn new(data_type: FeatureDataType, bits: usize) -> Self {
+        FeatureSpec {
+            data_type,
+            bits,
+            transform: FeatureTransform::None,
+        }
+    }
 }
 
 /// High-level metadata describing a bit-packed dataset.
@@ -23,7 +43,10 @@ pub struct BitDataInfo {
 }
 
 impl BitDataInfo {
-    pub fn new(features: Vec<FeatureSpec>, original_size_bits: usize) -> Result<Self, EntroGdError> {
+    pub fn new(
+        features: Vec<FeatureSpec>,
+        original_size_bits: usize,
+    ) -> Result<Self, EntroGdError> {
         if features.is_empty() {
             return Err(EntroGdError::InvalidFeatureSpec {
                 message: "features is empty".to_string(),
@@ -39,14 +62,37 @@ impl BitDataInfo {
                 });
             }
             match spec.data_type {
-                FeatureDataType::F32 if spec.bits != 32 => {
+                FeatureDataType::F32 => match spec.transform {
+                    FeatureTransform::None if spec.bits != 32 => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message: "f32 features without transform must use 32 bits".to_string(),
+                        });
+                    }
+                    FeatureTransform::ScaledSignedInt { .. } if spec.bits > 64 => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message: "scaled f32 features must use <= 64 bits".to_string(),
+                        });
+                    }
+                    _ => {}
+                },
+                FeatureDataType::F64 => match spec.transform {
+                    FeatureTransform::None if spec.bits != 64 => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message: "f64 features without transform must use 64 bits".to_string(),
+                        });
+                    }
+                    FeatureTransform::ScaledSignedInt { .. } if spec.bits > 64 => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message: "scaled f64 features must use <= 64 bits".to_string(),
+                        });
+                    }
+                    _ => {}
+                },
+                FeatureDataType::SignedInt | FeatureDataType::UnsignedInt
+                    if !matches!(spec.transform, FeatureTransform::None) =>
+                {
                     return Err(EntroGdError::InvalidFeatureSpec {
-                        message: "f32 features must use 32 bits".to_string(),
-                    });
-                }
-                FeatureDataType::F64 if spec.bits != 64 => {
-                    return Err(EntroGdError::InvalidFeatureSpec {
-                        message: "f64 features must use 64 bits".to_string(),
+                        message: "integer features cannot use float transforms".to_string(),
                     });
                 }
                 _ => {}
@@ -113,7 +159,10 @@ pub struct BitData {
 
 impl BitData {
     /// Extend the BitData with additional bits from a BitSlice (used for adding condensed samples)
-    pub fn extend_from_bitslice(&mut self, bits: &BitSlice<usize, Msb0>) -> Result<(), EntroGdError> {
+    pub fn extend_from_bitslice(
+        &mut self,
+        bits: &BitSlice<usize, Msb0>,
+    ) -> Result<(), EntroGdError> {
         if bits.len() != self.chunk_size {
             return Err(EntroGdError::BitSliceLengthMismatch {
                 expected: self.chunk_size,
@@ -163,12 +212,15 @@ impl BitDataSet {
         let mut features = Vec::with_capacity(num_features);
         for feature_idx in 0..num_features {
             let data_type = dataset.column_type(feature_idx);
-            let bits = match data_type {
-                FeatureDataType::F32 => 32,
-                FeatureDataType::F64 => 64,
-                FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => 64,
+            let spec = match data_type {
+                FeatureDataType::F32 | FeatureDataType::F64 => {
+                    infer_float_feature_spec(dataset, feature_idx, data_type)
+                }
+                FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
+                    FeatureSpec::new(data_type, 64)
+                }
             };
-            features.push(FeatureSpec { data_type, bits });
+            features.push(spec);
         }
         Self::from_dataset_with_schema(dataset, features)
     }
@@ -345,10 +397,153 @@ fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
                 (v as i128 as u128 & mask) as u64
             }
         }
-        (DataValue::F32(v), FeatureDataType::F32) => v.to_bits() as u64,
-        (DataValue::F64(v), FeatureDataType::F64) => v.to_bits(),
+        (DataValue::F32(v), FeatureDataType::F32) => match spec.transform {
+            FeatureTransform::None => v.to_bits() as u64,
+            FeatureTransform::ScaledSignedInt { decimal_scale } => {
+                let scaled = scale_float_to_i64(v as f64, decimal_scale);
+                value_to_bits(DataValue::Signed(scaled), &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits))
+            }
+        },
+        (DataValue::F64(v), FeatureDataType::F64) => match spec.transform {
+            FeatureTransform::None => v.to_bits(),
+            FeatureTransform::ScaledSignedInt { decimal_scale } => {
+                let scaled = scale_float_to_i64(v, decimal_scale);
+                value_to_bits(DataValue::Signed(scaled), &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits))
+            }
+        },
         _ => unreachable!("feature type mismatch when packing bits"),
     }
+}
+
+pub fn decode_value_from_bits(bits: &BitSlice<usize, Msb0>, spec: &FeatureSpec) -> DataValue {
+    let value = bits_to_u64(bits);
+    match spec.data_type {
+        FeatureDataType::UnsignedInt => DataValue::Unsigned(value),
+        FeatureDataType::SignedInt => DataValue::Signed(decode_signed(value, spec.bits)),
+        FeatureDataType::F32 => match spec.transform {
+            FeatureTransform::None => DataValue::F32(f32::from_bits(value as u32)),
+            FeatureTransform::ScaledSignedInt { decimal_scale } => {
+                let scaled = decode_signed(value, spec.bits);
+                let factor = 10f64.powi(decimal_scale as i32);
+                DataValue::F32((scaled as f64 / factor) as f32)
+            }
+        },
+        FeatureDataType::F64 => match spec.transform {
+            FeatureTransform::None => DataValue::F64(f64::from_bits(value)),
+            FeatureTransform::ScaledSignedInt { decimal_scale } => {
+                let scaled = decode_signed(value, spec.bits);
+                let factor = 10f64.powi(decimal_scale as i32);
+                DataValue::F64(scaled as f64 / factor)
+            }
+        },
+    }
+}
+
+fn bits_to_u64(bits: &BitSlice<usize, Msb0>) -> u64 {
+    let mut value = 0u64;
+    for bit in bits {
+        value = (value << 1) | (*bit as u64);
+    }
+    value
+}
+
+fn decode_signed(value: u64, bits: usize) -> i64 {
+    if bits == 64 {
+        value as i64
+    } else {
+        let shift = 64 - bits;
+        ((value << shift) as i64) >> shift
+    }
+}
+
+fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: FeatureDataType) -> FeatureSpec {
+    let fallback_bits = match data_type {
+        FeatureDataType::F32 => 32,
+        FeatureDataType::F64 => 64,
+        _ => unreachable!("infer_float_feature_spec called with non-float type"),
+    };
+
+    let mut best_scale: Option<u8> = None;
+    for decimal_scale in 0..=MAX_DECIMAL_SCALE {
+        if scaled_int_range(dataset, column, data_type, decimal_scale).is_some() {
+            best_scale = Some(decimal_scale);
+            break;
+        }
+    }
+
+    if let Some(decimal_scale) = best_scale {
+        FeatureSpec {
+            data_type,
+            bits: fallback_bits,
+            transform: FeatureTransform::ScaledSignedInt { decimal_scale },
+        }
+    } else {
+        FeatureSpec::new(data_type, fallback_bits)
+    }
+}
+
+fn scaled_int_range(
+    dataset: &Dataset,
+    column: usize,
+    data_type: FeatureDataType,
+    decimal_scale: u8,
+) -> Option<(i64, i64)> {
+    if dataset.num_rows() == 0 {
+        return Some((0, 0));
+    }
+
+    let factor = 10f64.powi(decimal_scale as i32);
+    if !matches!(data_type, FeatureDataType::F32 | FeatureDataType::F64) {
+        return None;
+    }
+
+    let mut min_value = i64::MAX;
+    let mut max_value = i64::MIN;
+
+    for row in 0..dataset.num_rows() {
+        let value = match dataset.value_at(row, column) {
+            DataValue::F32(v) => v as f64,
+            DataValue::F64(v) => v,
+            _ => return None,
+        };
+        if !value.is_finite() {
+            return None;
+        }
+
+        let scaled = value * factor;
+        let rounded = scaled.round();
+        if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
+            return None;
+        }
+
+        let reconstructed_ok = match data_type {
+            FeatureDataType::F32 => {
+                let original = value as f32;
+                let reconstructed = (rounded / factor) as f32;
+                reconstructed.to_bits() == original.to_bits()
+            }
+            FeatureDataType::F64 => {
+                let original = value;
+                let reconstructed = rounded / factor;
+                reconstructed.to_bits() == original.to_bits()
+            }
+            _ => false,
+        };
+        if !reconstructed_ok {
+            return None;
+        }
+
+        let int_value = rounded as i64;
+        min_value = min_value.min(int_value);
+        max_value = max_value.max(int_value);
+    }
+
+    Some((min_value, max_value))
+}
+
+fn scale_float_to_i64(value: f64, decimal_scale: u8) -> i64 {
+    let factor = 10f64.powi(decimal_scale as i32);
+    (value * factor).round() as i64
 }
 
 fn push_bits(stream: &mut BitVec<usize, Msb0>, mut value: u64, bits: usize) {
@@ -379,8 +574,8 @@ mod tests {
             .load("data/data-10000-8-int.csv")
             .expect("Failed to load dataset");
         let dataset = loaded.dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset)
-            .expect("Failed to create BitData from dataset");
+        let bit_data =
+            BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         println!("\nFirst 5 rows in bit representation (MSB first):");
         println!("==============================================");
@@ -403,12 +598,9 @@ mod tests {
     #[test]
     fn test_bitdata_from_dataset() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset)
-            .expect("Failed to create BitData from dataset");
+        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let bit_data =
+            BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         assert_eq!(bit_data.info.num_features(), 8);
         assert_eq!(bit_data.info.feature_bits(0), 64);
@@ -420,12 +612,9 @@ mod tests {
     #[test]
     fn test_chunk_access() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset)
-            .expect("Failed to create BitData from dataset");
+        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let bit_data =
+            BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         let chunk = bit_data.data.get_chunk(0);
         assert_eq!(chunk.len(), 512); // 8 features * 64 bits
@@ -437,12 +626,9 @@ mod tests {
     #[test]
     fn test_get_bit_individual_access() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset)
-            .expect("Failed to create BitData from dataset");
+        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let bit_data =
+            BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         // Verify get_bit is consistent with get_feature
         let feature_bits = bit_data.info.feature_bits(0);
@@ -454,7 +640,9 @@ mod tests {
                         bit_data.get_bit_by_feature(row, feat, bit),
                         feature_slice[bit],
                         "Mismatch at row={}, feat={}, bit={}",
-                        row, feat, bit
+                        row,
+                        feat,
+                        bit
                     );
                 }
             }
@@ -464,12 +652,9 @@ mod tests {
     #[test]
     fn test_raw_access() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset)
-            .expect("Failed to create BitData from dataset");
+        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let bit_data =
+            BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         let raw = bit_data.data.raw();
         assert_eq!(raw.len(), bit_data.data.total_bits());
@@ -488,12 +673,9 @@ mod tests {
     #[test]
     fn test_single_bit_precision() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset)
-            .expect("Failed to create BitData from dataset");
+        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let bit_data =
+            BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         // With 1 bit, values should only be 0 or 1
         assert_eq!(bit_data.info.feature_bits(0), 64);
@@ -510,15 +692,34 @@ mod tests {
         ];
         let dataset = Dataset::from_columns(columns).unwrap();
         let features = vec![
-            FeatureSpec { data_type: FeatureDataType::UnsignedInt, bits: 8 },
-            FeatureSpec { data_type: FeatureDataType::F64, bits: 64 },
-            FeatureSpec { data_type: FeatureDataType::SignedInt, bits: 8 },
-            FeatureSpec { data_type: FeatureDataType::F64, bits: 64 },
+            FeatureSpec::new(FeatureDataType::UnsignedInt, 8),
+            FeatureSpec::new(FeatureDataType::F64, 64),
+            FeatureSpec::new(FeatureDataType::SignedInt, 8),
+            FeatureSpec::new(FeatureDataType::F64, 64),
         ];
 
         let bit_data = BitDataSet::from_dataset_with_schema(&dataset, features).unwrap();
         assert_eq!(bit_data.info.num_features(), 4);
         assert_eq!(bit_data.data.chunk_size, 144);
         assert_eq!(bit_data.data.num_rows, 2);
+    }
+
+    #[test]
+    fn test_auto_scale_float_feature_spec() {
+        let columns = vec![
+            ColumnData::F64(vec![1.25, 2.50, -0.75]),
+            ColumnData::Unsigned(vec![1, 2, 3]),
+        ];
+        let dataset = Dataset::from_columns(columns).unwrap();
+
+        let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
+        let spec = &bit_data.info.features[0];
+
+        assert_eq!(spec.data_type, FeatureDataType::F64);
+        assert!(matches!(
+            spec.transform,
+            FeatureTransform::ScaledSignedInt { .. }
+        ));
+        assert!(spec.bits <= 64);
     }
 }
