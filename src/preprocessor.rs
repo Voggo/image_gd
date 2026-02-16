@@ -577,20 +577,20 @@ mod tests {
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
-        println!("\nFirst 5 rows in bit representation (MSB first):");
-        println!("==============================================");
+        log::info!("\nFirst 5 rows in bit representation (MSB first):");
+        log::info!("==============================================");
 
         // Print the first 5 chunks with a delimiter at each feature boundary
         for row_index in 0..5 {
-            println!("\nRow {}:", row_index);
+            log::info!("\nRow {}:", row_index);
 
             for feat_idx in 0..bit_data.info.num_features() {
-                print!("  Feature {}: ", feat_idx);
                 let feature_bits = bit_data.get_feature(row_index, feat_idx);
-                for i in 0..feature_bits.len() {
-                    print!("{}", if feature_bits[i] { '1' } else { '0' });
-                }
-                println!();
+                let bits: String = feature_bits
+                    .iter()
+                    .map(|bit| if *bit { '1' } else { '0' })
+                    .collect();
+                log::info!("  Feature {}: {}", feat_idx, bits);
             }
         }
     }

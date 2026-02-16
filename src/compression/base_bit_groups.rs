@@ -1,4 +1,5 @@
 use crate::preprocessor::BitDataView;
+use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
 #[derive(Clone)]
@@ -40,6 +41,7 @@ impl<'a> BaseBitGroups<'a> {
     }
 
     pub fn add_bit_position(&mut self, bit_position: usize) -> usize {
+        let _timer = ScopedTimer::trace(format!("Adding bit position {}", bit_position));
         self.base_bit_mask.set(bit_position, true);
         self.num_bits_per_base += 1;
         self.base_bit_positions.push(bit_position);
@@ -69,6 +71,7 @@ impl<'a> BaseBitGroups<'a> {
 
     /// Get the bases as BitVecs along with their counts
     pub fn get_bases(&self) -> Vec<(BitVec<usize, Msb0>, usize)> {
+        let _timer = ScopedTimer::debug("Getting bases");
         let mut bases = Vec::with_capacity(self.num_bases);
         for group in &self.groups {
             if group.is_empty() {
@@ -108,9 +111,9 @@ mod tests {
     use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     fn print_bases(base_bit_groups: &BaseBitGroups) {
-        println!("Bases after adding bit:");
+        log::info!("Bases after adding bit:");
         for (i, (base, count)) in base_bit_groups.get_bases().iter().enumerate() {
-            println!("Base {}: {:?}, Count: {}", i, base, count);
+            log::info!("Base {}: {:?}, Count: {}", i, base, count);
         }
     }
 
@@ -140,7 +143,7 @@ mod tests {
         ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
-        println!("BitData: {}", bit_data);
+        log::info!("BitData: {}", bit_data);
         let mut base_bit_groups = BaseBitGroups::new(&bit_data);
         let num_bases = base_bit_groups.add_bit_position(4);
         assert_eq!(num_bases, 2);
@@ -176,7 +179,7 @@ mod tests {
         ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
-        println!("BitData: {}", bit_data);
+        log::info!("BitData: {}", bit_data);
         let mut base_bit_groups = BaseBitGroups::new(&bit_data);
         let num_bases = base_bit_groups.add_bit_position(4);
         assert_eq!(num_bases, 2);

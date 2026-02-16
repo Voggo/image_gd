@@ -8,6 +8,7 @@ use crate::compression::pipeline::interface::{
     EntropyCalculator,
 };
 use crate::preprocessor::{BitDataSet, BitDataView};
+use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 use log::debug;
 
@@ -328,11 +329,17 @@ impl CompressionPipeline {
 
 impl CompressionRunner for CompressionPipeline {
     fn compress(&self, bit_data: &BitDataSet) -> CompressedData {
-        let entropy = self.entropy_calculator.calculate(bit_data);
+        let _total_timer = ScopedTimer::info("compression pipeline");
+
+        let entropy = {
+            let _timer = ScopedTimer::debug("entropy calculation");
+            self.entropy_calculator.calculate(bit_data)
+        };
         debug!("Initial entropy per bit position: {:?}", entropy);
 
         let condensed_samples =
             if self.params.enable_condensed_samples && self.params.condensed_sample_max_bases > 0 {
+                let _timer = ScopedTimer::debug("condensed sample selection");
                 self.condensed_sample_selector.select(
                     bit_data,
                     entropy.clone(),
@@ -347,11 +354,14 @@ impl CompressionRunner for CompressionPipeline {
 
         let extended = ExtendedBitData::new(bit_data, condensed_samples.samples.clone());
 
-        let best_base_bit_groups = self.base_optimizer.optimize(
-            &extended,
-            entropy,
-            self.params.base_optimization_patience,
-        );
+        let best_base_bit_groups = {
+            let _timer = ScopedTimer::debug("base bit group optimization");
+            self.base_optimizer.optimize(
+                &extended,
+                entropy,
+                self.params.base_optimization_patience,
+            )
+        };
 
         let base_table = best_base_bit_groups.get_bases();
 
@@ -366,7 +376,10 @@ impl CompressionRunner for CompressionPipeline {
             best_base_bit_groups.get_base_bit_positions()
         );
 
-        let encoded_data = self.encoder.encode(&extended, &best_base_bit_groups);
+        let encoded_data = {
+            let _timer = ScopedTimer::debug("encoding");
+            self.encoder.encode(&extended, &best_base_bit_groups)
+        };
         let base_bit_positions = best_base_bit_groups.get_base_bit_positions().to_owned();
 
         CompressedData {

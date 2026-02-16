@@ -2,6 +2,7 @@
 use crate::compression::base_bit_groups::BaseBitGroups;
 use crate::error::EntroGdError;
 use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, BitDataView};
+use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
 pub use crate::compression::pipeline::{
@@ -186,6 +187,7 @@ fn decompress_samples_batch(
     compressed: &CompressedData,
     indices: &[usize],
 ) -> Result<BitDataSet, EntroGdError> {
+    let _timer = ScopedTimer::debug(format!("decompress_samples_batch ({} samples)", indices.len()));
     let data_info = &compressed.metadata;
     let num_features = data_info.num_features();
     let chunk_size = data_info.chunk_size();
@@ -244,6 +246,7 @@ fn decompress_samples_batch(
 
 /// Decompress the original file data (first n samples)
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
+    let _timer = ScopedTimer::info("decompress_file");
     let data_info = &compressed.metadata;
     let original_num_rows = data_info.original_size_bits / data_info.chunk_size();
     let indices: Vec<usize> = (0..original_num_rows).collect();
@@ -252,6 +255,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
 
 /// Decompress condensed samples for analytics
 pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamples> {
+    let _timer = ScopedTimer::info("decompress_analytics");
     if let Some(weights) = &compressed.condensed_sample_weights {
         // Reconstruct condensed samples from base_table
         let samples: Vec<BitVec<usize, Msb0>> = compressed
@@ -707,10 +711,10 @@ mod tests {
         // Create a very simple test case with minimal data
         let bit_data = create_simulated_bit_data(5, 1, 8); // 5 rows, 8-bit chunks
 
-        println!("\n=== INPUT DATA ===");
-        println!("Num rows: {}", bit_data.data.num_rows);
-        println!("Chunk size: {}", bit_data.data.chunk_size);
-        println!("Total bits: {}", bit_data.data.data.len());
+        log::info!("\n=== INPUT DATA ===");
+        log::info!("Num rows: {}", bit_data.data.num_rows);
+        log::info!("Chunk size: {}", bit_data.data.chunk_size);
+        log::info!("Total bits: {}", bit_data.data.data.len());
         for row in 0..bit_data.data.num_rows {
             let start = row * bit_data.data.chunk_size;
             let end = start + bit_data.data.chunk_size;
@@ -718,33 +722,33 @@ mod tests {
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
-            println!("Row {}: {:?}", row, chunk);
+            log::info!("Row {}: {:?}", row, chunk);
         }
 
         // Compress the data
-        println!("\n=== COMPRESSING ===");
+        log::info!("\n=== COMPRESSING ===");
         let compressed = compress(&bit_data);
 
-        println!("Base table entries: {}", compressed.base_table.len());
-        println!(
+        log::info!("Base table entries: {}", compressed.base_table.len());
+        log::info!(
             "Encoded bit stream size: {}",
             compressed.encoded_data.get_encoded_size()
         );
-        println!("Num samples: {}", compressed.encoded_data.get_num_samples());
-        println!(
+        log::info!("Num samples: {}", compressed.encoded_data.get_num_samples());
+        log::info!(
             "Num deviation bits: {}",
             compressed.encoded_data.get_num_deviation_bits()
         );
-        println!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
+        log::info!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
 
         // Decompress the data
-        println!("\n=== DECOMPRESSING ===");
+        log::info!("\n=== DECOMPRESSING ===");
         let decompressed = decompress_file(&compressed).expect("Decompression failed");
 
-        println!("Decompressed num rows: {}", decompressed.data.num_rows);
-        println!("Decompressed chunk size: {}", decompressed.data.chunk_size);
+        log::info!("Decompressed num rows: {}", decompressed.data.num_rows);
+        log::info!("Decompressed chunk size: {}", decompressed.data.chunk_size);
 
-        println!("\n=== COMPARING ===");
+        log::info!("\n=== COMPARING ===");
         // Check row by row - use decompressed row count since bit_data now contains condensed samples
         let num_original_rows = 5;
         for row in 0..num_original_rows {
@@ -761,11 +765,11 @@ mod tests {
                 .collect();
 
             if original_chunk == decompressed_chunk {
-                println!("Row {}: OK", row);
+                log::info!("Row {}: OK", row);
             } else {
-                println!("Row {} MISMATCH:", row);
-                println!("  Original:     {:?}", original_chunk);
-                println!("  Decompressed: {:?}", decompressed_chunk);
+                log::info!("Row {} MISMATCH:", row);
+                log::info!("  Original:     {:?}", original_chunk);
+                log::info!("  Decompressed: {:?}", decompressed_chunk);
             }
         }
 
@@ -788,12 +792,12 @@ mod tests {
 
         // Print analytics if available
         if let Some(analytics) = decompress_analytics(&compressed) {
-            println!("\n=== ANALYTICS ===");
-            println!("Condensed samples: {}", analytics.samples.len());
+            log::info!("\n=== ANALYTICS ===");
+            log::info!("Condensed samples: {}", analytics.samples.len());
             for (i, sample) in analytics.samples.iter().enumerate() {
                 let weight = analytics.weights[i];
                 let sample_bits: Vec<u8> = sample.iter().map(|b| if *b { 1 } else { 0 }).collect();
-                println!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
+                log::info!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
             }
         }
     }
@@ -830,7 +834,7 @@ mod tests {
         ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
-        println!("\n=== INPUT DATA ===");
+        log::info!("\n=== INPUT DATA ===");
         for row in 0..bit_data.data.num_rows {
             let start = row * bit_data.data.chunk_size;
             let end = start + bit_data.data.chunk_size;
@@ -838,39 +842,39 @@ mod tests {
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
-            println!("Row {}: {:?}", row, chunk);
+            log::info!("Row {}: {:?}", row, chunk);
         }
         // Compress the data
-        println!("\n=== COMPRESSING ===");
+        log::info!("\n=== COMPRESSING ===");
         let compressed = compress(&bit_data);
-        println!("Base table entries: {}", compressed.base_table.len());
-        println!("Base table: {:?}", compressed.base_table);
-        println!(
+        log::info!("Base table entries: {}", compressed.base_table.len());
+        log::info!("Base table: {:?}", compressed.base_table);
+        log::info!(
             "Encoded bit stream size: {}",
             compressed.encoded_data.get_encoded_size()
         );
-        println!("Num samples: {}", compressed.encoded_data.get_num_samples());
-        println!(
+        log::info!("Num samples: {}", compressed.encoded_data.get_num_samples());
+        log::info!(
             "Num deviation bits: {}",
             compressed.encoded_data.get_num_deviation_bits()
         );
-        println!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
+        log::info!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
         // Decompress analytics if available
         if let Some(analytics) = decompress_analytics(&compressed) {
-            println!("\n=== ANALYTICS ===");
-            println!("Condensed samples: {}", analytics.samples.len());
+            log::info!("\n=== ANALYTICS ===");
+            log::info!("Condensed samples: {}", analytics.samples.len());
             for (i, sample) in analytics.samples.iter().enumerate() {
                 let weight = analytics.weights[i];
                 let sample_bits: Vec<u8> = sample.iter().map(|b| if *b { 1 } else { 0 }).collect();
-                println!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
+                log::info!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
             }
         }
         // Decompress the data
-        println!("\n=== DECOMPRESSING ===");
+        log::info!("\n=== DECOMPRESSING ===");
         let decompressed = decompress_file(&compressed).expect("Decompression failed");
-        println!("Decompressed num rows: {}", decompressed.data.num_rows);
-        println!("Decompressed chunk size: {}", decompressed.data.chunk_size);
-        println!("\n=== COMPARING ===");
+        log::info!("Decompressed num rows: {}", decompressed.data.num_rows);
+        log::info!("Decompressed chunk size: {}", decompressed.data.chunk_size);
+        log::info!("\n=== COMPARING ===");
         // Check row by row - use decompressed row count since bit_data now contains condensed samples
         let num_original_rows = 12;
         for row in 0..num_original_rows {
@@ -885,11 +889,11 @@ mod tests {
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
             if original_chunk == decompressed_chunk {
-                println!("Row {}: OK", row);
+                log::info!("Row {}: OK", row);
             } else {
-                println!("Row {} MISMATCH:", row);
-                println!("  Original:     {:?}", original_chunk);
-                println!("  Decompressed: {:?}", decompressed_chunk);
+                log::info!("Row {} MISMATCH:", row);
+                log::info!("  Original:     {:?}", original_chunk);
+                log::info!("  Decompressed: {:?}", decompressed_chunk);
             }
         }
     }

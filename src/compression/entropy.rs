@@ -49,7 +49,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
-        println!("Entropies: {:?}", entropies);
+        log::info!("Entropies: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
         // Add more assertions based on expected entropy values
     }
@@ -82,7 +82,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
-        println!("Entropies: {:?}", entropies);
+        log::info!("Entropies: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
         // Add more assertions based on expected entropy values
     }
