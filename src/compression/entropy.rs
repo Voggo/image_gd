@@ -1,4 +1,4 @@
-use crate::preprocessor::BitDataView;
+use crate::compression::preprocessor::BitDataView;
 
 pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
     (0..bit_data.chunk_size())
@@ -21,7 +21,7 @@ pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
 mod tests {
     use super::*;
     use crate::data_loader::FeatureDataType;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     #[test]
     fn test_entropy_calculation_1() {

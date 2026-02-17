@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::compression::compress::{CompressedData, DeviationData};
+use crate::compression::preprocessor::{BitDataInfo, FeatureSpec, FeatureTransform};
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
-use crate::preprocessor::{BitDataInfo, FeatureSpec, FeatureTransform};
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
@@ -565,10 +565,9 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::compress::compress_with_pipeline;
-    use crate::compression::pipeline::{CompressionParams, CompressionPipeline};
+    use crate::compression::compress::{compress_with_config, CompressionConfig};
     use crate::data_loader::FeatureDataType;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     #[test]
     fn test_build_and_save_egd() {
@@ -584,8 +583,13 @@ mod tests {
         let info = BitDataInfo::new(features, 64).unwrap();
         let bit_data = BitDataSet { data, info };
 
-        let pipeline = CompressionPipeline::new(CompressionParams::new(10, 10, false));
-        let compressed = compress_with_pipeline(&bit_data, &pipeline);
+        let compressed = compress_with_config(
+            &bit_data,
+            &CompressionConfig {
+                enable_condensed_samples: false,
+                ..CompressionConfig::default()
+            },
+        );
         let egd = EgdFile::from_compressed_data(&compressed).unwrap();
 
         assert!(egd.as_bytes().len() >= 4);
@@ -618,8 +622,13 @@ mod tests {
         let info = BitDataInfo::new(features, 16).unwrap();
         let bit_data = BitDataSet { data, info };
 
-        let pipeline = CompressionPipeline::new(CompressionParams::new(10, 10, false));
-        let compressed = compress_with_pipeline(&bit_data, &pipeline);
+        let compressed = compress_with_config(
+            &bit_data,
+            &CompressionConfig {
+                enable_condensed_samples: false,
+                ..CompressionConfig::default()
+            },
+        );
 
         let egd = EgdFile::from_compressed_data(&compressed).unwrap();
         let loaded = egd.to_compressed_data().unwrap();

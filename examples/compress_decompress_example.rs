@@ -1,8 +1,8 @@
 use entro_gd::compression::compress::{compress, decompress_analytics, decompress_file};
 use entro_gd::compression::file_format::{save_compressed_as_egd, load_compressed_from_egd};
+use entro_gd::compression::preprocessor::{decode_value_from_bits, BitDataSet};
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FeatureDataType};
 use entro_gd::error::EntroGdError;
-use entro_gd::preprocessor::{decode_value_from_bits, BitDataSet};
 use entro_gd::init_logging;
 use entro_gd::timing::ScopedTimer;
 use std::fs::File;

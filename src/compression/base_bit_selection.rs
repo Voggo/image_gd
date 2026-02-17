@@ -1,4 +1,4 @@
-use crate::preprocessor::BitDataView;
+use crate::compression::preprocessor::BitDataView;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
@@ -116,7 +116,7 @@ impl<'a> BaseBitGroups<'a> {
 mod tests {
     use super::*;
     use crate::data_loader::FeatureDataType;
-    use crate::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
     fn print_bases(base_bit_groups: &BaseBitGroups) {
         log::info!("Bases after adding bit:");

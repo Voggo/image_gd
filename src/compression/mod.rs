@@ -1,6 +1,5 @@
-pub mod entropy;
-pub mod base_bit_groups;
+pub mod base_bit_selection;
 pub mod compress;
-#[path = "pipeline/mod.rs"]
-pub mod pipeline;
+pub mod entropy;
 pub mod file_format;
+pub mod preprocessor;
