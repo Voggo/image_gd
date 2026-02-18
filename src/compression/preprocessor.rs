@@ -38,6 +38,9 @@ impl FeatureSpec {
 pub struct BitDataInfo {
     pub features: Vec<FeatureSpec>,
     pub original_size_bits: usize,
+    pub n_data_samples: usize,
+    pub m_condensed_samples: Option<usize>,
+    pub m_condensed_sample_weights: Option<Vec<usize>>,
     feature_offsets: Vec<usize>,
     chunk_size: usize,
 }
@@ -104,6 +107,9 @@ impl BitDataInfo {
         Ok(BitDataInfo {
             features,
             original_size_bits,
+            n_data_samples: original_size_bits / running,
+            m_condensed_samples: None,
+            m_condensed_sample_weights: None,
             feature_offsets: offsets,
             chunk_size: running,
         })
@@ -140,6 +146,9 @@ impl BitDataInfo {
         BitDataInfo {
             features: self.features.clone(),
             original_size_bits,
+            n_data_samples: original_size_bits / self.chunk_size,
+            m_condensed_samples: self.m_condensed_samples,
+            m_condensed_sample_weights: self.m_condensed_sample_weights.clone(),
             feature_offsets: self.feature_offsets.clone(),
             chunk_size: self.chunk_size,
         }
@@ -311,54 +320,36 @@ impl BitDataSet {
         let idx = row * self.data.chunk_size + self.info.feature_offset(feature) + bit;
         self.data.data[idx]
     }
-}
 
-/// Trait for read-only access to bit-level data organized as rows of fixed-size chunks.
-///
-/// This allows algorithms to work generically over both plain `BitDataSet` and
-/// lightweight wrappers like `ExtendedBitData` that append extra rows without
-/// copying the original data.
-pub trait BitDataView {
-    fn num_rows(&self) -> usize;
-    fn num_features(&self) -> usize;
-    fn chunk_size(&self) -> usize;
-    fn feature_bits(&self, feature_idx: usize) -> usize;
-    fn feature_offset(&self, feature_idx: usize) -> usize;
-    fn feature_index_for_bit(&self, bit_pos: usize) -> Option<usize>;
-    fn get_bit(&self, row: usize, bit_in_chunk: usize) -> bool;
-    fn get_chunk(&self, row: usize) -> &BitSlice<usize, Msb0>;
-}
-
-impl BitDataView for BitDataSet {
-    fn num_rows(&self) -> usize {
+    pub fn num_rows(&self) -> usize {
         self.data.num_rows
     }
 
-    fn num_features(&self) -> usize {
+    pub fn num_features(&self) -> usize {
         self.info.num_features()
     }
 
-    fn chunk_size(&self) -> usize {
+    pub fn chunk_size(&self) -> usize {
         self.data.chunk_size
     }
 
-    fn feature_bits(&self, feature_idx: usize) -> usize {
+    pub fn feature_bits(&self, feature_idx: usize) -> usize {
         self.info.feature_bits(feature_idx)
     }
 
-    fn feature_offset(&self, feature_idx: usize) -> usize {
+    pub fn feature_offset(&self, feature_idx: usize) -> usize {
         self.info.feature_offset(feature_idx)
     }
 
-    fn feature_index_for_bit(&self, bit_pos: usize) -> Option<usize> {
+    pub fn feature_index_for_bit(&self, bit_pos: usize) -> Option<usize> {
         self.info.feature_index_for_bit(bit_pos)
     }
 
-    fn get_bit(&self, row: usize, bit_in_chunk: usize) -> bool {
+    pub fn get_bit(&self, row: usize, bit_in_chunk: usize) -> bool {
         self.data.get_bit(row, bit_in_chunk)
     }
 
-    fn get_chunk(&self, row: usize) -> &BitSlice<usize, Msb0> {
+    pub fn get_chunk(&self, row: usize) -> &BitSlice<usize, Msb0> {
         self.data.get_chunk(row)
     }
 }

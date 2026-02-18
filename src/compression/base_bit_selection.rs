@@ -1,10 +1,9 @@
-use crate::compression::preprocessor::BitDataView;
+use crate::compression::preprocessor::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
 #[derive(Clone)]
-pub struct BaseBitGroups<'a> {
-    bit_data: &'a (dyn BitDataView + 'a),
+pub struct BaseBitGroups {
     groups: Vec<Vec<usize>>,
     base_bit_mask: BitVec<usize, Msb0>,
     base_bit_positions: Vec<usize>,
@@ -12,8 +11,8 @@ pub struct BaseBitGroups<'a> {
     num_bits_per_base: usize,
 }
 
-impl std::fmt::Debug for BaseBitGroups<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl std::fmt::Debug for BaseBitGroups {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("BaseBitGroups")
             .field("groups", &self.groups)
             .field("base_bit_mask", &self.base_bit_mask)
@@ -24,14 +23,13 @@ impl std::fmt::Debug for BaseBitGroups<'_> {
     }
 }
 
-impl<'a> BaseBitGroups<'a> {
-    pub fn new(bit_data: &'a (dyn BitDataView + 'a)) -> Self {
-        let groups: Vec<Vec<usize>> = vec![(0..bit_data.num_rows()).collect()];
-        let base_bit_mask = bitvec![usize, Msb0; 0; bit_data.chunk_size()];
+impl BaseBitGroups {
+    pub fn new(num_rows: usize, chunk_size: usize) -> Self {
+        let groups: Vec<Vec<usize>> = vec![(0..num_rows).collect()];
+        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
         BaseBitGroups {
-            bit_data,
             groups,
             base_bit_mask,
             base_bit_positions,
@@ -40,7 +38,7 @@ impl<'a> BaseBitGroups<'a> {
         }
     }
 
-    pub fn add_bit_position(&mut self, bit_position: usize) -> usize {
+    pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit position {}", bit_position));
         self.base_bit_mask.set(bit_position, true);
         self.num_bits_per_base += 1;
@@ -50,7 +48,7 @@ impl<'a> BaseBitGroups<'a> {
             let mut group_zeros = Vec::new();
             let mut group_ones = Vec::new();
             for &row in self.groups[group_idx].iter() {
-                if self.bit_data.get_bit(row, bit_position) {
+                if bit_data.get_bit(row, bit_position) {
                     group_ones.push(row);
                 } else {
                     group_zeros.push(row);
@@ -78,14 +76,14 @@ impl<'a> BaseBitGroups<'a> {
         self.num_bases
     }
     /// Get the bases as BitVecs along with their counts
-    pub fn get_bases(&self) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         let mut bases = Vec::with_capacity(self.num_bases);
         for group in &self.groups {
             if group.is_empty() {
                 continue;
             }
-            let base: BitVec<usize, Msb0> = self.bit_data.get_chunk(group[0]).to_bitvec();
+            let base: BitVec<usize, Msb0> = bit_data.get_chunk(group[0]).to_bitvec();
             bases.push((base & &self.base_bit_mask, group.len()));
         }
         bases
@@ -118,9 +116,9 @@ mod tests {
     use crate::data_loader::FeatureDataType;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
 
-    fn print_bases(base_bit_groups: &BaseBitGroups) {
+    fn print_bases(base_bit_groups: &BaseBitGroups, bit_data: &BitDataSet) {
         log::info!("Bases after adding bit:");
-        for (i, (base, count)) in base_bit_groups.get_bases().iter().enumerate() {
+        for (i, (base, count)) in base_bit_groups.get_bases(bit_data).iter().enumerate() {
             log::info!("Base {}: {:?}, Count: {}", i, base, count);
         }
     }
@@ -152,13 +150,13 @@ mod tests {
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
         log::info!("BitData: {}", bit_data);
-        let mut base_bit_groups = BaseBitGroups::new(&bit_data);
-        let num_bases = base_bit_groups.add_bit_position(4);
+        let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
         assert_eq!(num_bases, 2);
-        print_bases(&base_bit_groups);
-        let num_bases = base_bit_groups.add_bit_position(5);
+        print_bases(&base_bit_groups, &bit_data);
+        let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
         assert_eq!(num_bases, 3);
-        print_bases(&base_bit_groups);
+        print_bases(&base_bit_groups, &bit_data);
     }
 
     #[test]
@@ -188,13 +186,13 @@ mod tests {
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
         log::info!("BitData: {}", bit_data);
-        let mut base_bit_groups = BaseBitGroups::new(&bit_data);
-        let num_bases = base_bit_groups.add_bit_position(4);
+        let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
         assert_eq!(num_bases, 2);
-        print_bases(&base_bit_groups);
-        let num_bases = base_bit_groups.add_bit_position(5);
+        print_bases(&base_bit_groups, &bit_data);
+        let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
         assert_eq!(num_bases, 3);
-        print_bases(&base_bit_groups);   
+        print_bases(&base_bit_groups, &bit_data);   
     }
 
 

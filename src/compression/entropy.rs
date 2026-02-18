@@ -1,6 +1,20 @@
-use crate::compression::preprocessor::BitDataView;
+use crate::compression::preprocessor::BitDataSet;
+use crate::error::EntroGdError;
+use crate::filter_pipeline::Filter;
 
-pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
+pub struct EntropyNaive;
+
+impl Filter for EntropyNaive {
+    type Input = BitDataSet;
+    type Output = (BitDataSet, Vec<(usize, f64)>);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let entropy = calculate_entropy(&input);
+        Ok((input, entropy))
+    }
+}
+
+pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
     (0..bit_data.chunk_size())
         .map(|bit| {
             let count_ones = (0..bit_data.num_rows())
@@ -20,8 +34,8 @@ pub fn calculate_entropy(bit_data: &impl BitDataView) -> Vec<(usize, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_loader::FeatureDataType;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
 
     #[test]
     fn test_entropy_calculation_1() {
@@ -31,8 +45,8 @@ mod tests {
         let num_features = 3;
         let bits_per_feature = 1;
         let data = vec![
-            true, false, true,  // Row 0
-            true, true, false,  // Row 1
+            true, false, true, // Row 0
+            true, true, false, // Row 1
             false, false, true, // Row 2
             false, true, false, // Row 3
         ];
@@ -41,10 +55,8 @@ mod tests {
             chunk_size,
             num_rows,
         };
-        let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
-            num_features
-        ];
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -62,22 +74,20 @@ mod tests {
         let num_features = 8;
         let bits_per_feature = 1;
         let data = vec![
-            true, false, true, false, false, true, true, false,  // Row 0
-            true, true, false, true, true, true, false, false,  // Row 1
+            true, false, true, false, false, true, true, false, // Row 0
+            true, true, false, true, true, true, false, false, // Row 1
             false, true, true, false, true, false, true, true, // Row 2
             true, false, false, false, true, true, false, true, // Row 3
             false, true, false, false, true, true, false, true, // Row 4
-            true, true, false, true, true, true, false, false,  // Row 5
+            true, true, false, true, true, true, false, false, // Row 5
         ];
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
             num_rows,
         };
-        let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
-            num_features
-        ];
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -85,5 +95,36 @@ mod tests {
         log::info!("Entropies: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
         // Add more assertions based on expected entropy values
+    }
+
+    #[test]
+    fn test_pipeline_with_entropy() {
+        // Create a simple BitData for testing
+        let num_rows = 6;
+        let chunk_size = 8;
+        let num_features = 8;
+        let bits_per_feature = 1;
+        let data = vec![
+            true, false, true, false, false, true, true, false, // Row 0
+            true, true, false, true, true, true, false, false, // Row 1
+            false, true, true, false, true, false, true, true, // Row 2
+            true, false, false, false, true, true, false, true, // Row 3
+            false, true, false, false, true, true, false, true, // Row 4
+            true, true, false, true, true, true, false, false, // Row 5
+        ];
+        let data = BitData {
+            data: data.into_iter().collect(),
+            chunk_size,
+            num_rows,
+        };
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let entropy_filter = EntropyNaive;
+        let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
+        log::info!("Entropies from pipeline: {:?}", entropies);
+        assert_eq!(entropies.len(), chunk_size);
     }
 }

@@ -6,6 +6,7 @@ use crate::compression::compress::{CompressedData, DeviationData};
 use crate::compression::preprocessor::{BitDataInfo, FeatureSpec, FeatureTransform};
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
+use crate::filter_pipeline::Filter;
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
@@ -357,6 +358,20 @@ impl EgdFile {
     }
 }
 
+pub struct SaveEgdFile {
+    pub output_path: PathBuf,
+}
+
+impl Filter for SaveEgdFile {
+    type Input = CompressedData;
+    type Output = PathBuf;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let egd_file = EgdFile::from_compressed_data(&input)?;
+        egd_file.save(&self.output_path)
+    }
+}
+
 /// Convenience API requested by caller:
 /// input: `CompressedData`, effect: save an `.egd` file, output: `Result`.
 pub fn save_compressed_as_egd<P: AsRef<Path>>(
@@ -364,6 +379,17 @@ pub fn save_compressed_as_egd<P: AsRef<Path>>(
     output_path: P,
 ) -> Result<PathBuf, EntroGdError> {
     EgdFile::from_compressed_data(compressed)?.save(output_path)
+}
+
+pub struct LoadEgdFile {}
+
+impl Filter for LoadEgdFile {
+    type Input = PathBuf;
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        EgdFile::load(input)?.to_compressed_data()
+    }
 }
 
 /// Load an `.egd` file from disk and parse it into `CompressedData`.
@@ -565,9 +591,19 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::compress::{compress_with_config, CompressionConfig};
     use crate::data_loader::FeatureDataType;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::compress::{SelectBases, GenCondensedSamples, EncodeData};
+    use crate::compression::entropy::EntropyNaive;
+    use crate::filter_pipeline::{Filter, FilterExt};
+
+    fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+        let pipeline = EntropyNaive
+            .then(GenCondensedSamples { m_max: 100 })
+            .then(SelectBases { patience: 5 })
+            .then(EncodeData {});
+        pipeline
+    }
 
     #[test]
     fn test_build_and_save_egd() {
@@ -582,14 +618,8 @@ mod tests {
         ];
         let info = BitDataInfo::new(features, 64).unwrap();
         let bit_data = BitDataSet { data, info };
-
-        let compressed = compress_with_config(
-            &bit_data,
-            &CompressionConfig {
-                enable_condensed_samples: false,
-                ..CompressionConfig::default()
-            },
-        );
+        let pipeline = get_compression_pipeline();
+        let compressed = pipeline.process(bit_data).unwrap();
         let egd = EgdFile::from_compressed_data(&compressed).unwrap();
 
         assert!(egd.as_bytes().len() >= 4);
@@ -622,13 +652,7 @@ mod tests {
         let info = BitDataInfo::new(features, 16).unwrap();
         let bit_data = BitDataSet { data, info };
 
-        let compressed = compress_with_config(
-            &bit_data,
-            &CompressionConfig {
-                enable_condensed_samples: false,
-                ..CompressionConfig::default()
-            },
-        );
+        let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
         let egd = EgdFile::from_compressed_data(&compressed).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
