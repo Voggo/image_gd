@@ -1,11 +1,22 @@
 use crate::compression::base_bit_selection::BaseBitGroups;
+use crate::compression::entropy::EntropyOptimized;
 use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet};
 use crate::error::EntroGdError;
-use crate::filter_pipeline::Filter;
+use crate::filter_pipeline::{Filter, FilterExt};
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 use log::debug;
 use std::sync::Arc;
+
+pub fn build_compression_pipeline(
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+    EntropyOptimized {}
+        .then(GenCondensedSamples { m_max })
+        .then(SelectBases { patience })
+        .then(EncodeData {})
+}
 
 /// Represents the compressed output
 #[derive(Debug, Clone)]
@@ -163,6 +174,10 @@ impl Filter for GenCondensedSamples {
     type Output = (BitDataSet, Vec<(usize, f64)>);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Generating condensed samples (m_max = {})",
+            self.m_max
+        ));
         let (bit_data, entropy) = input;
         let condensed_samples = select_condensed_samples(&bit_data, &entropy, self.m_max);
         Ok((
@@ -190,15 +205,23 @@ fn select_condensed_samples(
     let organized_entropy_by_feature = organize_entropy_by_feature(entropy.clone(), bit_data);
     let mut condensed_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
-    for &(bit_position, entropy_val) in organized_entropy_by_feature.iter() {
+    // Extract zero entropy bits first
+    let zero_entropy_bits: Vec<usize> = organized_entropy_by_feature
+        .iter()
+        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
+        .map(|(bit_position, _)| *bit_position)
+        .collect();
+    condensed_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
+
+    // Loop over non-zero entropy bits
+    for &(bit_position, _entropy_val) in organized_entropy_by_feature
+        .iter()
+        .skip(zero_entropy_bits.len())
+    {
         if condensed_bit_groups.get_num_bases() >= m_max {
             break;
         }
-        if entropy_val == 0.0 {
-            condensed_bit_groups.add_constant_bit_position(bit_position);
-        } else {
-            condensed_bit_groups.add_bit_position(bit_data, bit_position);
-        }
+        condensed_bit_groups.add_bit_position(bit_data, bit_position);
     }
 
     let bases = condensed_bit_groups.get_bases(bit_data);
@@ -286,6 +309,10 @@ impl Filter for SelectBases {
     type Output = (BitDataSet, BaseBitGroups);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Selecting base bits with patience {}",
+            self.patience
+        ));
         let (bit_data, entropy) = input;
         let base_bit_groups = optimize_base_bit_groups(&bit_data, entropy, self.patience);
         Ok((bit_data, base_bit_groups))
@@ -301,16 +328,18 @@ fn optimize_base_bit_groups(
     let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
-    while let Some((bit_pos, 0.0)) = entropy.first() {
-        base_bit_groups.add_constant_bit_position(*bit_pos);
-        entropy.remove(0);
-    }
+    let zero_entropy_bits: Vec<usize> = entropy
+        .iter()
+        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
+        .map(|(bit_position, _)| *bit_position)
+        .collect();
+    base_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
 
     let mut best_base_bit_groups = base_bit_groups.clone();
     let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
     let mut trial_base_bit_groups = base_bit_groups.clone();
 
-    for &(bit_position, _) in entropy.iter() {
+    for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
         trial_base_bit_groups.add_bit_position(bit_data, bit_position);
         let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
 
@@ -342,11 +371,16 @@ impl Filter for EncodeData {
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format");
         let (bit_data, base_bit_groups) = input;
-        Ok(CompressedData::new(
+        let mut compressed = CompressedData::new(
             encode_data(&bit_data, &base_bit_groups),
             bit_data.info.clone(),
-        ))
+        );
+        compressed.base_table = base_bit_groups.get_bases(&bit_data);
+        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        compressed.condensed_sample_weights = bit_data.info.m_condensed_sample_weights.clone();
+        Ok(compressed)
     }
 }
 
@@ -404,21 +438,17 @@ impl Filter for DecompressRowsData {
     type Output = BitDataSet;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!("Decompressing {} rows", input.1.len()));
         let (compressed, indices) = input;
         decompress_samples_batch(compressed.as_ref(), &indices)
     }
 }
-
 
 /// Private batch decompression function
 fn decompress_samples_batch(
     compressed: &CompressedData,
     indices: &[usize],
 ) -> Result<BitDataSet, EntroGdError> {
-    let _timer = ScopedTimer::debug(format!(
-        "decompress_samples_batch ({} samples)",
-        indices.len()
-    ));
     let data_info = &compressed.metadata;
     let num_features = data_info.num_features();
     let chunk_size = data_info.chunk_size();
@@ -485,34 +515,33 @@ impl Filter for DecompressFileData {
     type Output = BitDataSet;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Decompressing entire file data");
         decompress_file(&input)
     }
 }
 
 /// Decompress the original file data (first n samples)
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
-    let _timer = ScopedTimer::info("decompress_file");
     let data_info = &compressed.metadata;
     let original_num_rows = data_info.original_size_bits / data_info.chunk_size();
     let indices: Vec<usize> = (0..original_num_rows).collect();
     decompress_samples_batch(compressed, &indices)
 }
 
-
 pub struct DecompressAnalytics {}
-    
+
 impl Filter for DecompressAnalytics {
-    type Input = CompressedData; 
+    type Input = CompressedData;
     type Output = Option<CondensedSamples>;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Decompressing condensed samples for analytics");
         Ok(decompress_analytics(&input))
     }
 }
 
 /// Decompress condensed samples for analytics
 pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamples> {
-    let _timer = ScopedTimer::info("decompress_analytics");
     if let Some(weights) = &compressed.condensed_sample_weights {
         // Reconstruct condensed samples from base_table
         let samples: Vec<BitVec<usize, Msb0>> = compressed
@@ -538,18 +567,14 @@ fn calculate_original_size(bit_data: &BitDataSet) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compression::compress::build_compression_pipeline;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
-    use crate::compression::entropy::EntropyNaive;
-    use crate::filter_pipeline::{Filter, FilterExt};
+    use crate::filter_pipeline::Filter;
     use pretty_assertions::assert_eq;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        let pipeline = EntropyNaive
-            .then(GenCondensedSamples { m_max: 100 })
-            .then(SelectBases { patience: 5 })
-            .then(EncodeData {});
-        pipeline
+        build_compression_pipeline(100, 5)
     }
 
     // Helper function to create test BitData
@@ -661,7 +686,9 @@ mod tests {
     fn test_compress_basic() {
         // Use larger data to avoid optimization issues in edge cases
         let bit_data = create_test_bit_data(100, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Check that we get a CompressedData struct with valid fields
         assert_eq!(compressed.metadata.num_features(), 16);
@@ -673,7 +700,9 @@ mod tests {
     #[test]
     fn test_compress_single_row() {
         let bit_data = create_test_bit_data(1, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 16);
         assert_eq!(compressed.metadata.original_size_bits, 32);
@@ -685,7 +714,9 @@ mod tests {
     #[test]
     fn test_compress_large_data() {
         let bit_data = create_test_bit_data(1000, 2, 32);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 32);
         assert_eq!(compressed.metadata.original_size_bits, 1000 * 64);
@@ -697,7 +728,9 @@ mod tests {
     #[test]
     fn test_compress_preserves_sample_count() {
         let bit_data = create_test_bit_data(100, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Verify original size is preserved in metadata
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
@@ -710,7 +743,9 @@ mod tests {
     #[test]
     fn test_compress_metadata_accuracy() {
         let bit_data = create_test_bit_data(50, 2, 8);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 8);
         assert_eq!(compressed.metadata.original_size_bits, 50 * 16);
@@ -719,7 +754,9 @@ mod tests {
     #[test]
     fn test_compress_encoded_data_structure() {
         let bit_data = create_test_bit_data(20, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Verify original metadata is correct
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
@@ -737,7 +774,9 @@ mod tests {
     #[test]
     fn test_compress_invalid_sample_index() {
         let bit_data = create_test_bit_data(10, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Verify decompress_file returns correct number of rows
         let decompressed = decompress_file(&compressed).unwrap();
@@ -751,7 +790,9 @@ mod tests {
     #[test]
     fn test_compress_base_table_non_empty() {
         let bit_data = create_test_bit_data(50, 2, 32);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Base table should contain entries for each base group
         assert!(!compressed.base_table.is_empty());
@@ -776,7 +817,9 @@ mod tests {
 
         for num_rows in row_counts {
             let bit_data = create_test_bit_data(num_rows, 2, 16);
-            let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+            let compressed = get_compression_pipeline()
+                .process(bit_data.clone())
+                .unwrap();
 
             assert_eq!(compressed.metadata.num_features(), 16);
             assert_eq!(compressed.metadata.original_size_bits, num_rows * 32);
@@ -790,7 +833,9 @@ mod tests {
     #[test]
     fn test_compress_encoded_data_retrieval() {
         let bit_data = create_test_bit_data(20, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Verify we can retrieve samples and they have expected structure
         for i in 0..20 {
@@ -813,8 +858,12 @@ mod tests {
         let bit_data1 = create_test_bit_data(original_rows, 2, 16);
         let bit_data2 = create_test_bit_data(original_rows, 2, 16);
 
-        let compressed1 = get_compression_pipeline().process(bit_data1.clone()).unwrap();
-        let compressed2 = get_compression_pipeline().process(bit_data2.clone()).unwrap();
+        let compressed1 = get_compression_pipeline()
+            .process(bit_data1.clone())
+            .unwrap();
+        let compressed2 = get_compression_pipeline()
+            .process(bit_data2.clone())
+            .unwrap();
 
         assert_eq!(
             compressed1.metadata.original_size_bits,
@@ -834,7 +883,9 @@ mod tests {
 
         for num_rows in powers_of_two {
             let bit_data = create_test_bit_data(num_rows, 2, 16);
-            let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+            let compressed = get_compression_pipeline()
+                .process(bit_data.clone())
+                .unwrap();
 
             assert_eq!(compressed.metadata.original_size_bits, num_rows * 32);
             // Verify decompressed matches original
@@ -847,7 +898,9 @@ mod tests {
     fn test_compress_small_chunks() {
         // Test with 8-bit chunks (1 byte per feature, 1 feature)
         let bit_data = create_test_bit_data(100, 1, 8);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 8);
         assert_eq!(compressed.metadata.original_size_bits, 100 * 8);
@@ -860,7 +913,9 @@ mod tests {
     fn test_compress_medium_chunks() {
         // Test with 16-bit chunks
         let bit_data = create_test_bit_data(100, 1, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 16);
         assert_eq!(compressed.metadata.original_size_bits, 100 * 16);
@@ -873,7 +928,9 @@ mod tests {
     fn test_compress_large_chunks() {
         // Test with 32-bit chunks
         let bit_data = create_test_bit_data(100, 1, 32);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 32);
         assert_eq!(compressed.metadata.original_size_bits, 100 * 32);
@@ -885,7 +942,9 @@ mod tests {
     #[test]
     fn test_deviation_data_out_of_bounds() {
         let bit_data = create_test_bit_data(50, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Verify decompress_file returns correct number of rows
         let decompressed = decompress_file(&compressed).unwrap();
@@ -899,7 +958,9 @@ mod tests {
     #[test]
     fn test_compressed_data_structure() {
         let bit_data = create_test_bit_data(100, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         // Verify CompressedData has all required fields
         assert!(!compressed.base_table.is_empty());
@@ -951,7 +1012,9 @@ mod tests {
         let bit_data = create_test_bit_data(original_rows, 2, 16);
 
         // Compress the data
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
         // Decompress the data
         let decompressed = decompress_file(&compressed).expect("Decompression failed");
 
@@ -986,7 +1049,9 @@ mod tests {
 
         // Compress the data
         log::info!("\n=== COMPRESSING ===");
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
 
         log::info!("Base table entries: {}", compressed.base_table.len());
         log::info!(
@@ -1103,7 +1168,9 @@ mod tests {
         }
         // Compress the data
         log::info!("\n=== COMPRESSING ===");
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
         log::info!("Base table entries: {}", compressed.base_table.len());
         log::info!("Base table: {:?}", compressed.base_table);
         log::info!(
@@ -1158,7 +1225,9 @@ mod tests {
     #[test]
     fn test_decompress_rows_random_subset() {
         let bit_data = create_test_bit_data(20, 2, 16);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
         let indices = vec![0, 3, 7, 19];
 
         let subset = decompress_samples_batch(&compressed, &indices).unwrap();
@@ -1171,7 +1240,9 @@ mod tests {
     #[test]
     fn test_decompress_rows_filter() {
         let bit_data = create_test_bit_data(10, 2, 8);
-        let compressed = get_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
         let filter = DecompressRowsData;
         let subset = filter
             .process((Arc::clone(&Arc::new(compressed)), vec![1, 5, 9]))

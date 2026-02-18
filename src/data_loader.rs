@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::path::Path;
-
 use csv::ReaderBuilder;
 
+use crate::timing::ScopedTimer;
 use crate::error::EntroGdError;
 
 /// Supported feature data types for parsing and bit packing.
@@ -160,6 +160,8 @@ impl CsvDataLoader {
 
 impl DataLoader for CsvDataLoader {
     fn load<P: AsRef<Path>>(&self, path: P) -> Result<LoadedDataset, EntroGdError> {
+        let _timer = ScopedTimer::info(format!("Loading dataset from CSV: {:?}", path.as_ref()));
+        
         let file = File::open(path)?;
         let mut reader = ReaderBuilder::new()
             .has_headers(self.has_headers)

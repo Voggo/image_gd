@@ -5,6 +5,7 @@ use std::path::Path;
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
 use crate::error::EntroGdError;
+use crate::timing::ScopedTimer;
 
 const MAX_DECIMAL_SCALE: u8 = 9;
 
@@ -217,6 +218,7 @@ pub struct BitDataSet {
 impl BitDataSet {
     /// Create BitDataSet from a Dataset using column data types to derive the schema.
     pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
+        let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
         let num_features = dataset.num_columns();
         let mut features = Vec::with_capacity(num_features);
         for feature_idx in 0..num_features {

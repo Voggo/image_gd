@@ -330,7 +330,13 @@ impl EgdFile {
                 message: "original size overflow".to_string(),
             }
         })?;
-        let metadata = BitDataInfo::new(features, original_size_bits)?;
+        let mut metadata = BitDataInfo::new(features, original_size_bits)?;
+        metadata.m_condensed_samples = if m == 0 { None } else { Some(m) };
+        metadata.m_condensed_sample_weights = if m == 0 {
+            None
+        } else {
+            Some(weights.clone())
+        };
 
         Ok(CompressedData {
             encoded_data: DeviationData::new(
@@ -593,16 +599,11 @@ mod tests {
     use super::*;
     use crate::data_loader::FeatureDataType;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
-    use crate::compression::compress::{SelectBases, GenCondensedSamples, EncodeData};
-    use crate::compression::entropy::EntropyNaive;
-    use crate::filter_pipeline::{Filter, FilterExt};
+    use crate::compression::compress::build_compression_pipeline;
+    use crate::filter_pipeline::Filter;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        let pipeline = EntropyNaive
-            .then(GenCondensedSamples { m_max: 100 })
-            .then(SelectBases { patience: 5 })
-            .then(EncodeData {});
-        pipeline
+        build_compression_pipeline(100, 5)
     }
 
     #[test]

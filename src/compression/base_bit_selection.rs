@@ -67,11 +67,13 @@ impl BaseBitGroups {
         self.num_bases
     }
 
-    pub fn add_constant_bit_position(&mut self, bit_position: usize) -> usize {
-        let _timer = ScopedTimer::trace(format!("Adding constant bit position {}", bit_position));
-        self.base_bit_mask.set(bit_position, true);
-        self.num_bits_per_base += 1;
-        self.base_bit_positions.push(bit_position);
+    pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
+        let _timer = ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
+        for &bit_position in bit_positions {
+            self.base_bit_mask.set(bit_position, true);
+        }
+        self.num_bits_per_base += bit_positions.len();
+        self.base_bit_positions.extend_from_slice(bit_positions);
         self.num_bases = self.groups.len(); // Number of bases doesn't change for constant bits
         self.num_bases
     }
