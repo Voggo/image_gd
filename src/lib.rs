@@ -2,9 +2,30 @@ pub mod error;
 pub mod data_loader;
 pub mod compression;
 pub mod timing;
+pub mod filter_pipeline;
 
+pub use compression::{
+	build_compression_pipeline, calculate_entropy, decode_value_from_bits, BitData, BitDataInfo, BitDataSet,
+	CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
+	DeviationSample, EgdFile, EncodeData, EntropyNaive, EntropyOptimized, FeatureSpec, FeatureTransform,
+	GenCondensedSamples, LoadEgdFile, SaveEgdFile, SelectBases, FORMAT_VERSION, MAGIC_BYTES,
+};
+pub use data_loader::{
+	ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
+	LoadedDataset,
+};
 pub use error::EntroGdError;
+pub use filter_pipeline::{Chain, Filter, FilterExt};
 pub use timing::ScopedTimer;
+
+pub mod prelude {
+	pub use crate::{
+		build_compression_pipeline, calculate_entropy, decode_value_from_bits, init_logging, BitDataSet, CsvDataLoader, DataLoader, DataValue,
+		DecompressAnalytics, DecompressFileData, EncodeData, EntroGdError, EntropyNaive, EntropyOptimized,
+		FeatureDataType, Filter, FilterExt, GenCondensedSamples, LoadEgdFile, SaveEgdFile,
+		ScopedTimer, SelectBases,
+	};
+}
 
 use flexi_logger::{Duplicate, FileSpec, Logger, WriteMode};
 use std::sync::Once;
