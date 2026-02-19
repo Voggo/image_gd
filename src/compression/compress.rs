@@ -192,12 +192,24 @@ fn select_condensed_samples(
     entropy: &Vec<(usize, f64)>,
     m_max: usize,
 ) -> CondensedSamples {
-    // IMPORTANT: there is a difference between the chunks function used in this function and the get_chunk function in BitDataSet.
-    // The chunks function is used to iterate over the bits of a sample in groups of 64 bits,
-    // while the get_chunk function retrieves the entire chunk for a given sample index.
-    // The chunks function is used to calculate the deviation from the base pattern for each sample,
-    // while the get_chunk function is used to retrieve the original chunk for each sample
-    // when calculating the deviation sum and creating the condensed sample.
+    fn bits_to_u64(bits: &BitSlice<usize, Msb0>) -> u64 {
+        bits.iter()
+            .fold(0u64, |acc, bit| (acc << 1) | (*bit as u64))
+    }
+
+    fn push_u64_bits(stream: &mut BitVec<usize, Msb0>, value: u64, bits: usize) {
+        for shift in (0..bits).rev() {
+            stream.push(((value >> shift) & 1) == 1);
+        }
+    }
+
+    fn mask_for_bits(bits: usize) -> u64 {
+        if bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        }
+    }
 
     let mut samples = Vec::new();
     let mut weights = Vec::new();
@@ -225,43 +237,40 @@ fn select_condensed_samples(
     }
 
     let bases = condensed_bit_groups.get_bases(bit_data);
-    let base_mask_chunked_int = condensed_bit_groups
-        .get_base_bit_mask()
-        .chunks(64)
-        .map(|chunk| chunk.load_be::<u64>())
-        .collect::<Vec<u64>>();
+    let base_mask = condensed_bit_groups.get_base_bit_mask();
 
     for (base_group, base) in condensed_bit_groups.get_groups().iter().zip(bases.iter()) {
-        let mut condensed_bitvec = BitVec::<usize, Msb0>::with_capacity(bit_data.chunk_size());
-        let mut acumulators = vec![0u128; base_mask_chunked_int.len()];
-
-        for &sample_idx in base_group.iter() {
-            let sample = bit_data.get_chunk(sample_idx);
-            for (i, (sample_chunk, base_mask_chunk)) in sample
-                .chunks(64)
-                .zip(base_mask_chunked_int.iter())
-                .enumerate()
-            {
-                let chunk_deviation = sample_chunk.load_be::<u64>() & !base_mask_chunk;
-                acumulators[i] += chunk_deviation as u128;
-            }
+        if base_group.is_empty() {
+            continue;
         }
 
-        let base_chunks = base
-            .0
-            .chunks(64)
-            .map(|chunk| chunk.load_be::<u64>())
-            .collect::<Vec<u64>>();
-        let averaged_chunks: Vec<u64> = acumulators
-            .iter()
-            .zip(base_chunks.iter())
-            .map(|(&acc, &base)| base + (acc as f64 / base_group.len() as f64) as u64)
-            .collect();
+        let mut condensed_bitvec = BitVec::<usize, Msb0>::with_capacity(bit_data.chunk_size());
 
-        averaged_chunks.iter().for_each(|&chunk| {
-            condensed_bitvec.extend_from_bitslice(BitSlice::<u64, Msb0>::from_element(&chunk));
-        });
-        condensed_bitvec.truncate(bit_data.chunk_size());
+        for feature_idx in 0..bit_data.num_features() {
+            let feature_offset = bit_data.feature_offset(feature_idx);
+            let feature_bits = bit_data.feature_bits(feature_idx);
+            let feature_end = feature_offset + feature_bits;
+
+            let base_feature = &base.0[feature_offset..feature_end];
+            let base_feature_mask = &base_mask[feature_offset..feature_end];
+
+            let base_value = bits_to_u64(base_feature);
+            let deviation_mask = !bits_to_u64(base_feature_mask) & mask_for_bits(feature_bits);
+
+            let mut deviation_accumulator = 0u128;
+            for &sample_idx in base_group.iter() {
+                let sample_feature = &bit_data.get_chunk(sample_idx)[feature_offset..feature_end];
+                let sample_feature_value = bits_to_u64(sample_feature);
+                let feature_deviation = sample_feature_value & deviation_mask;
+                deviation_accumulator += feature_deviation as u128;
+            }
+
+            let mean_deviation = (deviation_accumulator / base_group.len() as u128) as u64;
+            let condensed_feature_value =
+                (base_value + mean_deviation) & mask_for_bits(feature_bits);
+            push_u64_bits(&mut condensed_bitvec, condensed_feature_value, feature_bits);
+        }
+
         samples.push(condensed_bitvec);
         weights.push(base_group.len());
     }

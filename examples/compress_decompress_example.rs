@@ -65,7 +65,7 @@ fn main() -> Result<(), EntroGdError> {
     let _compression_timer = ScopedTimer::info("Compression process whithout loading .csv file and parsing");
     // Compress the data with filters (pipe-and-filter style)
     log::info!("\nCompressing data...");
-    let compression_pipeline = build_compression_pipeline(10, 10);
+    let compression_pipeline = build_compression_pipeline(50, 10);
     let compressed = compression_pipeline.process(bit_data)?;
 
     let compressed_path = SaveEgdFile {
@@ -127,7 +127,7 @@ fn main() -> Result<(), EntroGdError> {
     // Decompress the data through filters
     log::info!("\nDecompressing data...");
     let decompressed = (DecompressFileData {}).process(loaded_compressed.clone())?;
-    if let Some(analytics) = (DecompressAnalytics {}).process(loaded_compressed)? {
+    if let Some(analytics) = (DecompressAnalytics {}).process(loaded_compressed.clone())? {
         log::info!("\nDecompression analytics:");
         for (i, (sample, weight)) in analytics
             .samples
@@ -135,16 +135,24 @@ fn main() -> Result<(), EntroGdError> {
             .zip(analytics.weights.iter())
             .enumerate()
         {
-            let mut sample_int = 0u64;
-            for bit in sample.iter().take(64) {
-                sample_int = (sample_int << 1) | (*bit as u64);
+            log::info!("  Sample {}: {} weight", i, weight);
+
+            for feature_idx in 0..loaded_compressed.metadata.num_features() {
+                let feature_start = loaded_compressed.metadata.feature_offset(feature_idx);
+                let feature_end =
+                    feature_start + loaded_compressed.metadata.feature_bits(feature_idx);
+                let feature_bits = &sample[feature_start..feature_end];
+                let spec = &loaded_compressed.metadata.features[feature_idx];
+
+                let formatted = match decode_value_from_bits(feature_bits, spec) {
+                    DataValue::Unsigned(v) => v.to_string(),
+                    DataValue::Signed(v) => v.to_string(),
+                    DataValue::F32(v) => v.to_string(),
+                    DataValue::F64(v) => v.to_string(),
+                };
+
+                log::info!("    Feature {}: {}", feature_idx, formatted);
             }
-            log::info!(
-                "  Sample {}: {} weight, {} sample int",
-                i,
-                weight,
-                sample_int
-            );
         }
     }
 
