@@ -1,6 +1,7 @@
 use bitvec::prelude::*;
 use std::fmt::Display;
 use std::path::Path;
+use log::{debug, info, trace};
 
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
@@ -51,6 +52,11 @@ impl BitDataInfo {
         features: Vec<FeatureSpec>,
         original_size_bits: usize,
     ) -> Result<Self, EntroGdError> {
+        debug!(
+            "Creating BitDataInfo with {} features and original_size_bits={}.",
+            features.len(),
+            original_size_bits
+        );
         if features.is_empty() {
             return Err(EntroGdError::InvalidFeatureSpec {
                 message: "features is empty".to_string(),
@@ -59,7 +65,15 @@ impl BitDataInfo {
 
         let mut offsets = Vec::with_capacity(features.len());
         let mut running = 0usize;
-        for spec in &features {
+        for (idx, spec) in features.iter().enumerate() {
+            trace!(
+                "Feature spec {} => type={:?}, bits={}, transform={:?}, offset={}",
+                idx,
+                spec.data_type,
+                spec.bits,
+                spec.transform,
+                running
+            );
             if spec.bits == 0 {
                 return Err(EntroGdError::InvalidFeatureSpec {
                     message: "feature bits must be > 0".to_string(),
@@ -105,7 +119,7 @@ impl BitDataInfo {
             running += spec.bits;
         }
 
-        Ok(BitDataInfo {
+        let info = BitDataInfo {
             features,
             original_size_bits,
             n_data_samples: original_size_bits / running,
@@ -113,7 +127,14 @@ impl BitDataInfo {
             m_condensed_sample_weights: None,
             feature_offsets: offsets,
             chunk_size: running,
-        })
+        };
+
+        debug!(
+            "BitDataInfo ready: chunk_size={} bits, n_data_samples={}",
+            info.chunk_size, info.n_data_samples
+        );
+
+        Ok(info)
     }
 
     pub fn num_features(&self) -> usize {
@@ -220,6 +241,11 @@ impl BitDataSet {
     pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
         let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
         let num_features = dataset.num_columns();
+        info!(
+            "Starting dataset preprocessing: rows={}, columns={}",
+            dataset.num_rows(),
+            num_features
+        );
         let mut features = Vec::with_capacity(num_features);
         for feature_idx in 0..num_features {
             let data_type = dataset.column_type(feature_idx);
@@ -231,6 +257,13 @@ impl BitDataSet {
                     FeatureSpec::new(data_type, 64)
                 }
             };
+            debug!(
+                "Inferred feature {} schema: type={:?}, bits={}, transform={:?}",
+                feature_idx,
+                spec.data_type,
+                spec.bits,
+                spec.transform
+            );
             features.push(spec);
         }
         Self::from_dataset_with_schema(dataset, features)
@@ -242,6 +275,12 @@ impl BitDataSet {
         features: Vec<FeatureSpec>,
     ) -> Result<Self, EntroGdError> {
         let num_features = dataset.num_columns();
+        info!(
+            "Building BitDataSet with explicit schema: rows={}, columns={}, schema_features={}",
+            dataset.num_rows(),
+            num_features,
+            features.len()
+        );
         if features.len() != num_features {
             return Err(EntroGdError::InvalidFeatureSpec {
                 message: format!(
@@ -254,6 +293,14 @@ impl BitDataSet {
 
         for (idx, spec) in features.iter().enumerate() {
             let col_type = dataset.column_type(idx);
+            debug!(
+                "Loaded feature spec {}: expected_column_type={:?}, spec_type={:?}, bits={}, transform={:?}",
+                idx,
+                col_type,
+                spec.data_type,
+                spec.bits,
+                spec.transform
+            );
             if col_type != spec.data_type {
                 return Err(EntroGdError::InvalidFeatureSpec {
                     message: format!(
@@ -268,12 +315,29 @@ impl BitDataSet {
         let num_rows = dataset.num_rows();
         let total_bits = chunk_size * num_rows;
 
+        debug!(
+            "Packing rows into bitstream: chunk_size={} bits, rows={}, total_bits={}",
+            chunk_size,
+            num_rows,
+            total_bits
+        );
+
         let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
         for row_idx in 0..num_rows {
             for col_idx in 0..num_features {
                 let spec = &info.features[col_idx];
                 let value = dataset.value_at(row_idx, col_idx);
                 let bits = value_to_bits(value, spec);
+                if row_idx < 2 {
+                    trace!(
+                        "Row {}, feature {} packed using {:?} (bits={}, transform={:?})",
+                        row_idx,
+                        col_idx,
+                        value,
+                        spec.bits,
+                        spec.transform
+                    );
+                }
                 push_bits(&mut data, bits, spec.bits);
             }
         }
@@ -285,6 +349,14 @@ impl BitDataSet {
         };
         let info = info.with_original_size_bits(chunk_size * num_rows);
 
+        info!(
+            "BitDataSet preprocessing complete: rows={}, features={}, chunk_size={}, total_bits={}",
+            num_rows,
+            info.num_features(),
+            chunk_size,
+            chunk_size * num_rows
+        );
+
         Ok(BitDataSet { data, info })
     }
 
@@ -293,7 +365,13 @@ impl BitDataSet {
         loader: &L,
         path: P,
     ) -> Result<(Self, DatasetMetadata), EntroGdError> {
+        info!("Loading dataset from {}", path.as_ref().display());
         let loaded = loader.load(path)?;
+        debug!(
+            "Loaded dataset metadata: rows={}, columns={}",
+            loaded.dataset.num_rows(),
+            loaded.dataset.num_columns()
+        );
         let bit_data = Self::from_dataset(&loaded.dataset)?;
         Ok((bit_data, loaded.metadata))
     }
@@ -304,7 +382,17 @@ impl BitDataSet {
         path: P,
         features: Vec<FeatureSpec>,
     ) -> Result<(Self, DatasetMetadata), EntroGdError> {
+        info!(
+            "Loading dataset from {} with user-provided schema ({} features)",
+            path.as_ref().display(),
+            features.len()
+        );
         let loaded = loader.load(path)?;
+        debug!(
+            "Loaded dataset metadata: rows={}, columns={}",
+            loaded.dataset.num_rows(),
+            loaded.dataset.num_columns()
+        );
         let bit_data = Self::from_dataset_with_schema(&loaded.dataset, features)?;
         Ok((bit_data, loaded.metadata))
     }
@@ -456,8 +544,20 @@ fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: Feature
         _ => unreachable!("infer_float_feature_spec called with non-float type"),
     };
 
+    debug!(
+        "Inferring float feature spec for column {} with type {:?} and fallback_bits={}",
+        column,
+        data_type,
+        fallback_bits
+    );
+
     let mut best_scale: Option<u8> = None;
     for decimal_scale in 0..=MAX_DECIMAL_SCALE {
+        trace!(
+            "Trying decimal_scale={} for float column {}",
+            decimal_scale,
+            column
+        );
         if scaled_int_range(dataset, column, data_type, decimal_scale).is_some() {
             best_scale = Some(decimal_scale);
             break;
@@ -465,12 +565,21 @@ fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: Feature
     }
 
     if let Some(decimal_scale) = best_scale {
+        debug!(
+            "Selected scaled-int transform for column {}: decimal_scale={}",
+            column,
+            decimal_scale
+        );
         FeatureSpec {
             data_type,
             bits: fallback_bits,
             transform: FeatureTransform::ScaledSignedInt { decimal_scale },
         }
     } else {
+        debug!(
+            "No lossless scaled-int transform found for column {}; using raw float bits",
+            column
+        );
         FeatureSpec::new(data_type, fallback_bits)
     }
 }
@@ -482,11 +591,20 @@ fn scaled_int_range(
     decimal_scale: u8,
 ) -> Option<(i64, i64)> {
     if dataset.num_rows() == 0 {
+        trace!(
+            "Column {} has zero rows, treating scaled range as [0,0]",
+            column
+        );
         return Some((0, 0));
     }
 
     let factor = 10f64.powi(decimal_scale as i32);
     if !matches!(data_type, FeatureDataType::F32 | FeatureDataType::F64) {
+        trace!(
+            "Column {} has non-float type {:?}; cannot scale",
+            column,
+            data_type
+        );
         return None;
     }
 
@@ -497,15 +615,35 @@ fn scaled_int_range(
         let value = match dataset.value_at(row, column) {
             DataValue::F32(v) => v as f64,
             DataValue::F64(v) => v,
-            _ => return None,
+            _ => {
+                trace!(
+                    "Column {} row {} type mismatch while computing scaled range",
+                    column,
+                    row
+                );
+                return None;
+            }
         };
         if !value.is_finite() {
+            trace!(
+                "Column {} row {} is non-finite ({}), cannot apply scaling",
+                column,
+                row,
+                value
+            );
             return None;
         }
 
         let scaled = value * factor;
         let rounded = scaled.round();
         if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
+            trace!(
+                "Column {} row {} overflows i64 after scaling (value={}, scale={})",
+                column,
+                row,
+                value,
+                decimal_scale
+            );
             return None;
         }
 
@@ -523,6 +661,12 @@ fn scaled_int_range(
             _ => false,
         };
         if !reconstructed_ok {
+            trace!(
+                "Column {} row {} failed lossless reconstruction at scale {}",
+                column,
+                row,
+                decimal_scale
+            );
             return None;
         }
 
@@ -530,6 +674,14 @@ fn scaled_int_range(
         min_value = min_value.min(int_value);
         max_value = max_value.max(int_value);
     }
+
+    trace!(
+        "Column {} scale {} accepted with integer range [{}, {}]",
+        column,
+        decimal_scale,
+        min_value,
+        max_value
+    );
 
     Some((min_value, max_value))
 }
