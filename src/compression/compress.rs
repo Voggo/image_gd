@@ -126,14 +126,14 @@ impl DeviationData {
 }
 
 fn organize_entropy_by_feature(
-    entropy: Vec<(usize, f64)>,
+    entropy: &[(usize, f64)],
     bit_data: &BitDataSet,
 ) -> Vec<(usize, f64)> {
     let num_features = bit_data.num_features();
     let mut entropy_by_feature: Vec<Vec<(usize, f64)>> = vec![Vec::new(); num_features];
     let mut zero_entropy = Vec::new();
 
-    for (bit_pos, entropy_val) in entropy {
+    for &(bit_pos, entropy_val) in entropy {
         if let Some(feature_idx) = bit_data.feature_index_for_bit(bit_pos) {
             if entropy_val == 0.0 {
                 zero_entropy.push((bit_pos, entropy_val));
@@ -155,9 +155,9 @@ fn organize_entropy_by_feature(
         .unwrap_or(0);
 
     for i in 0..max_bits_per_feature {
-        for feature_idx in 0..num_features {
-            if i < entropy_by_feature[feature_idx].len() {
-                result.push(entropy_by_feature[feature_idx][i]);
+        for feature_entropy in entropy_by_feature.iter().take(num_features) {
+            if let Some(entry) = feature_entropy.get(i) {
+                result.push(*entry);
             }
         }
     }
@@ -189,7 +189,7 @@ impl Filter for GenCondensedSamples {
 
 fn select_condensed_samples(
     bit_data: &BitDataSet,
-    entropy: &Vec<(usize, f64)>,
+    entropy: &[(usize, f64)],
     m_max: usize,
 ) -> CondensedSamples {
     fn bits_to_u64(bits: &BitSlice<usize, Msb0>) -> u64 {
@@ -214,7 +214,7 @@ fn select_condensed_samples(
     let mut samples = Vec::new();
     let mut weights = Vec::new();
 
-    let organized_entropy_by_feature = organize_entropy_by_feature(entropy.clone(), bit_data);
+    let organized_entropy_by_feature = organize_entropy_by_feature(entropy, bit_data);
     let mut condensed_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
     // Extract zero entropy bits first
@@ -439,8 +439,8 @@ fn encode_data(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> Deviat
         }
     }
 
-    for row in 0..num_rows {
-        let id = row_to_group_id[row];
+    for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
+        let id = *id_ref;
         let chunk = bit_data.get_chunk(row);
 
         for bit_pos in 0..chunk_size {

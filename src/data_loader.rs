@@ -174,9 +174,8 @@ impl DataLoader for CsvDataLoader {
         };
 
         let mut builders: Vec<ColumnBuilder> = Vec::new();
-        let mut num_rows = 0usize;
 
-        for record_result in reader.records() {
+        for (num_rows, record_result) in reader.records().enumerate() {
             let record = record_result?;
             let row_len = record.len();
 
@@ -187,20 +186,18 @@ impl DataLoader for CsvDataLoader {
             }
 
             let total_cols = builders.len();
-            for col_idx in 0..total_cols {
+            for (col_idx, builder) in builders.iter_mut().enumerate().take(total_cols) {
                 if col_idx < row_len {
                     let raw = record.get(col_idx).unwrap_or("").trim();
                     if raw.is_empty() {
-                        builders[col_idx].push_missing();
+                        builder.push_missing();
                     } else {
-                        builders[col_idx].push_value(raw, num_rows, col_idx)?;
+                        builder.push_value(raw, num_rows, col_idx)?;
                     }
                 } else {
-                    builders[col_idx].push_missing();
+                    builder.push_missing();
                 }
             }
-
-            num_rows += 1;
         }
 
         let float_type = self.float_type;
