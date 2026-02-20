@@ -1,6 +1,6 @@
 use entro_gd::prelude::*;
-use std::fs::File;
 use std::env;
+use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
@@ -62,7 +62,8 @@ fn main() -> Result<(), EntroGdError> {
             .to_string()
     };
 
-    let _compression_timer = ScopedTimer::info("Compression process whithout loading .csv file and parsing");
+    let _compression_timer =
+        ScopedTimer::info("Compression process whithout loading .csv file and parsing");
     // Compress the data with filters (pipe-and-filter style)
     log::info!("\nCompressing data...");
     let compression_pipeline = build_compression_pipeline(50, 10);

@@ -295,18 +295,35 @@ fn append_condensed_samples(
 }
 
 fn calculate_compressed_size(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> usize {
+    fn min_bit_length(value: usize) -> usize {
+        match value {
+            0 => 0,
+            1 => 1,
+            _ => (usize::BITS as usize) - ((value - 1).leading_zeros() as usize),
+        }
+    }
+
+    let n = bit_data.num_rows(); // number of encoded samples
+    let d = bit_data.num_features(); // dimensionality (number of features)
     let n_b = base_bit_groups.get_num_bases(); // number of bases
-    let l_b = base_bit_groups.get_num_bits_per_base(); // bits per base
-    let n = bit_data.num_rows(); // number of rows/samples
-    let m = base_bit_groups.get_num_bases(); // number of bases in condensed sample
-    let chunk_size = bit_data.chunk_size();
+    let chunk_size = bit_data.chunk_size(); // sum(m) in the Python implementation
 
-    let l_b = l_b.min(chunk_size);
-    let l_d = chunk_size - l_b; // bits per deviation
-    let l_id = (n_b as f64).log2().ceil() as usize; // bits per id
-    let s_params = 0usize; // size of additional parameters in bits (not implemented yet)
+    let len_b = base_bit_groups.get_num_bits_per_base().min(chunk_size); // bits per base
+    let len_d = chunk_size - len_b; // deviation bits per sample
 
-    n_b * l_b + (n + m) * (l_d + l_id) + m * 0 + s_params
+    // Python-like sizing terms.
+    let len_bc = min_bit_length(n); // bits per base count
+    let len_id = min_bit_length(n_b); // bits per base id
+
+    let size_bases = n_b * len_b;
+    let size_base_counts = n_b * len_bc;
+    let size_deviations = n * (len_d + len_id);
+
+    // 16 * d + 16 + size_dev_bits (+ currently ignored terms).
+    let size_dev_bits = chunk_size;
+    let size_params = 16 * d + 16 + size_dev_bits;
+
+    size_bases + size_base_counts + size_deviations + size_params
 }
 
 pub struct SelectBases {
@@ -369,7 +386,14 @@ fn optimize_base_bit_groups(
             break;
         }
     }
-
+    log::info!(
+        "\nSelected base bit mask: {}",
+        best_base_bit_groups
+            .get_base_bit_mask()
+            .iter()
+            .map(|b| if *b { "1" } else { "0" })
+            .collect::<String>()
+    );
     best_base_bit_groups
 }
 
@@ -651,9 +675,11 @@ mod tests {
         let base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let compressed_size = calculate_compressed_size(&bit_data, &base_bit_groups);
 
-        // n_b = 0 (no bases), l_b = 0, n = 100, m = 0, l_d = 32, l_id = 0
-        // Expected: 0 * 0 + (100 + 0) * (32 + 0) + 0 * 0 + 0 = 3200
-        assert_eq!(compressed_size, 3200);
+        // n_b = 0 (no bases), len_b = 0, len_d = 32, len_id = 0
+        // size_deviations = 100 * 32 = 3200
+        // size_params = 16*32 + 16 + 32 = 560
+        // total = 3760
+        assert_eq!(compressed_size, 3760);
     }
 
     #[test]
@@ -662,9 +688,11 @@ mod tests {
         let base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let compressed_size = calculate_compressed_size(&bit_data, &base_bit_groups);
 
-        // n_b = 0, l_b = 0, n = 1, l_d = 16, l_id = 0
-        // Expected: 0 + (1 + 0) * (16 + 0) + 0 = 16
-        assert_eq!(compressed_size, 16);
+        // n_b = 0, len_b = 0, len_d = 16, len_id = 0
+        // size_deviations = 1 * 16 = 16
+        // size_params = 16*8 + 16 + 16 = 160
+        // total = 176
+        assert_eq!(compressed_size, 176);
     }
 
     #[test]
@@ -673,9 +701,11 @@ mod tests {
         let base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let compressed_size = calculate_compressed_size(&bit_data, &base_bit_groups);
 
-        // n_b = 0, l_b = 0, n = 10000, l_d = 64, l_id = 0
-        // Expected: 0 + (10000 + 0) * (64 + 0) + 0 = 640000
-        assert_eq!(compressed_size, 640000);
+        // n_b = 0, len_b = 0, len_d = 64, len_id = 0
+        // size_deviations = 10000 * 64 = 640000
+        // size_params = 16*32 + 16 + 64 = 592
+        // total = 640592
+        assert_eq!(compressed_size, 640592);
     }
 
     #[test]
@@ -685,9 +715,11 @@ mod tests {
         let base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let compressed_size = calculate_compressed_size(&bit_data, &base_bit_groups);
 
-        // n_b = 0, n = 16, l_d = 32, l_id = 0
-        // Expected: 0 + (16 + 0) * (32 + 0) + 0 = 512
-        assert_eq!(compressed_size, 512);
+        // n_b = 0, len_b = 0, len_d = 32, len_id = 0
+        // size_deviations = 16 * 32 = 512
+        // size_params = 16*32 + 16 + 32 = 560
+        // total = 1072
+        assert_eq!(compressed_size, 1072);
     }
 
     // Tests for compress function

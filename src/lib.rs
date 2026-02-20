@@ -1,30 +1,31 @@
-pub mod error;
-pub mod data_loader;
 pub mod compression;
-pub mod timing;
+pub mod data_loader;
+pub mod error;
 pub mod filter_pipeline;
+pub mod timing;
 
 pub use compression::{
-	build_compression_pipeline, calculate_entropy, decode_value_from_bits, BitData, BitDataInfo, BitDataSet,
-	CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
-	DeviationSample, EgdFile, EncodeData, EntropyNaive, EntropyOptimized, FeatureSpec, FeatureTransform,
-	GenCondensedSamples, LoadEgdFile, SaveEgdFile, SelectBases, FORMAT_VERSION, MAGIC_BYTES,
+    BitData, BitDataInfo, BitDataSet, CompressedData, CondensedSamples, DecompressAnalytics,
+    DecompressFileData, DeviationData, DeviationSample, EgdFile, EncodeData, EntropyNaive,
+    EntropyOptimized, FORMAT_VERSION, FeatureSpec, FeatureTransform, GenCondensedSamples,
+    LoadEgdFile, MAGIC_BYTES, SaveEgdFile, SelectBases, build_compression_pipeline,
+    calculate_entropy, decode_value_from_bits,
 };
 pub use data_loader::{
-	ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
-	LoadedDataset,
+    ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
+    LoadedDataset,
 };
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
 pub use timing::ScopedTimer;
 
 pub mod prelude {
-	pub use crate::{
-		build_compression_pipeline, calculate_entropy, decode_value_from_bits, init_logging, BitDataSet, CsvDataLoader, DataLoader, DataValue,
-		DecompressAnalytics, DecompressFileData, EncodeData, EntroGdError, EntropyNaive, EntropyOptimized,
-		FeatureDataType, Filter, FilterExt, GenCondensedSamples, LoadEgdFile, SaveEgdFile,
-		ScopedTimer, SelectBases,
-	};
+    pub use crate::{
+        BitDataSet, CsvDataLoader, DataLoader, DataValue, DecompressAnalytics, DecompressFileData,
+        EncodeData, EntroGdError, EntropyNaive, EntropyOptimized, FeatureDataType, Filter,
+        FilterExt, GenCondensedSamples, LoadEgdFile, SaveEgdFile, ScopedTimer, SelectBases,
+        build_compression_pipeline, calculate_entropy, decode_value_from_bits, init_logging,
+    };
 }
 
 use flexi_logger::{Duplicate, FileSpec, Logger, WriteMode};
@@ -43,7 +44,7 @@ static LOGGING_INIT: Once = Once::new();
 ///
 /// Safe to call multiple times.
 pub fn init_logging() {
-	LOGGING_INIT.call_once(|| {
+    LOGGING_INIT.call_once(|| {
 		let level_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
 		let log_dir = std::env::var("ENTRO_GD_LOG_DIR").unwrap_or_else(|_| "logs".to_string());
 		let mirror_stderr = std::env::var("ENTRO_GD_LOG_TO_STDERR")

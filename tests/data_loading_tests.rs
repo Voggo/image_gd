@@ -115,8 +115,14 @@ fn test_dataset_with_headers() {
         ColumnData::Unsigned(vec![2]),
     ];
     let headers = vec![
-        "col0".to_string(), "col1".to_string(), "col2".to_string(), "col3".to_string(),
-        "col4".to_string(), "col5".to_string(), "col6".to_string(), "col7".to_string(),
+        "col0".to_string(),
+        "col1".to_string(),
+        "col2".to_string(),
+        "col3".to_string(),
+        "col4".to_string(),
+        "col5".to_string(),
+        "col6".to_string(),
+        "col7".to_string(),
     ];
 
     let dataset = Dataset::from_columns(columns).unwrap();

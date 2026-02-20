@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
+use log::{debug, info, trace};
 use std::fmt::Display;
 use std::path::Path;
-use log::{debug, info, trace};
 
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
@@ -15,6 +15,9 @@ const MAX_DECIMAL_SCALE: u8 = 9;
 pub enum FeatureTransform {
     None,
     ScaledSignedInt { decimal_scale: u8 },
+    OffsetSignedInt { min_value: i64 },
+    OffsetUnsignedInt { min_value: u64 },
+    ScaledOffsetSignedInt { decimal_scale: u8, min_value: i64 },
 }
 
 /// Per-feature schema entry.
@@ -68,11 +71,7 @@ impl BitDataInfo {
         for (idx, spec) in features.iter().enumerate() {
             trace!(
                 "Feature spec {} => type={:?}, bits={}, transform={:?}, offset={}",
-                idx,
-                spec.data_type,
-                spec.bits,
-                spec.transform,
-                running
+                idx, spec.data_type, spec.bits, spec.transform, running
             );
             if spec.bits == 0 {
                 return Err(EntroGdError::InvalidFeatureSpec {
@@ -86,9 +85,19 @@ impl BitDataInfo {
                             message: "f32 features without transform must use 32 bits".to_string(),
                         });
                     }
-                    FeatureTransform::ScaledSignedInt { .. } if spec.bits > 64 => {
+                    FeatureTransform::ScaledSignedInt { .. }
+                    | FeatureTransform::ScaledOffsetSignedInt { .. }
+                        if spec.bits > 64 =>
+                    {
                         return Err(EntroGdError::InvalidFeatureSpec {
                             message: "scaled f32 features must use <= 64 bits".to_string(),
+                        });
+                    }
+                    FeatureTransform::OffsetSignedInt { .. }
+                    | FeatureTransform::OffsetUnsignedInt { .. } => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message: "f32 features cannot use integer offset transforms"
+                                .to_string(),
                         });
                     }
                     _ => {}
@@ -99,21 +108,43 @@ impl BitDataInfo {
                             message: "f64 features without transform must use 64 bits".to_string(),
                         });
                     }
-                    FeatureTransform::ScaledSignedInt { .. } if spec.bits > 64 => {
+                    FeatureTransform::ScaledSignedInt { .. }
+                    | FeatureTransform::ScaledOffsetSignedInt { .. }
+                        if spec.bits > 64 =>
+                    {
                         return Err(EntroGdError::InvalidFeatureSpec {
                             message: "scaled f64 features must use <= 64 bits".to_string(),
                         });
                     }
+                    FeatureTransform::OffsetSignedInt { .. }
+                    | FeatureTransform::OffsetUnsignedInt { .. } => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message: "f64 features cannot use integer offset transforms"
+                                .to_string(),
+                        });
+                    }
                     _ => {}
                 },
-                FeatureDataType::SignedInt | FeatureDataType::UnsignedInt
-                    if !matches!(spec.transform, FeatureTransform::None) =>
-                {
-                    return Err(EntroGdError::InvalidFeatureSpec {
-                        message: "integer features cannot use float transforms".to_string(),
-                    });
-                }
-                _ => {}
+                FeatureDataType::SignedInt => match spec.transform {
+                    FeatureTransform::None | FeatureTransform::OffsetSignedInt { .. } => {}
+                    _ => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message:
+                                "signed integer features can only use signed offset transforms"
+                                    .to_string(),
+                        });
+                    }
+                },
+                FeatureDataType::UnsignedInt => match spec.transform {
+                    FeatureTransform::None | FeatureTransform::OffsetUnsignedInt { .. } => {}
+                    _ => {
+                        return Err(EntroGdError::InvalidFeatureSpec {
+                            message:
+                                "unsigned integer features can only use unsigned offset transforms"
+                                    .to_string(),
+                        });
+                    }
+                },
             }
             offsets.push(running);
             running += spec.bits;
@@ -254,15 +285,12 @@ impl BitDataSet {
                     infer_float_feature_spec(dataset, feature_idx, data_type)
                 }
                 FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
-                    FeatureSpec::new(data_type, 64)
+                    infer_integer_feature_spec(dataset, feature_idx, data_type)
                 }
             };
             debug!(
                 "Inferred feature {} schema: type={:?}, bits={}, transform={:?}",
-                feature_idx,
-                spec.data_type,
-                spec.bits,
-                spec.transform
+                feature_idx, spec.data_type, spec.bits, spec.transform
             );
             features.push(spec);
         }
@@ -295,11 +323,7 @@ impl BitDataSet {
             let col_type = dataset.column_type(idx);
             debug!(
                 "Loaded feature spec {}: expected_column_type={:?}, spec_type={:?}, bits={}, transform={:?}",
-                idx,
-                col_type,
-                spec.data_type,
-                spec.bits,
-                spec.transform
+                idx, col_type, spec.data_type, spec.bits, spec.transform
             );
             if col_type != spec.data_type {
                 return Err(EntroGdError::InvalidFeatureSpec {
@@ -317,9 +341,7 @@ impl BitDataSet {
 
         debug!(
             "Packing rows into bitstream: chunk_size={} bits, rows={}, total_bits={}",
-            chunk_size,
-            num_rows,
-            total_bits
+            chunk_size, num_rows, total_bits
         );
 
         let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
@@ -331,11 +353,7 @@ impl BitDataSet {
                 if row_idx < 2 {
                     trace!(
                         "Row {}, feature {} packed using {:?} (bits={}, transform={:?})",
-                        row_idx,
-                        col_idx,
-                        value,
-                        spec.bits,
-                        spec.transform
+                        row_idx, col_idx, value, spec.bits, spec.transform
                     );
                 }
                 push_bits(&mut data, bits, spec.bits);
@@ -469,28 +487,61 @@ impl Display for BitDataSet {
 
 fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
     match (value, spec.data_type) {
-        (DataValue::Unsigned(v), FeatureDataType::UnsignedInt) => v,
-        (DataValue::Signed(v), FeatureDataType::SignedInt) => {
-            if spec.bits == 64 {
-                v as u64
-            } else {
-                let mask = (1u128 << spec.bits) - 1;
-                (v as i128 as u128 & mask) as u64
+        (DataValue::Unsigned(v), FeatureDataType::UnsignedInt) => match spec.transform {
+            FeatureTransform::None => v,
+            FeatureTransform::OffsetUnsignedInt { min_value } => v.saturating_sub(min_value),
+            _ => unreachable!("invalid transform for unsigned feature"),
+        },
+        (DataValue::Signed(v), FeatureDataType::SignedInt) => match spec.transform {
+            FeatureTransform::OffsetSignedInt { min_value } => {
+                let shifted = (v as i128) - (min_value as i128);
+                shifted as u64
             }
-        }
+            FeatureTransform::None => {
+                if spec.bits == 64 {
+                    v as u64
+                } else {
+                    let mask = (1u128 << spec.bits) - 1;
+                    (v as i128 as u128 & mask) as u64
+                }
+            }
+            _ => unreachable!("invalid transform for signed feature"),
+        },
         (DataValue::F32(v), FeatureDataType::F32) => match spec.transform {
             FeatureTransform::None => v.to_bits() as u64,
             FeatureTransform::ScaledSignedInt { decimal_scale } => {
                 let scaled = scale_float_to_i64(v as f64, decimal_scale);
-                value_to_bits(DataValue::Signed(scaled), &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits))
+                value_to_bits(
+                    DataValue::Signed(scaled),
+                    &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits),
+                )
             }
+            FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value,
+            } => {
+                let scaled = scale_float_to_i64(v as f64, decimal_scale);
+                ((scaled as i128) - (min_value as i128)) as u64
+            }
+            _ => unreachable!("invalid transform for f32 feature"),
         },
         (DataValue::F64(v), FeatureDataType::F64) => match spec.transform {
             FeatureTransform::None => v.to_bits(),
             FeatureTransform::ScaledSignedInt { decimal_scale } => {
                 let scaled = scale_float_to_i64(v, decimal_scale);
-                value_to_bits(DataValue::Signed(scaled), &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits))
+                value_to_bits(
+                    DataValue::Signed(scaled),
+                    &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits),
+                )
             }
+            FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value,
+            } => {
+                let scaled = scale_float_to_i64(v, decimal_scale);
+                ((scaled as i128) - (min_value as i128)) as u64
+            }
+            _ => unreachable!("invalid transform for f64 feature"),
         },
         _ => unreachable!("feature type mismatch when packing bits"),
     }
@@ -499,8 +550,20 @@ fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
 pub fn decode_value_from_bits(bits: &BitSlice<usize, Msb0>, spec: &FeatureSpec) -> DataValue {
     let value = bits_to_u64(bits);
     match spec.data_type {
-        FeatureDataType::UnsignedInt => DataValue::Unsigned(value),
-        FeatureDataType::SignedInt => DataValue::Signed(decode_signed(value, spec.bits)),
+        FeatureDataType::UnsignedInt => match spec.transform {
+            FeatureTransform::None => DataValue::Unsigned(value),
+            FeatureTransform::OffsetUnsignedInt { min_value } => {
+                DataValue::Unsigned(value.wrapping_add(min_value))
+            }
+            _ => unreachable!("invalid transform for unsigned feature"),
+        },
+        FeatureDataType::SignedInt => match spec.transform {
+            FeatureTransform::None => DataValue::Signed(decode_signed(value, spec.bits)),
+            FeatureTransform::OffsetSignedInt { min_value } => {
+                DataValue::Signed((value as i128 + min_value as i128) as i64)
+            }
+            _ => unreachable!("invalid transform for signed feature"),
+        },
         FeatureDataType::F32 => match spec.transform {
             FeatureTransform::None => DataValue::F32(f32::from_bits(value as u32)),
             FeatureTransform::ScaledSignedInt { decimal_scale } => {
@@ -508,6 +571,15 @@ pub fn decode_value_from_bits(bits: &BitSlice<usize, Msb0>, spec: &FeatureSpec) 
                 let factor = 10f64.powi(decimal_scale as i32);
                 DataValue::F32((scaled as f64 / factor) as f32)
             }
+            FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value,
+            } => {
+                let scaled = value as i128 + min_value as i128;
+                let factor = 10f64.powi(decimal_scale as i32);
+                DataValue::F32((scaled as f64 / factor) as f32)
+            }
+            _ => unreachable!("invalid transform for f32 feature"),
         },
         FeatureDataType::F64 => match spec.transform {
             FeatureTransform::None => DataValue::F64(f64::from_bits(value)),
@@ -516,6 +588,15 @@ pub fn decode_value_from_bits(bits: &BitSlice<usize, Msb0>, spec: &FeatureSpec) 
                 let factor = 10f64.powi(decimal_scale as i32);
                 DataValue::F64(scaled as f64 / factor)
             }
+            FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value,
+            } => {
+                let scaled = value as i128 + min_value as i128;
+                let factor = 10f64.powi(decimal_scale as i32);
+                DataValue::F64(scaled as f64 / factor)
+            }
+            _ => unreachable!("invalid transform for f64 feature"),
         },
     }
 }
@@ -537,7 +618,11 @@ fn decode_signed(value: u64, bits: usize) -> i64 {
     }
 }
 
-fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: FeatureDataType) -> FeatureSpec {
+fn infer_float_feature_spec(
+    dataset: &Dataset,
+    column: usize,
+    data_type: FeatureDataType,
+) -> FeatureSpec {
     let fallback_bits = match data_type {
         FeatureDataType::F32 => 32,
         FeatureDataType::F64 => 64,
@@ -546,17 +631,14 @@ fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: Feature
 
     debug!(
         "Inferring float feature spec for column {} with type {:?} and fallback_bits={}",
-        column,
-        data_type,
-        fallback_bits
+        column, data_type, fallback_bits
     );
 
     let mut best_scale: Option<u8> = None;
     for decimal_scale in 0..=MAX_DECIMAL_SCALE {
         trace!(
             "Trying decimal_scale={} for float column {}",
-            decimal_scale,
-            column
+            decimal_scale, column
         );
         if scaled_int_range(dataset, column, data_type, decimal_scale).is_some() {
             best_scale = Some(decimal_scale);
@@ -565,15 +647,21 @@ fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: Feature
     }
 
     if let Some(decimal_scale) = best_scale {
+        let (min_value, max_value) = scaled_int_range(dataset, column, data_type, decimal_scale)
+            .expect("scale should have a valid integer range");
+        let shifted_max = shifted_max_signed(min_value, max_value);
+        let bits = storage_bucket_bits(shifted_max);
         debug!(
-            "Selected scaled-int transform for column {}: decimal_scale={}",
-            column,
-            decimal_scale
+            "Selected scaled+offset transform for column {}: decimal_scale={}, min={}, max={}, shifted_max={}, bits={}",
+            column, decimal_scale, min_value, max_value, shifted_max, bits
         );
         FeatureSpec {
             data_type,
-            bits: fallback_bits,
-            transform: FeatureTransform::ScaledSignedInt { decimal_scale },
+            bits,
+            transform: FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value,
+            },
         }
     } else {
         debug!(
@@ -581,6 +669,96 @@ fn infer_float_feature_spec(dataset: &Dataset, column: usize, data_type: Feature
             column
         );
         FeatureSpec::new(data_type, fallback_bits)
+    }
+}
+
+fn infer_integer_feature_spec(
+    dataset: &Dataset,
+    column: usize,
+    data_type: FeatureDataType,
+) -> FeatureSpec {
+    match data_type {
+        FeatureDataType::SignedInt => {
+            let mut min_value = i64::MAX;
+            let mut max_value = i64::MIN;
+
+            for row in 0..dataset.num_rows() {
+                let value = match dataset.value_at(row, column) {
+                    DataValue::Signed(v) => v,
+                    _ => unreachable!("signed column type mismatch while inferring schema"),
+                };
+                min_value = min_value.min(value);
+                max_value = max_value.max(value);
+            }
+
+            if dataset.num_rows() == 0 {
+                min_value = 0;
+                max_value = 0;
+            }
+
+            let shifted_max = shifted_max_signed(min_value, max_value);
+            let bits = storage_bucket_bits(shifted_max);
+
+            debug!(
+                "Inferred signed integer column {}: min={}, max={}, shifted_max={}, bits={}",
+                column, min_value, max_value, shifted_max, bits
+            );
+
+            FeatureSpec {
+                data_type,
+                bits,
+                transform: FeatureTransform::OffsetSignedInt { min_value },
+            }
+        }
+        FeatureDataType::UnsignedInt => {
+            let mut min_value = u64::MAX;
+            let mut max_value = u64::MIN;
+
+            for row in 0..dataset.num_rows() {
+                let value = match dataset.value_at(row, column) {
+                    DataValue::Unsigned(v) => v,
+                    _ => unreachable!("unsigned column type mismatch while inferring schema"),
+                };
+                min_value = min_value.min(value);
+                max_value = max_value.max(value);
+            }
+
+            if dataset.num_rows() == 0 {
+                min_value = 0;
+                max_value = 0;
+            }
+
+            let shifted_max = max_value.saturating_sub(min_value);
+            let bits = storage_bucket_bits(shifted_max);
+
+            debug!(
+                "Inferred unsigned integer column {}: min={}, max={}, shifted_max={}, bits={}",
+                column, min_value, max_value, shifted_max, bits
+            );
+
+            FeatureSpec {
+                data_type,
+                bits,
+                transform: FeatureTransform::OffsetUnsignedInt { min_value },
+            }
+        }
+        _ => unreachable!("infer_integer_feature_spec called with non-integer type"),
+    }
+}
+
+fn shifted_max_signed(min_value: i64, max_value: i64) -> u64 {
+    ((max_value as i128) - (min_value as i128)) as u64
+}
+
+fn storage_bucket_bits(max_value: u64) -> usize {
+    if max_value <= u8::MAX as u64 {
+        8
+    } else if max_value <= u16::MAX as u64 {
+        16
+    } else if max_value <= u32::MAX as u64 {
+        32
+    } else {
+        64
     }
 }
 
@@ -602,8 +780,7 @@ fn scaled_int_range(
     if !matches!(data_type, FeatureDataType::F32 | FeatureDataType::F64) {
         trace!(
             "Column {} has non-float type {:?}; cannot scale",
-            column,
-            data_type
+            column, data_type
         );
         return None;
     }
@@ -618,8 +795,7 @@ fn scaled_int_range(
             _ => {
                 trace!(
                     "Column {} row {} type mismatch while computing scaled range",
-                    column,
-                    row
+                    column, row
                 );
                 return None;
             }
@@ -627,9 +803,7 @@ fn scaled_int_range(
         if !value.is_finite() {
             trace!(
                 "Column {} row {} is non-finite ({}), cannot apply scaling",
-                column,
-                row,
-                value
+                column, row, value
             );
             return None;
         }
@@ -639,10 +813,7 @@ fn scaled_int_range(
         if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
             trace!(
                 "Column {} row {} overflows i64 after scaling (value={}, scale={})",
-                column,
-                row,
-                value,
-                decimal_scale
+                column, row, value, decimal_scale
             );
             return None;
         }
@@ -663,9 +834,7 @@ fn scaled_int_range(
         if !reconstructed_ok {
             trace!(
                 "Column {} row {} failed lossless reconstruction at scale {}",
-                column,
-                row,
-                decimal_scale
+                column, row, decimal_scale
             );
             return None;
         }
@@ -677,10 +846,7 @@ fn scaled_int_range(
 
     trace!(
         "Column {} scale {} accepted with integer range [{}, {}]",
-        column,
-        decimal_scale,
-        min_value,
-        max_value
+        column, decimal_scale, min_value, max_value
     );
 
     Some((min_value, max_value))
@@ -748,10 +914,10 @@ mod tests {
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         assert_eq!(bit_data.info.num_features(), 8);
-        assert_eq!(bit_data.info.feature_bits(0), 64);
-        assert_eq!(bit_data.data.chunk_size, 8 * 64);
+        assert_eq!(bit_data.info.feature_bits(0), 8);
+        assert_eq!(bit_data.data.chunk_size, 8 * 8);
         assert_eq!(bit_data.data.num_rows, 10000);
-        assert_eq!(bit_data.data.total_bits(), 10000 * 512);
+        assert_eq!(bit_data.data.total_bits(), 10000 * 64);
     }
 
     #[test]
@@ -762,10 +928,10 @@ mod tests {
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         let chunk = bit_data.data.get_chunk(0);
-        assert_eq!(chunk.len(), 512); // 8 features * 64 bits
+        assert_eq!(chunk.len(), 64); // 8 features * 8 bits
 
         let feature = bit_data.get_feature(0, 0);
-        assert_eq!(feature.len(), 64);
+        assert_eq!(feature.len(), 8);
     }
 
     #[test]
@@ -823,8 +989,8 @@ mod tests {
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
         // With 1 bit, values should only be 0 or 1
-        assert_eq!(bit_data.info.feature_bits(0), 64);
-        assert_eq!(bit_data.data.chunk_size, 8 * 64);
+        assert_eq!(bit_data.info.feature_bits(0), 8);
+        assert_eq!(bit_data.data.chunk_size, 8 * 8);
     }
 
     #[test]
@@ -863,8 +1029,32 @@ mod tests {
         assert_eq!(spec.data_type, FeatureDataType::F64);
         assert!(matches!(
             spec.transform,
-            FeatureTransform::ScaledSignedInt { .. }
+            FeatureTransform::ScaledOffsetSignedInt { .. }
         ));
         assert!(spec.bits <= 64);
+    }
+
+    #[test]
+    fn test_integer_columns_are_offset_and_bucketed() {
+        let columns = vec![
+            ColumnData::Signed(vec![-5, -1, 10]),
+            ColumnData::Unsigned(vec![1000, 1001, 1005]),
+        ];
+        let dataset = Dataset::from_columns(columns).unwrap();
+        let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
+
+        let spec0 = &bit_data.info.features[0];
+        assert_eq!(spec0.bits, 8);
+        assert!(matches!(
+            spec0.transform,
+            FeatureTransform::OffsetSignedInt { min_value: -5 }
+        ));
+
+        let spec1 = &bit_data.info.features[1];
+        assert_eq!(spec1.bits, 8);
+        assert!(matches!(
+            spec1.transform,
+            FeatureTransform::OffsetUnsignedInt { min_value: 1000 }
+        ));
     }
 }

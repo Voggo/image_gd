@@ -1,9 +1,9 @@
+use csv::ReaderBuilder;
 use std::fs::File;
 use std::path::Path;
-use csv::ReaderBuilder;
 
-use crate::timing::ScopedTimer;
 use crate::error::EntroGdError;
+use crate::timing::ScopedTimer;
 
 /// Supported feature data types for parsing and bit packing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +161,7 @@ impl CsvDataLoader {
 impl DataLoader for CsvDataLoader {
     fn load<P: AsRef<Path>>(&self, path: P) -> Result<LoadedDataset, EntroGdError> {
         let _timer = ScopedTimer::info(format!("Loading dataset from CSV: {:?}", path.as_ref()));
-        
+
         let file = File::open(path)?;
         let mut reader = ReaderBuilder::new()
             .has_headers(self.has_headers)
@@ -251,26 +251,22 @@ impl ColumnBuilder {
         }
 
         if raw.starts_with('-') {
-            let value: i64 = raw
-                .parse()
-                .map_err(|source| EntroGdError::ParseValue {
-                    value: raw.to_string(),
-                    row,
-                    column,
-                    source,
-                })?;
-            self.push_signed(value)?;
-            return Ok(());
-        }
-
-        let value: u64 = raw
-            .parse()
-            .map_err(|source| EntroGdError::ParseValue {
+            let value: i64 = raw.parse().map_err(|source| EntroGdError::ParseValue {
                 value: raw.to_string(),
                 row,
                 column,
                 source,
             })?;
+            self.push_signed(value)?;
+            return Ok(());
+        }
+
+        let value: u64 = raw.parse().map_err(|source| EntroGdError::ParseValue {
+            value: raw.to_string(),
+            row,
+            column,
+            source,
+        })?;
         self.push_unsigned(value);
         Ok(())
     }
@@ -413,4 +409,3 @@ mod tests {
         assert_eq!(metadata.headers.unwrap()[0], "col");
     }
 }
-

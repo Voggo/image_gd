@@ -5,12 +5,11 @@ pub mod file_format;
 pub mod preprocessor;
 
 pub use compress::{
-	build_compression_pipeline,
-	CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
-	DeviationSample, EncodeData, GenCondensedSamples, SelectBases,
+    CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
+    DeviationSample, EncodeData, GenCondensedSamples, SelectBases, build_compression_pipeline,
 };
-pub use entropy::{calculate_entropy, EntropyNaive, EntropyOptimized};
-pub use file_format::{EgdFile, LoadEgdFile, SaveEgdFile, FORMAT_VERSION, MAGIC_BYTES};
+pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
+pub use file_format::{EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile};
 pub use preprocessor::{
-	decode_value_from_bits, BitData, BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform,
+    BitData, BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform, decode_value_from_bits,
 };

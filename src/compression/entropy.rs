@@ -52,7 +52,7 @@ pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
     let inv_rows = 1.0 / num_rows as f64;
     const WORD_SIZE: usize = 64; // Assuming 64 bit, should be read from cpu architecture
 
-    let words_per_row = (chunk_size + WORD_SIZE - 1) / WORD_SIZE; 
+    let words_per_row = (chunk_size + WORD_SIZE - 1) / WORD_SIZE;
 
     let mut ones_count = vec![0usize; chunk_size];
 
@@ -83,7 +83,7 @@ pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
                 }
                 // This is magic:
                 // the w - 1 flips the lsb that is set to 1, and all bits below it to 1
-                // using and to remove the new 1's 
+                // using and to remove the new 1's
                 // w       = 1001000
                 // w - 1   = 1000111
                 // ------------------

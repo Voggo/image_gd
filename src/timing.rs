@@ -4,7 +4,10 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 fn parse_bool_env(value: &str) -> bool {
-    !matches!(value, "0" | "false" | "FALSE" | "False" | "no" | "NO" | "off" | "OFF")
+    !matches!(
+        value,
+        "0" | "false" | "FALSE" | "False" | "no" | "NO" | "off" | "OFF"
+    )
 }
 
 fn timing_enabled() -> bool {
@@ -55,12 +58,7 @@ impl Drop for ScopedTimer {
     fn drop(&mut self) {
         if let Some(start) = self.start {
             let elapsed = start.elapsed();
-            log::log!(
-                self.level,
-                "{} completed in {:.3?}",
-                self.label,
-                elapsed
-            );
+            log::log!(self.level, "{} completed in {:.3?}", self.label, elapsed);
         }
     }
 }

@@ -68,7 +68,8 @@ impl BaseBitGroups {
     }
 
     pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        let _timer = ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
+        let _timer =
+            ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
         for &bit_position in bit_positions {
             self.base_bit_mask.set(bit_position, true);
         }
@@ -115,8 +116,8 @@ impl BaseBitGroups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_loader::FeatureDataType;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
 
     fn print_bases(base_bit_groups: &BaseBitGroups, bit_data: &BitDataSet) {
         log::info!("Bases after adding bit:");
@@ -145,10 +146,8 @@ mod tests {
             chunk_size,
             num_rows,
         };
-        let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
-            num_features
-        ];
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
         log::info!("BitData: {}", bit_data);
@@ -181,10 +180,8 @@ mod tests {
             chunk_size,
             num_rows,
         };
-        let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature);
-            num_features
-        ];
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
         log::info!("BitData: {}", bit_data);
@@ -194,8 +191,6 @@ mod tests {
         print_bases(&base_bit_groups, &bit_data);
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
         assert_eq!(num_bases, 3);
-        print_bases(&base_bit_groups, &bit_data);   
+        print_bases(&base_bit_groups, &bit_data);
     }
-
-
 }

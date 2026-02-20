@@ -66,11 +66,9 @@ impl Display for EntroGdError {
                 "Bit slice length mismatch (expected {}, got {})",
                 expected, actual
             ),
-            EntroGdError::DecompressionSampleMissing { sample_idx } => write!(
-                f,
-                "Failed to retrieve sample at index {}",
-                sample_idx
-            ),
+            EntroGdError::DecompressionSampleMissing { sample_idx } => {
+                write!(f, "Failed to retrieve sample at index {}", sample_idx)
+            }
             EntroGdError::InvalidBaseId { base_id, table_len } => write!(
                 f,
                 "Invalid base ID: {} (base table has {} entries)",

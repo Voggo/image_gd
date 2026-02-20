@@ -41,20 +41,26 @@ impl EgdFile {
 
         let chunk_size = data_info.chunk_size();
         let original_num_rows = data_info.original_size_bits / chunk_size;
-        let condensed_weights = compressed.condensed_sample_weights.as_deref().unwrap_or(&[]);
+        let condensed_weights = compressed
+            .condensed_sample_weights
+            .as_deref()
+            .unwrap_or(&[]);
 
         let mut base_positions = compressed.base_bit_positions.clone();
         base_positions.sort_unstable();
 
-        let n_u64 = u64::try_from(original_num_rows).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "n does not fit into u64".to_string(),
-        })?;
-        let m_u64 = u64::try_from(condensed_weights.len()).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "m does not fit into u64".to_string(),
-        })?;
-        let num_features_u64 = u64::try_from(num_features).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "num_features does not fit into u64".to_string(),
-        })?;
+        let n_u64 =
+            u64::try_from(original_num_rows).map_err(|_| EntroGdError::InvalidMetadata {
+                message: "n does not fit into u64".to_string(),
+            })?;
+        let m_u64 =
+            u64::try_from(condensed_weights.len()).map_err(|_| EntroGdError::InvalidMetadata {
+                message: "m does not fit into u64".to_string(),
+            })?;
+        let num_features_u64 =
+            u64::try_from(num_features).map_err(|_| EntroGdError::InvalidMetadata {
+                message: "num_features does not fit into u64".to_string(),
+            })?;
 
         let mut writer = BitWriter::new();
 
@@ -73,9 +79,13 @@ impl EgdFile {
         for feature_idx in 0..num_features {
             let feature_spec = &data_info.features[feature_idx];
             let feature_bits = data_info.feature_bits(feature_idx);
-            let bits_per_feature = u16::try_from(feature_bits).map_err(|_| EntroGdError::InvalidMetadata {
-                message: format!("feature {} bits {} does not fit into u16", feature_idx, feature_bits),
-            })?;
+            let bits_per_feature =
+                u16::try_from(feature_bits).map_err(|_| EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "feature {} bits {} does not fit into u16",
+                        feature_idx, feature_bits
+                    ),
+                })?;
 
             writer.write_u8(1); // BitInfo tag
             writer.write_u8(encode_data_type(feature_spec.data_type));
@@ -84,6 +94,22 @@ impl EgdFile {
                 FeatureTransform::ScaledSignedInt { decimal_scale } => {
                     writer.write_u8(1);
                     writer.write_u8(decimal_scale);
+                }
+                FeatureTransform::OffsetSignedInt { min_value } => {
+                    writer.write_u8(2);
+                    writer.write_u64(min_value as u64);
+                }
+                FeatureTransform::OffsetUnsignedInt { min_value } => {
+                    writer.write_u8(3);
+                    writer.write_u64(min_value);
+                }
+                FeatureTransform::ScaledOffsetSignedInt {
+                    decimal_scale,
+                    min_value,
+                } => {
+                    writer.write_u8(4);
+                    writer.write_u8(decimal_scale);
+                    writer.write_u64(min_value as u64);
                 }
             }
             writer.write_u16(bits_per_feature);
@@ -108,8 +134,10 @@ impl EgdFile {
         writer.align_to_byte();
 
         // Base table
-        let num_bases = u64::try_from(compressed.base_table.len()).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "num_bases does not fit into u64".to_string(),
+        let num_bases = u64::try_from(compressed.base_table.len()).map_err(|_| {
+            EntroGdError::InvalidMetadata {
+                message: "num_bases does not fit into u64".to_string(),
+            }
         })?;
         writer.write_u64(num_bases);
         for (base_bits, _) in &compressed.base_table {
@@ -185,7 +213,10 @@ impl EgdFile {
             let tag = reader.read_u8()?;
             if tag != 1 {
                 return Err(EntroGdError::InvalidMetadata {
-                    message: format!("unsupported feature metadata tag {} at index {}", tag, feature_idx),
+                    message: format!(
+                        "unsupported feature metadata tag {} at index {}",
+                        tag, feature_idx
+                    ),
                 });
             }
             let data_type = decode_data_type(reader.read_u8()?)?;
@@ -194,6 +225,22 @@ impl EgdFile {
                 1 => {
                     let decimal_scale = reader.read_u8()?;
                     FeatureTransform::ScaledSignedInt { decimal_scale }
+                }
+                2 => {
+                    let min_value = reader.read_u64()? as i64;
+                    FeatureTransform::OffsetSignedInt { min_value }
+                }
+                3 => {
+                    let min_value = reader.read_u64()?;
+                    FeatureTransform::OffsetUnsignedInt { min_value }
+                }
+                4 => {
+                    let decimal_scale = reader.read_u8()?;
+                    let min_value = reader.read_u64()? as i64;
+                    FeatureTransform::ScaledOffsetSignedInt {
+                        decimal_scale,
+                        min_value,
+                    }
                 }
                 transform_tag => {
                     return Err(EntroGdError::InvalidMetadata {
@@ -222,11 +269,12 @@ impl EgdFile {
                     base_bit_positions.push(running_offset + local_bit);
                 }
             }
-            running_offset = running_offset.checked_add(bits).ok_or_else(|| {
-                EntroGdError::InvalidMetadata {
-                    message: "chunk size overflow while parsing features".to_string(),
-                }
-            })?;
+            running_offset =
+                running_offset
+                    .checked_add(bits)
+                    .ok_or_else(|| EntroGdError::InvalidMetadata {
+                        message: "chunk size overflow while parsing features".to_string(),
+                    })?;
         }
 
         // Align after feature metadata
@@ -265,9 +313,11 @@ impl EgdFile {
             base_table.push((base_bits, 0usize));
         }
 
-        let num_samples = n.checked_add(m).ok_or_else(|| EntroGdError::InvalidMetadata {
-            message: "n + m overflows usize".to_string(),
-        })?;
+        let num_samples = n
+            .checked_add(m)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "n + m overflows usize".to_string(),
+            })?;
         let num_id_bits = bits_needed(num_bases);
         let num_deviation_bits = chunk_size.saturating_sub(base_bit_positions.len());
 
@@ -325,18 +375,14 @@ impl EgdFile {
             }
         }
 
-        let original_size_bits = n.checked_mul(chunk_size).ok_or_else(|| {
-            EntroGdError::InvalidMetadata {
-                message: "original size overflow".to_string(),
-            }
-        })?;
+        let original_size_bits =
+            n.checked_mul(chunk_size)
+                .ok_or_else(|| EntroGdError::InvalidMetadata {
+                    message: "original size overflow".to_string(),
+                })?;
         let mut metadata = BitDataInfo::new(features, original_size_bits)?;
         metadata.m_condensed_samples = if m == 0 { None } else { Some(m) };
-        metadata.m_condensed_sample_weights = if m == 0 {
-            None
-        } else {
-            Some(weights.clone())
-        };
+        metadata.m_condensed_sample_weights = if m == 0 { None } else { Some(weights.clone()) };
 
         Ok(CompressedData {
             encoded_data: DeviationData::new(
@@ -597,9 +643,9 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_loader::FeatureDataType;
-    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::compression::compress::build_compression_pipeline;
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::Filter;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
@@ -610,13 +656,10 @@ mod tests {
     fn test_build_and_save_egd() {
         let data = BitData {
             data: bitvec![usize, Msb0; 0; 64],
-            num_rows: 8,
-            chunk_size: 8,
+            num_rows: 1,
+            chunk_size: 64,
         };
-        let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 1);
-            8
-        ];
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
         let info = BitDataInfo::new(features, 64).unwrap();
         let bit_data = BitDataSet { data, info };
         let pipeline = get_compression_pipeline();
@@ -637,20 +680,15 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_to_compressed_data() {
         let data = BitData {
-            data: bitvec![usize, Msb0;
-                1,0,1,0,
-                1,0,1,1,
-                0,0,1,0,
-                0,1,1,1
-            ],
-            num_rows: 4,
-            chunk_size: 4,
+            data: bitvec![usize, Msb0; 0; 320],
+            num_rows: 5,
+            chunk_size: 64,
         };
         let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 2),
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 2),
+            FeatureSpec::new(FeatureDataType::UnsignedInt, 32),
+            FeatureSpec::new(FeatureDataType::UnsignedInt, 32),
         ];
-        let info = BitDataInfo::new(features, 16).unwrap();
+        let info = BitDataInfo::new(features, 320).unwrap();
         let bit_data = BitDataSet { data, info };
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
@@ -660,11 +698,26 @@ mod tests {
 
         assert_eq!(loaded.metadata, compressed.metadata);
         assert_eq!(loaded.base_bit_positions, compressed.base_bit_positions);
-        assert_eq!(loaded.condensed_sample_weights, compressed.condensed_sample_weights);
-        assert_eq!(loaded.encoded_data.encoded_bit_stream(), compressed.encoded_data.encoded_bit_stream());
-        assert_eq!(loaded.encoded_data.get_num_samples(), compressed.encoded_data.get_num_samples());
-        assert_eq!(loaded.encoded_data.get_num_deviation_bits(), compressed.encoded_data.get_num_deviation_bits());
-        assert_eq!(loaded.encoded_data.get_num_id_bits(), compressed.encoded_data.get_num_id_bits());
+        assert_eq!(
+            loaded.condensed_sample_weights,
+            compressed.condensed_sample_weights
+        );
+        assert_eq!(
+            loaded.encoded_data.encoded_bit_stream(),
+            compressed.encoded_data.encoded_bit_stream()
+        );
+        assert_eq!(
+            loaded.encoded_data.get_num_samples(),
+            compressed.encoded_data.get_num_samples()
+        );
+        assert_eq!(
+            loaded.encoded_data.get_num_deviation_bits(),
+            compressed.encoded_data.get_num_deviation_bits()
+        );
+        assert_eq!(
+            loaded.encoded_data.get_num_id_bits(),
+            compressed.encoded_data.get_num_id_bits()
+        );
         assert_eq!(loaded.base_table.len(), compressed.base_table.len());
         for (lhs, rhs) in loaded.base_table.iter().zip(compressed.base_table.iter()) {
             assert_eq!(lhs.0, rhs.0);
