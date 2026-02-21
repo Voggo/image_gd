@@ -234,6 +234,11 @@ fn select_condensed_samples(
             break;
         }
         condensed_bit_groups.add_bit_position(bit_data, bit_position);
+        debug!(
+            "Added bit position {} to condensed samples, current number of bases: {}",
+            bit_position,
+            condensed_bit_groups.get_num_bases()
+        );
     }
 
     let bases = condensed_bit_groups.get_bases(bit_data);
