@@ -1,4 +1,4 @@
-use crate::compression::base_bit_selection::BaseBitGroups;
+use crate::compression::base_bits::BaseBitGroups;
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet};
 use crate::error::EntroGdError;

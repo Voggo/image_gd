@@ -16,5 +16,9 @@ criterion = "0.8.2"
 pretty_assertions = "1.4.1"
 
 [[bench]]
+name = "benchmark"
+harness = false
+
+[[bench]]
 name = "benchmark_individual"
 harness = false

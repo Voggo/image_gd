@@ -40,29 +40,47 @@ impl BaseBitGroups {
 
     pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit position {}", bit_position));
+
+        // Skip duplicate work if this bit has already been selected.
+        if self.base_bit_mask[bit_position] {
+            return self.num_bases;
+        }
+
         self.base_bit_mask.set(bit_position, true);
         self.num_bits_per_base += 1;
         self.base_bit_positions.push(bit_position);
 
-        for group_idx in 0..self.groups.len() {
-            let mut group_zeros = Vec::new();
-            let mut group_ones = Vec::new();
-            for &row in self.groups[group_idx].iter() {
+        // Collect split-off groups and append after iteration.
+        // This avoids repeated growth/reallocation of `self.groups` while iterating.
+        let mut new_groups = Vec::new();
+
+        for group in &mut self.groups {
+            if group.len() <= 1 {
+                continue;
+            }
+
+            // Keep zero-bit rows in place; move one-bit rows into a side vector.
+            // This avoids allocating a second vector for zeros.
+            let mut group_ones = Vec::with_capacity(group.len() / 2 + 1);
+            group.retain(|&row| {
                 if bit_data.get_bit(row, bit_position) {
                     group_ones.push(row);
+                    false
                 } else {
-                    group_zeros.push(row);
+                    true
                 }
-            }
-            if group_zeros.is_empty() && !group_ones.is_empty() {
-                self.groups[group_idx] = group_ones;
-            } else if group_ones.is_empty() && !group_zeros.is_empty() {
-                self.groups[group_idx] = group_zeros;
-            } else if !group_zeros.is_empty() && !group_ones.is_empty() {
-                self.groups[group_idx] = group_zeros;
-                self.groups.push(group_ones);
+            });
+
+            if group.is_empty() {
+                // All rows had bit=1.
+                *group = group_ones;
+            } else if !group_ones.is_empty() {
+                // Mixed group: keep zeros in place and append ones as a new group.
+                new_groups.push(group_ones);
             }
         }
+
+        self.groups.extend(new_groups);
         self.num_bases = self.groups.len();
         self.num_bases
     }

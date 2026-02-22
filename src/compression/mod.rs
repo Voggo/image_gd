@@ -1,4 +1,4 @@
-pub mod base_bit_selection;
+pub mod base_bits;
 pub mod compress;
 pub mod entropy;
 pub mod file_format;

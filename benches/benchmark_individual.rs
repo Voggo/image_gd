@@ -12,7 +12,7 @@ use entro_gd::compression::compress::DecompressRowsData;
 use entro_gd::CompressedData;
 use entro_gd::prelude::*;
 
-type BaseBitGroups = entro_gd::compression::base_bit_selection::BaseBitGroups;
+type BaseBitGroups = entro_gd::compression::base_bits::BaseBitGroups;
 
 #[derive(Clone, Copy)]
 enum EntropyImpl {

@@ -73,7 +73,7 @@ fn run_compression_pipeline(case: RoundtripCase, bit_data: BitDataSet) -> PathBu
             .then(SelectBases {
                 patience: case.patience,
             })
-            .then(EncodeData {})
+            .then(EncodeDataOptimized {})
             .then(SaveEgdFile { output_path })
             .process(bit_data)
             .unwrap(),
