@@ -18,6 +18,16 @@ pub fn build_compression_pipeline(
         .then(EncodeData {})
 }
 
+pub fn build_compression_pipeline_optimized(
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+    EntropyOptimized {}
+        .then(GenCondensedSamples { m_max })
+        .then(SelectBases { patience })
+        .then(EncodeDataOptimized {})
+}
+
 /// Represents the compressed output
 #[derive(Debug, Clone)]
 pub struct CompressedData {
@@ -422,6 +432,26 @@ impl Filter for EncodeData {
     }
 }
 
+pub struct EncodeDataOptimized {}
+
+impl Filter for EncodeDataOptimized {
+    type Input = (BitDataSet, BaseBitGroups);
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format (optimized)");
+        let (bit_data, base_bit_groups) = input;
+        let mut compressed = CompressedData::new(
+            encode_data_optimized(&bit_data, &base_bit_groups),
+            bit_data.info.clone(),
+        );
+        compressed.base_table = base_bit_groups.get_bases(&bit_data);
+        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        compressed.condensed_sample_weights = bit_data.info.m_condensed_sample_weights.clone();
+        Ok(compressed)
+    }
+}
+
 fn encode_data(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> DeviationData {
     let mut encoded_bit_stream = BitVec::<usize, Msb0>::new();
     let base_bit_mask = base_bit_groups.get_base_bit_mask();
@@ -458,6 +488,90 @@ fn encode_data(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> Deviat
             for shift in (0..l_id).rev() {
                 encoded_bit_stream.push(((id >> shift) & 1) == 1);
             }
+        }
+    }
+
+    DeviationData::new(
+        encoded_bit_stream,
+        bit_data.num_rows(),
+        num_deviation_bits,
+        l_id,
+    )
+}
+
+fn encode_data_optimized(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> DeviationData {
+    let base_bit_mask = base_bit_groups.get_base_bit_mask();
+
+    let num_bases = base_bit_groups.get_num_bases();
+    let l_id = {
+        let bits = (num_bases as f64).log2().ceil() as usize;
+        if bits == 0 { 1 } else { bits }
+    };
+
+    let chunk_size = bit_data.chunk_size();
+    let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
+    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
+
+    // Precompute non-base (deviation) bit positions once.
+    let mut deviation_positions = Vec::with_capacity(num_deviation_bits);
+    for bit_pos in 0..chunk_size {
+        if !base_bit_mask[bit_pos] {
+            deviation_positions.push(bit_pos);
+        }
+    }
+
+    // Collapse consecutive deviation positions into contiguous ranges so we can
+    // append whole slices instead of pushing one bit at a time.
+    let mut deviation_ranges: Vec<(usize, usize)> = Vec::new();
+    if let Some(&first_pos) = deviation_positions.first() {
+        let mut range_start = first_pos;
+        let mut prev = first_pos;
+
+        for &pos in deviation_positions.iter().skip(1) {
+            if pos == prev + 1 {
+                prev = pos;
+            } else {
+                deviation_ranges.push((range_start, prev + 1));
+                range_start = pos;
+                prev = pos;
+            }
+        }
+        deviation_ranges.push((range_start, prev + 1));
+    }
+
+    // Precompute ID bit patterns per base to avoid per-row shift/push loops.
+    let mut id_bits_per_base: Vec<BitVec<usize, Msb0>> = Vec::new();
+    if l_id > 0 {
+        id_bits_per_base = Vec::with_capacity(num_bases);
+        for id in 0..num_bases {
+            let mut id_bits = BitVec::<usize, Msb0>::with_capacity(l_id);
+            for shift in (0..l_id).rev() {
+                id_bits.push(((id >> shift) & 1) == 1);
+            }
+            id_bits_per_base.push(id_bits);
+        }
+    }
+
+    let num_rows = bit_data.num_rows();
+    let mut row_to_group_id = vec![0usize; num_rows];
+    let mut encoded_bit_stream =
+        BitVec::<usize, Msb0>::with_capacity(num_rows * (num_deviation_bits + l_id));
+    for (id, group) in base_bit_groups.get_groups().iter().enumerate() {
+        for &row in group.iter() {
+            row_to_group_id[row] = id;
+        }
+    }
+
+    for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
+        let id = *id_ref;
+        let chunk = bit_data.get_chunk(row);
+
+        for &(start, end) in &deviation_ranges {
+            encoded_bit_stream.extend_from_bitslice(&chunk[start..end]);
+        }
+
+        if l_id > 0 {
+            encoded_bit_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
         }
     }
 

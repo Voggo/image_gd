@@ -84,13 +84,15 @@ impl SelectBasesImpl {
 
 #[derive(Clone, Copy)]
 enum EncodeImpl {
-	Current,
+	Naive,
+    Optimized
 }
 
 impl EncodeImpl {
 	fn label(self) -> &'static str {
 		match self {
-			EncodeImpl::Current => "current",
+			EncodeImpl::Naive => "naive",
+			EncodeImpl::Optimized => "optimized",
 		}
 	}
 
@@ -99,7 +101,8 @@ impl EncodeImpl {
 		input: (BitDataSet, BaseBitGroups),
 	) -> Result<CompressedData, EntroGdError> {
 		match self {
-			EncodeImpl::Current => EncodeData {}.process(input),
+			EncodeImpl::Naive => EncodeData {}.process(input),
+			EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
 		}
 	}
 }
@@ -184,7 +187,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Optimized];
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
 const SELECT_BASES_IMPLS: [SelectBasesImpl; 1] = [SelectBasesImpl::Current];
-const ENCODE_IMPLS: [EncodeImpl; 1] = [EncodeImpl::Current];
+const ENCODE_IMPLS: [EncodeImpl; 2] = [EncodeImpl::Naive, EncodeImpl::Optimized];
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
 const LOAD_IMPLS: [LoadImpl; 1] = [LoadImpl::Current];
 const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 1] = [DecompressRowsImpl::Current];
@@ -239,7 +242,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
 	}
 	.process(condensed_seed.clone())
 	.unwrap();
-	let compressed_seed = EncodeData {}.process(selected_seed.clone()).unwrap();
+	let compressed_seed = EncodeDataOptimized {}.process(selected_seed.clone()).unwrap();
 
 	let egd_path = output_path(case);
 	let _saved_once = SaveEgdFile {

@@ -6,7 +6,7 @@ pub mod preprocessor;
 
 pub use compress::{
     CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
-    DeviationSample, EncodeData, GenCondensedSamples, SelectBases, build_compression_pipeline,
+    DeviationSample, EncodeData, EncodeDataOptimized, GenCondensedSamples, SelectBases, build_compression_pipeline,
 };
 pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
 pub use file_format::{EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile};

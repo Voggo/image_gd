@@ -6,10 +6,10 @@ pub mod timing;
 
 pub use compression::{
     BitData, BitDataInfo, BitDataSet, CompressedData, CondensedSamples, DecompressAnalytics,
-    DecompressFileData, DeviationData, DeviationSample, EgdFile, EncodeData, EntropyNaive,
-    EntropyOptimized, FORMAT_VERSION, FeatureSpec, FeatureTransform, GenCondensedSamples,
-    LoadEgdFile, MAGIC_BYTES, SaveEgdFile, SelectBases, build_compression_pipeline,
-    calculate_entropy, decode_value_from_bits,
+    DecompressFileData, DeviationData, DeviationSample, EgdFile, EncodeData, EncodeDataOptimized,
+    EntropyNaive, EntropyOptimized, FORMAT_VERSION, FeatureSpec, FeatureTransform,
+    GenCondensedSamples, LoadEgdFile, MAGIC_BYTES, SaveEgdFile, SelectBases,
+    build_compression_pipeline, calculate_entropy, decode_value_from_bits,
 };
 pub use data_loader::{
     ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
@@ -22,9 +22,10 @@ pub use timing::ScopedTimer;
 pub mod prelude {
     pub use crate::{
         BitDataSet, CsvDataLoader, DataLoader, DataValue, DecompressAnalytics, DecompressFileData,
-        EncodeData, EntroGdError, EntropyNaive, EntropyOptimized, FeatureDataType, Filter,
-        FilterExt, GenCondensedSamples, LoadEgdFile, SaveEgdFile, ScopedTimer, SelectBases,
-        build_compression_pipeline, calculate_entropy, decode_value_from_bits, init_logging,
+        EncodeData, EncodeDataOptimized, EntroGdError, EntropyNaive, EntropyOptimized,
+        FeatureDataType, Filter, FilterExt, GenCondensedSamples, LoadEgdFile, SaveEgdFile,
+        ScopedTimer, SelectBases, build_compression_pipeline, calculate_entropy,
+        decode_value_from_bits, init_logging,
     };
 }
 
