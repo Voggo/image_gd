@@ -46,7 +46,7 @@ static LOGGING_INIT: Once = Once::new();
 /// Safe to call multiple times.
 pub fn init_logging() {
     LOGGING_INIT.call_once(|| {
-		let level_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+		let level_spec = std::env::var("LOG").unwrap_or_else(|_| "info".to_string());
 		let log_dir = std::env::var("ENTRO_GD_LOG_DIR").unwrap_or_else(|_| "logs".to_string());
 		let mirror_stderr = std::env::var("ENTRO_GD_LOG_TO_STDERR")
 			.map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
@@ -63,7 +63,7 @@ pub fn init_logging() {
 				)
 				.write_mode(WriteMode::Direct),
 			Err(_) => {
-				eprintln!("Failed to initialize logger from RUST_LOG; falling back to default logger settings");
+				eprintln!("Failed to initialize logger from LOG; falling back to default logger settings");
 				let mut fallback = Logger::try_with_str("info")
 					.expect("default logger configuration should be valid")
 					.log_to_file(
