@@ -8,11 +8,11 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use std::hint::black_box;
 
-use entro_gd::compression::compress::DecompressRowsData;
+use entro_gd::compression::compress::{DecompressRowsData, SelectBasesOptimized};
 use entro_gd::CompressedData;
 use entro_gd::prelude::*;
 
-type BaseBitGroups = entro_gd::compression::base_bits::BaseBitGroups;
+type DynBaseBit = Box<dyn entro_gd::compression::base_bits::BaseBit>;
 
 #[derive(Clone, Copy)]
 enum EntropyImpl {
@@ -61,13 +61,15 @@ impl GenCondensedImpl {
 
 #[derive(Clone, Copy)]
 enum SelectBasesImpl {
-	Current,
+	Naive,
+	Optimized,
 }
 
 impl SelectBasesImpl {
 	fn label(self) -> &'static str {
 		match self {
-			SelectBasesImpl::Current => "current",
+			SelectBasesImpl::Naive => "naive",
+			SelectBasesImpl::Optimized => "optimized",
 		}
 	}
 
@@ -75,9 +77,10 @@ impl SelectBasesImpl {
 		self,
 		input: (BitDataSet, Vec<(usize, f64)>),
 		patience: usize,
-	) -> Result<(BitDataSet, BaseBitGroups), EntroGdError> {
+	) -> Result<(BitDataSet, DynBaseBit), EntroGdError> {
 		match self {
-			SelectBasesImpl::Current => SelectBases { patience }.process(input),
+			SelectBasesImpl::Naive => SelectBases { patience }.process(input),
+			SelectBasesImpl::Optimized => SelectBasesOptimized { patience }.process(input),
 		}
 	}
 }
@@ -98,7 +101,7 @@ impl EncodeImpl {
 
 	fn process(
 		self,
-		input: (BitDataSet, BaseBitGroups),
+		input: (BitDataSet, DynBaseBit),
 	) -> Result<CompressedData, EntroGdError> {
 		match self {
 			EncodeImpl::Naive => EncodeData {}.process(input),
@@ -186,7 +189,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
 
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Optimized];
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
-const SELECT_BASES_IMPLS: [SelectBasesImpl; 1] = [SelectBasesImpl::Current];
+const SELECT_BASES_IMPLS: [SelectBasesImpl; 2] = [SelectBasesImpl::Naive, SelectBasesImpl::Optimized];
 const ENCODE_IMPLS: [EncodeImpl; 2] = [EncodeImpl::Naive, EncodeImpl::Optimized];
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
 const LOAD_IMPLS: [LoadImpl; 1] = [LoadImpl::Current];
@@ -220,7 +223,6 @@ struct PreparedCase {
 	bit_data_seed: BitDataSet,
 	entropy_seed: (BitDataSet, Vec<(usize, f64)>),
 	condensed_seed: (BitDataSet, Vec<(usize, f64)>),
-	selected_seed: (BitDataSet, BaseBitGroups),
 	compressed_seed: CompressedData,
 	egd_path: PathBuf,
 	rows_input_seed: (Arc<CompressedData>, Vec<usize>),
@@ -237,12 +239,12 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
 	let condensed_seed = GenCondensedSamples { m_max: case.m_max }
 		.process(entropy_seed.clone())
 		.unwrap();
-	let selected_seed = SelectBases {
+	let selected_seed = SelectBasesOptimized {
 		patience: case.patience,
 	}
 	.process(condensed_seed.clone())
 	.unwrap();
-	let compressed_seed = EncodeDataOptimized {}.process(selected_seed.clone()).unwrap();
+	let compressed_seed = EncodeDataOptimized {}.process(selected_seed).unwrap();
 
 	let egd_path = output_path(case);
 	let _saved_once = SaveEgdFile {
@@ -262,7 +264,6 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
 		bit_data_seed,
 		entropy_seed,
 		condensed_seed,
-		selected_seed,
 		compressed_seed,
 		egd_path,
 		rows_input_seed,
@@ -279,7 +280,6 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn>(
 	run_impl: RunFn,
 ) where
 	ImplType: Copy,
-	Input: Clone,
 	LabelFn: Fn(ImplType) -> &'static str + Copy,
 	InputFn: Fn(&PreparedCase) -> Input + Copy,
 	RunFn: Fn(ImplType, Input, &PreparedCase) -> Result<Output, EntroGdError> + Copy,
@@ -349,7 +349,11 @@ fn benchmark_filter_steps(c: &mut Criterion) {
 		&prepared_cases,
 		&ENCODE_IMPLS,
 		EncodeImpl::label,
-		|case| case.selected_seed.clone(),
+		|case| SelectBasesOptimized {
+			patience: case.patience,
+		}
+		.process(case.condensed_seed.clone())
+		.unwrap(),
 		|implementation, input, _case| implementation.process(input),
 	);
 

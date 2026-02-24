@@ -57,8 +57,7 @@ pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
 
     let mut ones_count = vec![0usize; chunk_size];
 
-    // Rows are bit-packed globally in BitVec and are not guaranteed to begin at
-    // machine-word boundaries. Iterate row slices directly and use iter_ones()
+    // Iterate row slices directly and use iter_ones()
     // to keep the sparse-bit O(number of 1s) counting behavior.
     for row_bits in bit_data
         .data

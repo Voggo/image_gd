@@ -1,4 +1,4 @@
-use crate::compression::base_bits::BaseBitGroups;
+use crate::compression::base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups};
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet};
 use crate::error::EntroGdError;
@@ -24,7 +24,7 @@ pub fn build_compression_pipeline_optimized(
 ) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
     EntropyOptimized {}
         .then(GenCondensedSamples { m_max })
-        .then(SelectBases { patience })
+        .then(SelectBasesOptimized { patience })
         .then(EncodeDataOptimized {})
 }
 
@@ -309,7 +309,7 @@ fn append_condensed_samples(
     bit_data
 }
 
-fn calculate_compressed_size(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> usize {
+fn calculate_compressed_size<B: BaseBit>(bit_data: &BitDataSet, base_bit_groups: &B) -> usize {
     fn min_bit_length(value: usize) -> usize {
         match value {
             0 => 0,
@@ -341,13 +341,15 @@ fn calculate_compressed_size(bit_data: &BitDataSet, base_bit_groups: &BaseBitGro
     size_bases + size_base_counts + size_deviations + size_params
 }
 
+type DynBaseBit = Box<dyn BaseBit>;
+
 pub struct SelectBases {
     pub patience: usize,
 }
 
 impl Filter for SelectBases {
     type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, BaseBitGroups);
+    type Output = (BitDataSet, DynBaseBit);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
@@ -355,12 +357,12 @@ impl Filter for SelectBases {
             self.patience
         ));
         let (bit_data, entropy) = input;
-        let base_bit_groups = optimize_base_bit_groups(&bit_data, entropy, self.patience);
-        Ok((bit_data, base_bit_groups))
+        let base_bit_groups = select_base_bits(&bit_data, entropy, self.patience);
+        Ok((bit_data, Box::new(base_bit_groups)))
     }
 }
 
-fn optimize_base_bit_groups(
+fn select_base_bits(
     bit_data: &BitDataSet,
     mut entropy: Vec<(usize, f64)>,
     patience: usize,
@@ -412,17 +414,103 @@ fn optimize_base_bit_groups(
     best_base_bit_groups
 }
 
+pub struct SelectBasesOptimized {
+    pub patience: usize,
+}
+
+impl Filter for SelectBasesOptimized {
+    type Input = (BitDataSet, Vec<(usize, f64)>);
+    type Output = (BitDataSet, DynBaseBit);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Selecting base bits in batches with patience {}",
+            self.patience
+        ));
+        let (bit_data, entropy) = input;
+        let base_bit_groups = select_base_bits_optimized(&bit_data, entropy, self.patience);
+        Ok((bit_data, Box::new(base_bit_groups)))
+    }
+}
+
+fn select_base_bits_optimized(
+    bit_data: &BitDataSet,
+    mut entropy: Vec<(usize, f64)>,
+    patience: usize,
+) -> BaseBitBatchGroups {
+    let mut non_improving_count = 0usize;
+    let mut base_bit_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+
+    entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let zero_entropy_bits: Vec<usize> = entropy
+        .iter()
+        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
+        .map(|(bit_position, _)| *bit_position)
+        .collect();
+    base_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
+
+    let mut best_base_bit_groups = base_bit_groups.clone();
+    let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
+    let mut trial_base_bit_groups = base_bit_groups.clone();
+
+    let candidate_bits: Vec<usize> = entropy
+        .iter()
+        .skip(zero_entropy_bits.len())
+        .map(|(bit_position, _)| *bit_position)
+        .collect();
+
+    if candidate_bits.is_empty() {
+        return best_base_bit_groups;
+    }
+
+    // Batch size heuristic: add around log2(d) bits per step, capped to keep 2^k buckets bounded.
+    let d = candidate_bits.len();
+    let batch_size = (((d as f64).log2().ceil() as usize).max(1)).min(8);
+
+    for batch in candidate_bits.chunks(batch_size) {
+        trial_base_bit_groups.add_bit_positions(bit_data, batch);
+        let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
+
+        debug!(
+            "Trial bit batch: {:?}, Trial compressed size: {}, Best compressed size: {}",
+            batch, trial_compressed_size, best_compressed_size
+        );
+
+        if trial_compressed_size < best_compressed_size {
+            best_compressed_size = trial_compressed_size;
+            best_base_bit_groups = trial_base_bit_groups.clone();
+            non_improving_count = 0;
+        } else {
+            non_improving_count += 1;
+        }
+
+        if non_improving_count >= patience {
+            break;
+        }
+    }
+
+    log::info!(
+        "\nSelected base bit mask (batch): {}",
+        best_base_bit_groups
+            .get_base_bit_mask()
+            .iter()
+            .map(|b| if *b { "1" } else { "0" })
+            .collect::<String>()
+    );
+    best_base_bit_groups
+}
+
 pub struct EncodeData {}
 
 impl Filter for EncodeData {
-    type Input = (BitDataSet, BaseBitGroups);
+    type Input = (BitDataSet, DynBaseBit);
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Encoding data into compressed format");
         let (bit_data, base_bit_groups) = input;
         let mut compressed = CompressedData::new(
-            encode_data(&bit_data, &base_bit_groups),
+            encode_data(&bit_data, base_bit_groups.as_ref()),
             bit_data.info.clone(),
         );
         compressed.base_table = base_bit_groups.get_bases(&bit_data);
@@ -435,14 +523,14 @@ impl Filter for EncodeData {
 pub struct EncodeDataOptimized {}
 
 impl Filter for EncodeDataOptimized {
-    type Input = (BitDataSet, BaseBitGroups);
+    type Input = (BitDataSet, DynBaseBit);
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Encoding data into compressed format (optimized)");
         let (bit_data, base_bit_groups) = input;
         let mut compressed = CompressedData::new(
-            encode_data_optimized(&bit_data, &base_bit_groups),
+            encode_data_optimized(&bit_data, base_bit_groups.as_ref()),
             bit_data.info.clone(),
         );
         compressed.base_table = base_bit_groups.get_bases(&bit_data);
@@ -452,7 +540,7 @@ impl Filter for EncodeDataOptimized {
     }
 }
 
-fn encode_data(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> DeviationData {
+fn encode_data<B: BaseBit + ?Sized>(bit_data: &BitDataSet, base_bit_groups: &B) -> DeviationData {
     let mut encoded_bit_stream = BitVec::<usize, Msb0>::new();
     let base_bit_mask = base_bit_groups.get_base_bit_mask();
 
@@ -499,7 +587,10 @@ fn encode_data(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> Deviat
     )
 }
 
-fn encode_data_optimized(bit_data: &BitDataSet, base_bit_groups: &BaseBitGroups) -> DeviationData {
+fn encode_data_optimized<B: BaseBit + ?Sized>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+) -> DeviationData {
     let base_bit_mask = base_bit_groups.get_base_bit_mask();
 
     let num_bases = base_bit_groups.get_num_bases();
