@@ -7,10 +7,13 @@ pub mod preprocessor;
 pub use base_bits::{BaseBit, BaseBitGroups};
 pub use compress::{
     CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
-    DeviationSample, EncodeData, EncodeDataOptimized, GenCondensedSamples, SelectBases, build_compression_pipeline,
+    DeviationSample, EncodeData, EncodeDataOptimized, GenCondensedSamples, SelectBases,
+    SelectBasesOptimized, build_compression_pipeline, build_compression_pipeline_optimized,
+    build_compression_pipeline_with_preprocessing,
 };
 pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
 pub use file_format::{EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile};
 pub use preprocessor::{
-    BitData, BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform, decode_value_from_bits,
+    BitData, BitDataInfo, BitDataSet, BuildBitDataSet, FeatureSpec, FeatureTransform,
+    FloatScalingMode, InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
 };

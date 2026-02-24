@@ -1,6 +1,9 @@
 use crate::compression::base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups};
 use crate::compression::entropy::EntropyOptimized;
-use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet};
+use crate::compression::preprocessor::{
+    BitData, BitDataInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs, PreprocessOptions,
+};
+use crate::data_loader::Dataset;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::{Filter, FilterExt};
 use crate::timing::ScopedTimer;
@@ -26,6 +29,21 @@ pub fn build_compression_pipeline_optimized(
         .then(GenCondensedSamples { m_max })
         .then(SelectBasesOptimized { patience })
         .then(EncodeDataOptimized {})
+}
+
+pub fn build_compression_pipeline_with_preprocessing(
+    preprocess_options: PreprocessOptions,
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = Dataset, Output = CompressedData> {
+    InferFeatureSpecs {
+        options: preprocess_options,
+    }
+    .then(BuildBitDataSet)
+    .then(EntropyOptimized {})
+    .then(GenCondensedSamples { m_max })
+    .then(SelectBases { patience })
+    .then(EncodeDataOptimized {})
 }
 
 /// Represents the compressed output

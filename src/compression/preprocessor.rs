@@ -6,9 +6,60 @@ use std::path::Path;
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
 use crate::error::EntroGdError;
+use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
 const MAX_DECIMAL_SCALE: u8 = 9;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FloatScalingMode {
+    Disabled,
+    ScaledSignedInt,
+    ScaledOffsetSignedInt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreprocessOptions {
+    pub float_scaling: FloatScalingMode,
+    pub max_decimal_scale: u8,
+    pub integer_zero_normalization: bool,
+}
+
+impl Default for PreprocessOptions {
+    fn default() -> Self {
+        PreprocessOptions {
+            float_scaling: FloatScalingMode::ScaledOffsetSignedInt,
+            max_decimal_scale: MAX_DECIMAL_SCALE,
+            integer_zero_normalization: true,
+        }
+    }
+}
+
+pub struct InferFeatureSpecs {
+    pub options: PreprocessOptions,
+}
+
+impl Filter for InferFeatureSpecs {
+    type Input = Dataset;
+    type Output = (Dataset, Vec<FeatureSpec>);
+
+    fn process(&self, dataset: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let specs = infer_feature_specs(&dataset, self.options);
+        Ok((dataset, specs))
+    }
+}
+
+pub struct BuildBitDataSet;
+
+impl Filter for BuildBitDataSet {
+    type Input = (Dataset, Vec<FeatureSpec>);
+    type Output = BitDataSet;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let (dataset, features) = input;
+        BitDataSet::from_dataset_with_schema(&dataset, features)
+    }
+}
 
 /// Optional transform metadata used for a feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,6 +321,14 @@ pub struct BitDataSet {
 impl BitDataSet {
     /// Create BitDataSet from a Dataset using column data types to derive the schema.
     pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_options(dataset, PreprocessOptions::default())
+    }
+
+    /// Create BitDataSet from a Dataset using configurable preprocessing options.
+    pub fn from_dataset_with_options(
+        dataset: &Dataset,
+        options: PreprocessOptions,
+    ) -> Result<Self, EntroGdError> {
         let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
         let num_features = dataset.num_columns();
         info!(
@@ -277,23 +336,7 @@ impl BitDataSet {
             dataset.num_rows(),
             num_features
         );
-        let mut features = Vec::with_capacity(num_features);
-        for feature_idx in 0..num_features {
-            let data_type = dataset.column_type(feature_idx);
-            let spec = match data_type {
-                FeatureDataType::F32 | FeatureDataType::F64 => {
-                    infer_float_feature_spec(dataset, feature_idx, data_type)
-                }
-                FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
-                    infer_integer_feature_spec(dataset, feature_idx, data_type)
-                }
-            };
-            debug!(
-                "Inferred feature {} schema: type={:?}, bits={}, transform={:?}",
-                feature_idx, spec.data_type, spec.bits, spec.transform
-            );
-            features.push(spec);
-        }
+        let features = infer_feature_specs(dataset, options);
         Self::from_dataset_with_schema(dataset, features)
     }
 
@@ -462,6 +505,28 @@ impl BitDataSet {
     }
 }
 
+fn infer_feature_specs(dataset: &Dataset, options: PreprocessOptions) -> Vec<FeatureSpec> {
+    let num_features = dataset.num_columns();
+    let mut features = Vec::with_capacity(num_features);
+    for feature_idx in 0..num_features {
+        let data_type = dataset.column_type(feature_idx);
+        let spec = match data_type {
+            FeatureDataType::F32 | FeatureDataType::F64 => {
+                infer_float_feature_spec(dataset, feature_idx, data_type, options)
+            }
+            FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
+                infer_integer_feature_spec(dataset, feature_idx, data_type, options)
+            }
+        };
+        debug!(
+            "Inferred feature {} schema: type={:?}, bits={}, transform={:?}",
+            feature_idx, spec.data_type, spec.bits, spec.transform
+        );
+        features.push(spec);
+    }
+    features
+}
+
 impl Display for BitDataSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "BitData:")?;
@@ -622,6 +687,7 @@ fn infer_float_feature_spec(
     dataset: &Dataset,
     column: usize,
     data_type: FeatureDataType,
+    options: PreprocessOptions,
 ) -> FeatureSpec {
     let fallback_bits = match data_type {
         FeatureDataType::F32 => 32,
@@ -629,13 +695,17 @@ fn infer_float_feature_spec(
         _ => unreachable!("infer_float_feature_spec called with non-float type"),
     };
 
+    if matches!(options.float_scaling, FloatScalingMode::Disabled) {
+        return FeatureSpec::new(data_type, fallback_bits);
+    }
+
     debug!(
         "Inferring float feature spec for column {} with type {:?} and fallback_bits={}",
         column, data_type, fallback_bits
     );
 
     let mut best_scale: Option<u8> = None;
-    for decimal_scale in 0..=MAX_DECIMAL_SCALE {
+    for decimal_scale in 0..=options.max_decimal_scale.min(MAX_DECIMAL_SCALE) {
         trace!(
             "Trying decimal_scale={} for float column {}",
             decimal_scale, column
@@ -649,19 +719,36 @@ fn infer_float_feature_spec(
     if let Some(decimal_scale) = best_scale {
         let (min_value, max_value) = scaled_int_range(dataset, column, data_type, decimal_scale)
             .expect("scale should have a valid integer range");
-        let shifted_max = shifted_max_signed(min_value, max_value);
-        let bits = storage_bucket_bits(shifted_max);
-        debug!(
-            "Selected scaled+offset transform for column {}: decimal_scale={}, min={}, max={}, shifted_max={}, bits={}",
-            column, decimal_scale, min_value, max_value, shifted_max, bits
-        );
-        FeatureSpec {
-            data_type,
-            bits,
-            transform: FeatureTransform::ScaledOffsetSignedInt {
-                decimal_scale,
-                min_value,
-            },
+        match options.float_scaling {
+            FloatScalingMode::ScaledOffsetSignedInt => {
+                let shifted_max = shifted_max_signed(min_value, max_value);
+                let bits = storage_bucket_bits(shifted_max);
+                debug!(
+                    "Selected scaled+offset transform for column {}: decimal_scale={}, min={}, max={}, shifted_max={}, bits={}",
+                    column, decimal_scale, min_value, max_value, shifted_max, bits
+                );
+                FeatureSpec {
+                    data_type,
+                    bits,
+                    transform: FeatureTransform::ScaledOffsetSignedInt {
+                        decimal_scale,
+                        min_value,
+                    },
+                }
+            }
+            FloatScalingMode::ScaledSignedInt => {
+                let bits = signed_storage_bucket_bits(min_value, max_value);
+                debug!(
+                    "Selected scaled signed transform for column {}: decimal_scale={}, min={}, max={}, bits={}",
+                    column, decimal_scale, min_value, max_value, bits
+                );
+                FeatureSpec {
+                    data_type,
+                    bits,
+                    transform: FeatureTransform::ScaledSignedInt { decimal_scale },
+                }
+            }
+            FloatScalingMode::Disabled => FeatureSpec::new(data_type, fallback_bits),
         }
     } else {
         debug!(
@@ -676,6 +763,7 @@ fn infer_integer_feature_spec(
     dataset: &Dataset,
     column: usize,
     data_type: FeatureDataType,
+    options: PreprocessOptions,
 ) -> FeatureSpec {
     match data_type {
         FeatureDataType::SignedInt => {
@@ -696,18 +784,31 @@ fn infer_integer_feature_spec(
                 max_value = 0;
             }
 
-            let shifted_max = shifted_max_signed(min_value, max_value);
-            let bits = storage_bucket_bits(shifted_max);
+            if options.integer_zero_normalization {
+                let shifted_max = shifted_max_signed(min_value, max_value);
+                let bits = storage_bucket_bits(shifted_max);
 
-            debug!(
-                "Inferred signed integer column {}: min={}, max={}, shifted_max={}, bits={}",
-                column, min_value, max_value, shifted_max, bits
-            );
+                debug!(
+                    "Inferred signed integer column {} (offset): min={}, max={}, shifted_max={}, bits={}",
+                    column, min_value, max_value, shifted_max, bits
+                );
 
-            FeatureSpec {
-                data_type,
-                bits,
-                transform: FeatureTransform::OffsetSignedInt { min_value },
+                FeatureSpec {
+                    data_type,
+                    bits,
+                    transform: FeatureTransform::OffsetSignedInt { min_value },
+                }
+            } else {
+                let bits = signed_storage_bucket_bits(min_value, max_value);
+                debug!(
+                    "Inferred signed integer column {} (no offset): min={}, max={}, bits={}",
+                    column, min_value, max_value, bits
+                );
+                FeatureSpec {
+                    data_type,
+                    bits,
+                    transform: FeatureTransform::None,
+                }
             }
         }
         FeatureDataType::UnsignedInt => {
@@ -728,18 +829,31 @@ fn infer_integer_feature_spec(
                 max_value = 0;
             }
 
-            let shifted_max = max_value.saturating_sub(min_value);
-            let bits = storage_bucket_bits(shifted_max);
+            if options.integer_zero_normalization {
+                let shifted_max = max_value.saturating_sub(min_value);
+                let bits = storage_bucket_bits(shifted_max);
 
-            debug!(
-                "Inferred unsigned integer column {}: min={}, max={}, shifted_max={}, bits={}",
-                column, min_value, max_value, shifted_max, bits
-            );
+                debug!(
+                    "Inferred unsigned integer column {} (offset): min={}, max={}, shifted_max={}, bits={}",
+                    column, min_value, max_value, shifted_max, bits
+                );
 
-            FeatureSpec {
-                data_type,
-                bits,
-                transform: FeatureTransform::OffsetUnsignedInt { min_value },
+                FeatureSpec {
+                    data_type,
+                    bits,
+                    transform: FeatureTransform::OffsetUnsignedInt { min_value },
+                }
+            } else {
+                let bits = storage_bucket_bits(max_value);
+                debug!(
+                    "Inferred unsigned integer column {} (no offset): min={}, max={}, bits={}",
+                    column, min_value, max_value, bits
+                );
+                FeatureSpec {
+                    data_type,
+                    bits,
+                    transform: FeatureTransform::None,
+                }
             }
         }
         _ => unreachable!("infer_integer_feature_spec called with non-integer type"),
@@ -756,6 +870,18 @@ fn storage_bucket_bits(max_value: u64) -> usize {
     } else if max_value <= u16::MAX as u64 {
         16
     } else if max_value <= u32::MAX as u64 {
+        32
+    } else {
+        64
+    }
+}
+
+fn signed_storage_bucket_bits(min_value: i64, max_value: i64) -> usize {
+    if min_value >= i8::MIN as i64 && max_value <= i8::MAX as i64 {
+        8
+    } else if min_value >= i16::MIN as i64 && max_value <= i16::MAX as i64 {
+        16
+    } else if min_value >= i32::MIN as i64 && max_value <= i32::MAX as i64 {
         32
     } else {
         64
@@ -1055,6 +1181,47 @@ mod tests {
         assert!(matches!(
             spec1.transform,
             FeatureTransform::OffsetUnsignedInt { min_value: 1000 }
+        ));
+    }
+
+    #[test]
+    fn test_integer_columns_can_disable_zero_normalization() {
+        let columns = vec![
+            ColumnData::Signed(vec![-5, -1, 10]),
+            ColumnData::Unsigned(vec![1000, 1001, 1005]),
+        ];
+        let dataset = Dataset::from_columns(columns).unwrap();
+        let options = PreprocessOptions {
+            integer_zero_normalization: false,
+            ..PreprocessOptions::default()
+        };
+
+        let bit_data = BitDataSet::from_dataset_with_options(&dataset, options).unwrap();
+
+        let spec0 = &bit_data.info.features[0];
+        assert_eq!(spec0.bits, 8);
+        assert!(matches!(spec0.transform, FeatureTransform::None));
+
+        let spec1 = &bit_data.info.features[1];
+        assert_eq!(spec1.bits, 16);
+        assert!(matches!(spec1.transform, FeatureTransform::None));
+    }
+
+    #[test]
+    fn test_float_columns_can_use_scaled_signed_transform() {
+        let columns = vec![ColumnData::F64(vec![-1.25, 0.0, 2.50])];
+        let dataset = Dataset::from_columns(columns).unwrap();
+        let options = PreprocessOptions {
+            float_scaling: FloatScalingMode::ScaledSignedInt,
+            max_decimal_scale: 3,
+            integer_zero_normalization: true,
+        };
+
+        let bit_data = BitDataSet::from_dataset_with_options(&dataset, options).unwrap();
+        let spec = &bit_data.info.features[0];
+        assert!(matches!(
+            spec.transform,
+            FeatureTransform::ScaledSignedInt { .. }
         ));
     }
 }
