@@ -471,27 +471,25 @@ fn select_base_bits_optimized(
     let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
     let mut trial_base_bit_groups = base_bit_groups.clone();
 
-    let candidate_bits: Vec<usize> = entropy
-        .iter()
-        .skip(zero_entropy_bits.len())
-        .map(|(bit_position, _)| *bit_position)
-        .collect();
+    for i in (0..entropy.len()).step_by(3) {
+        let bit_positions: Vec<usize> = entropy
+            .iter()
+            .skip(zero_entropy_bits.len())
+            .skip(i)
+            .take(3)
+            .map(|(pos, _)| *pos)
+            .collect();
 
-    if candidate_bits.is_empty() {
-        return best_base_bit_groups;
-    }
+        if bit_positions.is_empty() {
+            break;
+        }
 
-    // Batch size heuristic: add around log2(d) bits per step, capped to keep 2^k buckets bounded.
-    let d = candidate_bits.len();
-    let batch_size = (((d as f64).log2().ceil() as usize).max(1)).min(8);
-
-    for batch in candidate_bits.chunks(batch_size) {
-        trial_base_bit_groups.add_bit_positions(bit_data, batch);
+        trial_base_bit_groups.add_bit_positions(bit_data, &bit_positions);
         let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
 
         debug!(
-            "Trial bit batch: {:?}, Trial compressed size: {}, Best compressed size: {}",
-            batch, trial_compressed_size, best_compressed_size
+            "Trial bit positions: {:?}, Trial compressed size: {}, Best compressed size: {}",
+            bit_positions, trial_compressed_size, best_compressed_size
         );
 
         if trial_compressed_size < best_compressed_size {
@@ -502,13 +500,12 @@ fn select_base_bits_optimized(
             non_improving_count += 1;
         }
 
-        if non_improving_count >= patience {
+        if non_improving_count >= patience / 3 {
             break;
         }
     }
-
     log::info!(
-        "\nSelected base bit mask (batch): {}",
+        "\nSelected base bit mask: {}",
         best_base_bit_groups
             .get_base_bit_mask()
             .iter()

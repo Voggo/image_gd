@@ -4,7 +4,7 @@ pub mod entropy;
 pub mod file_format;
 pub mod preprocessor;
 
-pub use base_bits::{BaseBit, BaseBitGroups};
+pub use base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitSignatureGroups};
 pub use compress::{
     CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
     DeviationSample, EncodeData, EncodeDataOptimized, GenCondensedSamples, SelectBases,
