@@ -8,8 +8,8 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::{Filter, FilterExt};
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
-use log::debug;
 use std::sync::Arc;
+
 
 pub fn build_compression_pipeline(
     m_max: usize,
@@ -262,10 +262,11 @@ fn select_condensed_samples(
             break;
         }
         condensed_bit_groups.add_bit_position(bit_data, bit_position);
-        debug!(
-            "Added bit position {} to condensed samples, current number of bases: {}",
+        tracing::debug!(
             bit_position,
-            condensed_bit_groups.get_num_bases()
+            current_num_bases = condensed_bit_groups.get_num_bases(),
+            m_max,
+            "added bit position to condensed samples"
         );
     }
 
@@ -404,9 +405,11 @@ fn select_base_bits(
         trial_base_bit_groups.add_bit_position(bit_data, bit_position);
         let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
 
-        debug!(
-            "Trial bit position: {}, Trial compressed size: {}, Best compressed size: {}",
-            bit_position, trial_compressed_size, best_compressed_size
+        tracing::debug!(
+            bit_position,
+            trial_compressed_size,
+            best_compressed_size,
+            "evaluated trial base bit"
         );
 
         if trial_compressed_size < best_compressed_size {
@@ -421,13 +424,16 @@ fn select_base_bits(
             break;
         }
     }
-    log::info!(
-        "\nSelected base bit mask: {}",
-        best_base_bit_groups
-            .get_base_bit_mask()
-            .iter()
-            .map(|b| if *b { "1" } else { "0" })
-            .collect::<String>()
+    let selected_mask = best_base_bit_groups
+        .get_base_bit_mask()
+        .iter()
+        .map(|b| if *b { "1" } else { "0" })
+        .collect::<String>();
+    tracing::info!(
+        selected_num_bases = best_base_bit_groups.get_num_bases(),
+        selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
+        %selected_mask,
+        "selected base bit mask"
     );
     best_base_bit_groups
 }
@@ -487,9 +493,11 @@ fn select_base_bits_optimized(
         trial_base_bit_groups.add_bit_positions(bit_data, &bit_positions);
         let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
 
-        debug!(
-            "Trial bit positions: {:?}, Trial compressed size: {}, Best compressed size: {}",
-            bit_positions, trial_compressed_size, best_compressed_size
+        tracing::debug!(
+            bit_positions = ?bit_positions,
+            trial_compressed_size,
+            best_compressed_size,
+            "evaluated trial base-bit batch"
         );
 
         if trial_compressed_size < best_compressed_size {
@@ -504,13 +512,16 @@ fn select_base_bits_optimized(
             break;
         }
     }
-    log::info!(
-        "\nSelected base bit mask: {}",
-        best_base_bit_groups
-            .get_base_bit_mask()
-            .iter()
-            .map(|b| if *b { "1" } else { "0" })
-            .collect::<String>()
+    let selected_mask = best_base_bit_groups
+        .get_base_bit_mask()
+        .iter()
+        .map(|b| if *b { "1" } else { "0" })
+        .collect::<String>();
+    tracing::info!(
+        selected_num_bases = best_base_bit_groups.get_num_bases(),
+        selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
+        %selected_mask,
+        "selected base bit mask (optimized)"
     );
     best_base_bit_groups
 }
@@ -1299,10 +1310,10 @@ mod tests {
         // Create a very simple test case with minimal data
         let bit_data = create_simulated_bit_data(5, 1, 8); // 5 rows, 8-bit chunks
 
-        log::info!("\n=== INPUT DATA ===");
-        log::info!("Num rows: {}", bit_data.data.num_rows);
-        log::info!("Chunk size: {}", bit_data.data.chunk_size);
-        log::info!("Total bits: {}", bit_data.data.data.len());
+        tracing::info!("\n=== INPUT DATA ===");
+        tracing::info!("Num rows: {}", bit_data.data.num_rows);
+        tracing::info!("Chunk size: {}", bit_data.data.chunk_size);
+        tracing::info!("Total bits: {}", bit_data.data.data.len());
         for row in 0..bit_data.data.num_rows {
             let start = row * bit_data.data.chunk_size;
             let end = start + bit_data.data.chunk_size;
@@ -1310,35 +1321,35 @@ mod tests {
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
-            log::info!("Row {}: {:?}", row, chunk);
+            tracing::info!("Row {}: {:?}", row, chunk);
         }
 
         // Compress the data
-        log::info!("\n=== COMPRESSING ===");
+        tracing::info!("\n=== COMPRESSING ===");
         let compressed = get_compression_pipeline()
             .process(bit_data.clone())
             .unwrap();
 
-        log::info!("Base table entries: {}", compressed.base_table.len());
-        log::info!(
+        tracing::info!("Base table entries: {}", compressed.base_table.len());
+        tracing::info!(
             "Encoded bit stream size: {}",
             compressed.encoded_data.get_encoded_size()
         );
-        log::info!("Num samples: {}", compressed.encoded_data.get_num_samples());
-        log::info!(
+        tracing::info!("Num samples: {}", compressed.encoded_data.get_num_samples());
+        tracing::info!(
             "Num deviation bits: {}",
             compressed.encoded_data.get_num_deviation_bits()
         );
-        log::info!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
+        tracing::info!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
 
         // Decompress the data
-        log::info!("\n=== DECOMPRESSING ===");
+        tracing::info!("\n=== DECOMPRESSING ===");
         let decompressed = decompress_file(&compressed).expect("Decompression failed");
 
-        log::info!("Decompressed num rows: {}", decompressed.data.num_rows);
-        log::info!("Decompressed chunk size: {}", decompressed.data.chunk_size);
+        tracing::info!("Decompressed num rows: {}", decompressed.data.num_rows);
+        tracing::info!("Decompressed chunk size: {}", decompressed.data.chunk_size);
 
-        log::info!("\n=== COMPARING ===");
+        tracing::info!("\n=== COMPARING ===");
         // Check row by row - use decompressed row count since bit_data now contains condensed samples
         let num_original_rows = 5;
         for row in 0..num_original_rows {
@@ -1355,11 +1366,11 @@ mod tests {
                 .collect();
 
             if original_chunk == decompressed_chunk {
-                log::info!("Row {}: OK", row);
+                tracing::info!("Row {}: OK", row);
             } else {
-                log::info!("Row {} MISMATCH:", row);
-                log::info!("  Original:     {:?}", original_chunk);
-                log::info!("  Decompressed: {:?}", decompressed_chunk);
+                tracing::info!("Row {} MISMATCH:", row);
+                tracing::info!("  Original:     {:?}", original_chunk);
+                tracing::info!("  Decompressed: {:?}", decompressed_chunk);
             }
         }
 
@@ -1382,12 +1393,12 @@ mod tests {
 
         // Print analytics if available
         if let Some(analytics) = decompress_analytics(&compressed) {
-            log::info!("\n=== ANALYTICS ===");
-            log::info!("Condensed samples: {}", analytics.samples.len());
+            tracing::info!("\n=== ANALYTICS ===");
+            tracing::info!("Condensed samples: {}", analytics.samples.len());
             for (i, sample) in analytics.samples.iter().enumerate() {
                 let weight = analytics.weights[i];
                 let sample_bits: Vec<u8> = sample.iter().map(|b| if *b { 1 } else { 0 }).collect();
-                log::info!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
+                tracing::info!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
             }
         }
     }
@@ -1422,7 +1433,7 @@ mod tests {
             vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
-        log::info!("\n=== INPUT DATA ===");
+        tracing::info!("\n=== INPUT DATA ===");
         for row in 0..bit_data.data.num_rows {
             let start = row * bit_data.data.chunk_size;
             let end = start + bit_data.data.chunk_size;
@@ -1430,41 +1441,41 @@ mod tests {
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
-            log::info!("Row {}: {:?}", row, chunk);
+            tracing::info!("Row {}: {:?}", row, chunk);
         }
         // Compress the data
-        log::info!("\n=== COMPRESSING ===");
+        tracing::info!("\n=== COMPRESSING ===");
         let compressed = get_compression_pipeline()
             .process(bit_data.clone())
             .unwrap();
-        log::info!("Base table entries: {}", compressed.base_table.len());
-        log::info!("Base table: {:?}", compressed.base_table);
-        log::info!(
+        tracing::info!("Base table entries: {}", compressed.base_table.len());
+        tracing::info!("Base table: {:?}", compressed.base_table);
+        tracing::info!(
             "Encoded bit stream size: {}",
             compressed.encoded_data.get_encoded_size()
         );
-        log::info!("Num samples: {}", compressed.encoded_data.get_num_samples());
-        log::info!(
+        tracing::info!("Num samples: {}", compressed.encoded_data.get_num_samples());
+        tracing::info!(
             "Num deviation bits: {}",
             compressed.encoded_data.get_num_deviation_bits()
         );
-        log::info!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
+        tracing::info!("Num ID bits: {}", compressed.encoded_data.get_num_id_bits());
         // Decompress analytics if available
         if let Some(analytics) = decompress_analytics(&compressed) {
-            log::info!("\n=== ANALYTICS ===");
-            log::info!("Condensed samples: {}", analytics.samples.len());
+            tracing::info!("\n=== ANALYTICS ===");
+            tracing::info!("Condensed samples: {}", analytics.samples.len());
             for (i, sample) in analytics.samples.iter().enumerate() {
                 let weight = analytics.weights[i];
                 let sample_bits: Vec<u8> = sample.iter().map(|b| if *b { 1 } else { 0 }).collect();
-                log::info!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
+                tracing::info!("Sample {}: {:?}, Weight: {}", i, sample_bits, weight);
             }
         }
         // Decompress the data
-        log::info!("\n=== DECOMPRESSING ===");
+        tracing::info!("\n=== DECOMPRESSING ===");
         let decompressed = decompress_file(&compressed).expect("Decompression failed");
-        log::info!("Decompressed num rows: {}", decompressed.data.num_rows);
-        log::info!("Decompressed chunk size: {}", decompressed.data.chunk_size);
-        log::info!("\n=== COMPARING ===");
+        tracing::info!("Decompressed num rows: {}", decompressed.data.num_rows);
+        tracing::info!("Decompressed chunk size: {}", decompressed.data.chunk_size);
+        tracing::info!("\n=== COMPARING ===");
         // Check row by row - use decompressed row count since bit_data now contains condensed samples
         let num_original_rows = 12;
         for row in 0..num_original_rows {
@@ -1479,11 +1490,11 @@ mod tests {
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
             if original_chunk == decompressed_chunk {
-                log::info!("Row {}: OK", row);
+                tracing::info!("Row {}: OK", row);
             } else {
-                log::info!("Row {} MISMATCH:", row);
-                log::info!("  Original:     {:?}", original_chunk);
-                log::info!("  Decompressed: {:?}", decompressed_chunk);
+                tracing::info!("Row {} MISMATCH:", row);
+                tracing::info!("  Original:     {:?}", original_chunk);
+                tracing::info!("  Decompressed: {:?}", decompressed_chunk);
             }
         }
     }

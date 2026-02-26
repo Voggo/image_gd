@@ -13,8 +13,8 @@ fn main() -> Result<(), EntroGdError> {
     // Get input path from command line argument
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        log::info!("Usage: {} <input_csv_file>", args[0]);
-        log::info!("Example: {} data/data-10000-4-8bit-sparse.csv", args[0]);
+        tracing::info!("Usage: {} <input_csv_file>", args[0]);
+        tracing::info!("Example: {} data/data-10000-4-8bit-sparse.csv", args[0]);
         std::process::exit(1);
     }
 
@@ -33,23 +33,23 @@ fn main() -> Result<(), EntroGdError> {
             .to_string()
     };
 
-    log::info!("Loading CSV data from: {}", input_path);
+    tracing::info!("Loading CSV data from: {}", input_path);
     let loader = CsvDataLoader::new(true).with_float_type(FeatureDataType::F32);
     let loaded = loader.load(input_path)?;
     let dataset = loaded.dataset;
     let metadata = loaded.metadata;
 
-    log::info!("Dataset loaded successfully!");
-    log::info!("  Rows: {}", dataset.num_rows());
-    log::info!("  Columns: {}", dataset.num_columns());
+    tracing::info!("Dataset loaded successfully!");
+    tracing::info!("  Rows: {}", dataset.num_rows());
+    tracing::info!("  Columns: {}", dataset.num_columns());
 
     let bit_data = BitDataSet::from_dataset(&dataset)?;
 
-    log::info!("\nOriginal BitData:");
-    log::info!("  Total bits: {}", bit_data.data.total_bits());
-    log::info!("  Chunk size: {}", bit_data.data.chunk_size);
-    log::info!("  Num rows: {}", bit_data.data.num_rows);
-    log::info!("  Num features: {}", bit_data.info.num_features());
+    tracing::info!("\nOriginal BitData:");
+    tracing::info!("  Total bits: {}", bit_data.data.total_bits());
+    tracing::info!("  Chunk size: {}", bit_data.data.chunk_size);
+    tracing::info!("  Num rows: {}", bit_data.data.num_rows);
+    tracing::info!("  Num features: {}", bit_data.info.num_features());
 
     // construct EGD file path by replacing input file extension with .egd
     let egd_file_path = {
@@ -66,7 +66,7 @@ fn main() -> Result<(), EntroGdError> {
     let _compression_timer =
         ScopedTimer::info("Compression process whithout loading .csv file and parsing");
     // Compress the data with filters (pipe-and-filter style)
-    log::info!("\nCompressing data...");
+    tracing::info!("\nCompressing data...");
     let compression_pipeline = build_compression_pipeline_optimized(50, 10);
     let compressed = compression_pipeline.process(bit_data)?;
 
@@ -103,17 +103,17 @@ fn main() -> Result<(), EntroGdError> {
         loaded_compressed.encoded_data.get_num_samples()
     );
 
-    log::info!("Compression complete!");
-    log::info!(
+    tracing::info!("Compression complete!");
+    tracing::info!(
         "  Original size: {} bits",
         compressed.metadata.original_size_bits
     );
-    log::info!(
+    tracing::info!(
         "  Encoded stream size: {} bits",
         compressed.encoded_data.get_encoded_size()
     );
-    log::info!("  Base table entries: {}", compressed.base_table.len());
-    log::info!("  Base bit positions: {:?}", compressed.base_bit_positions);
+    tracing::info!("  Base table entries: {}", compressed.base_table.len());
+    tracing::info!("  Base bit positions: {:?}", compressed.base_bit_positions);
 
     // Calculate compression ratio
     let base_table_size = loaded_compressed
@@ -124,20 +124,20 @@ fn main() -> Result<(), EntroGdError> {
     let total_compressed_size = loaded_compressed.encoded_data.get_encoded_size() + base_table_size;
     let compression_ratio =
         total_compressed_size as f64 / loaded_compressed.metadata.original_size_bits as f64;
-    log::info!("  Approximate compression ratio: {:.2}", compression_ratio);
+    tracing::info!("  Approximate compression ratio: {:.2}", compression_ratio);
 
     // Decompress the data through filters
-    log::info!("\nDecompressing data...");
+    tracing::info!("\nDecompressing data...");
     let decompressed = (DecompressFileData {}).process(loaded_compressed.clone())?;
     if let Some(analytics) = (DecompressAnalytics {}).process(loaded_compressed.clone())? {
-        log::info!("\nDecompression analytics:");
+        tracing::info!("\nDecompression analytics:");
         for (i, (sample, weight)) in analytics
             .samples
             .iter()
             .zip(analytics.weights.iter())
             .enumerate()
         {
-            log::info!("  Sample {}: {} weight", i, weight);
+            tracing::info!("  Sample {}: {} weight", i, weight);
 
             for feature_idx in 0..loaded_compressed.metadata.num_features() {
                 let feature_start = loaded_compressed.metadata.feature_offset(feature_idx);
@@ -153,15 +153,15 @@ fn main() -> Result<(), EntroGdError> {
                     DataValue::F64(v) => v.to_string(),
                 };
 
-                log::info!("    Feature {}: {}", feature_idx, formatted);
+                tracing::info!("    Feature {}: {}", feature_idx, formatted);
             }
         }
     }
 
-    log::info!("Decompression complete!");
-    log::info!("  Total bits: {}", decompressed.data.total_bits());
-    log::info!("  Num rows: {}", decompressed.data.num_rows);
-    log::info!("  Num features: {}", decompressed.info.num_features());
+    tracing::info!("Decompression complete!");
+    tracing::info!("  Total bits: {}", decompressed.data.total_bits());
+    tracing::info!("  Num rows: {}", decompressed.data.num_rows);
+    tracing::info!("  Num features: {}", decompressed.info.num_features());
 
     // Verify data integrity
     // let data_matches = bit_data.data == decompressed.data;
@@ -177,9 +177,9 @@ fn main() -> Result<(), EntroGdError> {
     // }
 
     // Convert decompressed BitData back to CSV
-    log::info!("\nWriting decompressed data to: {}", output_path);
+    tracing::info!("\nWriting decompressed data to: {}", output_path);
     write_bitdata_to_csv(&decompressed, &output_path, metadata.headers.as_deref())?;
-    log::info!("Done!");
+    tracing::info!("Done!");
 
     Ok(())
 }

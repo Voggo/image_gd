@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
-use log::{debug, info, trace};
 use std::fmt::Display;
 use std::path::Path;
+use tracing::{debug, info, trace};
 
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
@@ -332,9 +332,9 @@ impl BitDataSet {
         let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
         let num_features = dataset.num_columns();
         info!(
-            "Starting dataset preprocessing: rows={}, columns={}",
-            dataset.num_rows(),
-            num_features
+            rows = dataset.num_rows(),
+            columns = num_features,
+            "starting dataset preprocessing"
         );
         let features = infer_feature_specs(dataset, options);
         Self::from_dataset_with_schema(dataset, features)
@@ -347,10 +347,10 @@ impl BitDataSet {
     ) -> Result<Self, EntroGdError> {
         let num_features = dataset.num_columns();
         info!(
-            "Building BitDataSet with explicit schema: rows={}, columns={}, schema_features={}",
-            dataset.num_rows(),
-            num_features,
-            features.len()
+            rows = dataset.num_rows(),
+            columns = num_features,
+            schema_features = features.len(),
+            "building BitDataSet with explicit schema"
         );
         if features.len() != num_features {
             return Err(EntroGdError::InvalidFeatureSpec {
@@ -365,8 +365,12 @@ impl BitDataSet {
         for (idx, spec) in features.iter().enumerate() {
             let col_type = dataset.column_type(idx);
             debug!(
-                "Loaded feature spec {}: expected_column_type={:?}, spec_type={:?}, bits={}, transform={:?}",
-                idx, col_type, spec.data_type, spec.bits, spec.transform
+                feature_idx = idx,
+                expected_column_type = ?col_type,
+                spec_type = ?spec.data_type,
+                bits = spec.bits,
+                transform = ?spec.transform,
+                "loaded feature spec"
             );
             if col_type != spec.data_type {
                 return Err(EntroGdError::InvalidFeatureSpec {
@@ -383,8 +387,10 @@ impl BitDataSet {
         let total_bits = chunk_size * num_rows;
 
         debug!(
-            "Packing rows into bitstream: chunk_size={} bits, rows={}, total_bits={}",
-            chunk_size, num_rows, total_bits
+            chunk_size_bits = chunk_size,
+            rows = num_rows,
+            total_bits,
+            "packing rows into bitstream"
         );
 
         let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
@@ -395,8 +401,12 @@ impl BitDataSet {
                 let bits = value_to_bits(value, spec);
                 if row_idx < 2 {
                     trace!(
-                        "Row {}, feature {} packed using {:?} (bits={}, transform={:?})",
-                        row_idx, col_idx, value, spec.bits, spec.transform
+                        row_idx,
+                        feature_idx = col_idx,
+                        value = ?value,
+                        bits = spec.bits,
+                        transform = ?spec.transform,
+                        "packed feature value into bitstream"
                     );
                 }
                 push_bits(&mut data, bits, spec.bits);
@@ -411,11 +421,11 @@ impl BitDataSet {
         let info = info.with_original_size_bits(chunk_size * num_rows);
 
         info!(
-            "BitDataSet preprocessing complete: rows={}, features={}, chunk_size={}, total_bits={}",
-            num_rows,
-            info.num_features(),
-            chunk_size,
-            chunk_size * num_rows
+            rows = num_rows,
+            features = info.num_features(),
+            chunk_size_bits = chunk_size,
+            total_bits = chunk_size * num_rows,
+            "BitDataSet preprocessing complete"
         );
 
         Ok(BitDataSet { data, info })
@@ -426,12 +436,12 @@ impl BitDataSet {
         loader: &L,
         path: P,
     ) -> Result<(Self, DatasetMetadata), EntroGdError> {
-        info!("Loading dataset from {}", path.as_ref().display());
+        info!(path = %path.as_ref().display(), "loading dataset from path");
         let loaded = loader.load(path)?;
         debug!(
-            "Loaded dataset metadata: rows={}, columns={}",
-            loaded.dataset.num_rows(),
-            loaded.dataset.num_columns()
+            rows = loaded.dataset.num_rows(),
+            columns = loaded.dataset.num_columns(),
+            "loaded dataset metadata"
         );
         let bit_data = Self::from_dataset(&loaded.dataset)?;
         Ok((bit_data, loaded.metadata))
@@ -444,15 +454,15 @@ impl BitDataSet {
         features: Vec<FeatureSpec>,
     ) -> Result<(Self, DatasetMetadata), EntroGdError> {
         info!(
-            "Loading dataset from {} with user-provided schema ({} features)",
-            path.as_ref().display(),
-            features.len()
+            path = %path.as_ref().display(),
+            schema_features = features.len(),
+            "loading dataset from path with user-provided schema"
         );
         let loaded = loader.load(path)?;
         debug!(
-            "Loaded dataset metadata: rows={}, columns={}",
-            loaded.dataset.num_rows(),
-            loaded.dataset.num_columns()
+            rows = loaded.dataset.num_rows(),
+            columns = loaded.dataset.num_columns(),
+            "loaded dataset metadata"
         );
         let bit_data = Self::from_dataset_with_schema(&loaded.dataset, features)?;
         Ok((bit_data, loaded.metadata))
@@ -1014,12 +1024,12 @@ mod tests {
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
-        log::info!("\nFirst 5 rows in bit representation (MSB first):");
-        log::info!("==============================================");
+        tracing::info!("\nFirst 5 rows in bit representation (MSB first):");
+        tracing::info!("==============================================");
 
         // Print the first 5 chunks with a delimiter at each feature boundary
         for row_index in 0..5 {
-            log::info!("\nRow {}:", row_index);
+            tracing::info!("\nRow {}:", row_index);
 
             for feat_idx in 0..bit_data.info.num_features() {
                 let feature_bits = bit_data.get_feature(row_index, feat_idx);
@@ -1027,7 +1037,7 @@ mod tests {
                     .iter()
                     .map(|bit| if *bit { '1' } else { '0' })
                     .collect();
-                log::info!("  Feature {}: {}", feat_idx, bits);
+                tracing::info!("  Feature {}: {}", feat_idx, bits);
             }
         }
     }

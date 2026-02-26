@@ -482,7 +482,7 @@ impl BaseBitSignatureGroups {
             }
             groups
         } else {
-            log::warn!(
+            tracing::warn!(
                 "More than 128 selected bits; using lexicographic fallback for grouping"
             );
             let mut rows: Vec<usize> = (0..bit_data.num_rows()).collect();
@@ -620,9 +620,9 @@ mod tests {
     use crate::data_loader::FeatureDataType;
 
     fn print_bases(base_bit_groups: &BaseBitGroups, bit_data: &BitDataSet) {
-        log::info!("Bases after adding bit:");
+        tracing::info!("Bases after adding bit:");
         for (i, (base, count)) in base_bit_groups.get_bases(bit_data).iter().enumerate() {
-            log::info!("Base {}: {:?}, Count: {}", i, base, count);
+            tracing::info!("Base {}: {:?}, Count: {}", i, base, count);
         }
     }
 
@@ -650,7 +650,7 @@ mod tests {
             vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
-        log::info!("BitData: {}", bit_data);
+        tracing::info!("BitData: {}", bit_data);
         let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
         assert_eq!(num_bases, 2);
@@ -684,7 +684,7 @@ mod tests {
             vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
-        log::info!("BitData: {}", bit_data);
+        tracing::info!("BitData: {}", bit_data);
         let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
         assert_eq!(num_bases, 2);

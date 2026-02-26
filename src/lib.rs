@@ -33,10 +33,14 @@ pub mod prelude {
     };
 }
 
-use flexi_logger::{Duplicate, FileSpec, Logger, WriteMode};
-use std::sync::Once;
+use std::sync::{Once, OnceLock};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::filter::{EnvFilter, LevelFilter};
+use tracing_subscriber::fmt;
+use tracing_subscriber::prelude::*;
 
 static LOGGING_INIT: Once = Once::new();
+static LOG_FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 /// Initialize logging to a file.
 ///
@@ -58,51 +62,55 @@ pub fn init_logging() {
 			.map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
 			.unwrap_or(false);
 
-		let mut logger = match Logger::try_with_env_or_str(level_spec.as_str()) {
-			Ok(logger) => logger
-				.log_to_file(
-					FileSpec::default()
-						.directory(&log_dir)
-						.basename(format!("entro_gd_{}", chrono::Local::now().format("%Y%m%d_%H%M%S")))
-						.suffix("log")
-						.suppress_timestamp(),
-				)
-				.write_mode(WriteMode::Direct),
-			Err(_) => {
-				eprintln!("Failed to initialize logger from LOG; falling back to default logger settings");
-				let mut fallback = Logger::try_with_str("info")
-					.expect("default logger configuration should be valid")
-					.log_to_file(
-						FileSpec::default()
-							.directory(&log_dir)
-							.basename(format!("entro_gd_{}", chrono::Local::now().format("%Y%m%d_%H%M%S")))
-							.suffix("log")
-							.suppress_timestamp(),
-					)
-					.write_mode(WriteMode::Direct);
-				if mirror_stderr {
-					fallback = fallback.duplicate_to_stderr(Duplicate::Warn);
-				}
-				if fallback.start().is_err() {
-					eprintln!("Failed to start file logger fallback");
-				}
-				return;
-			}
+		if std::fs::create_dir_all(&log_dir).is_err() {
+			eprintln!("Failed to create log directory: {}", log_dir);
+			return;
+		}
+
+		let file_name = format!("entro_gd_{}.log", chrono::Local::now().format("%Y%m%d_%H%M%S"));
+		let file_appender = tracing_appender::rolling::never(&log_dir, file_name);
+		let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+		let _ = LOG_FILE_GUARD.set(guard);
+
+		let init_result = if mirror_stderr {
+			let env_filter = EnvFilter::try_new(level_spec.clone())
+				.unwrap_or_else(|_| EnvFilter::new("info"));
+			let file_layer = fmt::layer()
+				.with_ansi(false)
+				.with_writer(file_writer);
+			let stderr_layer = fmt::layer()
+				.with_ansi(true)
+				.with_writer(std::io::stderr)
+				.with_filter(LevelFilter::WARN);
+			tracing::subscriber::set_global_default(
+				tracing_subscriber::registry()
+					.with(env_filter)
+					.with(file_layer)
+					.with(stderr_layer),
+			)
+		} else {
+			let env_filter = EnvFilter::try_new(level_spec.clone())
+				.unwrap_or_else(|_| EnvFilter::new("info"));
+			let file_layer = fmt::layer()
+				.with_ansi(false)
+				.with_writer(file_writer);
+			tracing::subscriber::set_global_default(
+				tracing_subscriber::registry()
+					.with(env_filter)
+					.with(file_layer),
+			)
 		};
 
-		if mirror_stderr {
-			logger = logger.duplicate_to_stderr(Duplicate::Warn);
+		if init_result.is_err() {
+			eprintln!("Failed to initialize tracing subscriber");
+			return;
 		}
 
-		if logger.start().is_err() {
-			eprintln!("Failed to start file logger");
-		} else {
-			log::info!(
-				"logging initialized (dir={}, level={}, mirror_stderr={})",
-				log_dir,
-				level_spec,
-				mirror_stderr
-			);
-		}
+		tracing::info!(
+			log_dir = %log_dir,
+			level = %level_spec,
+			mirror_stderr,
+			"logging initialized"
+		);
 	});
 }

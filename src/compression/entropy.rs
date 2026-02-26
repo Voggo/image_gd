@@ -116,7 +116,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
-        log::info!("Entropies: {:?}", entropies);
+        tracing::info!("Entropies: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
         // Add more assertions based on expected entropy values
     }
@@ -147,7 +147,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
-        log::info!("Entropies: {:?}", entropies);
+        tracing::info!("Entropies: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
         // Add more assertions based on expected entropy values
     }
@@ -179,7 +179,7 @@ mod tests {
 
         let entropy_filter = EntropyNaive;
         let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
-        log::info!("Entropies from pipeline: {:?}", entropies);
+        tracing::info!("Entropies from pipeline: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
     }
 }
