@@ -184,6 +184,12 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
 		float_type: FeatureDataType::F32,
 		m_max: 50,
 		patience: 10,
+	},
+	StepBenchCase {
+		data_file_path: "data/aarhus-citylab_duplicated.csv",
+		float_type: FeatureDataType::F32,
+		m_max: 50,
+		patience: 10,
 	}]
 }
 
