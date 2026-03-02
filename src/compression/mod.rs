@@ -8,7 +8,8 @@ pub use base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitSignature
 pub use compress::{
     CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
     DeviationSample, EncodeData, EncodeDataOptimized, GenCondensedSamples, SelectBases,
-    SelectBasesOptimized, build_compression_pipeline, build_compression_pipeline_optimized,
+    SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
+    build_compression_pipeline, build_compression_pipeline_optimized,
     build_compression_pipeline_with_preprocessing,
 };
 pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};

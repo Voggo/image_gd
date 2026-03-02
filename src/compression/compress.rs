@@ -1,4 +1,4 @@
-use crate::compression::base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups};
+use crate::compression::base_bits::{BaseBit, BaseBitGroups, BaseBitBatchGroups, BaseBitSignatureGroups, BaseBitIncSignatureGroups};
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::preprocessor::{
     BitData, BitDataInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs, PreprocessOptions,
@@ -27,7 +27,7 @@ pub fn build_compression_pipeline_optimized(
 ) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
     EntropyOptimized {}
         .then(GenCondensedSamples { m_max })
-        .then(SelectBasesOptimized { patience })
+        .then(SelectBasesOptimizedv1 { patience })
         .then(EncodeDataOptimized {})
 }
 
@@ -360,15 +360,13 @@ fn calculate_compressed_size<B: BaseBit>(bit_data: &BitDataSet, base_bit_groups:
     size_bases + size_base_counts + size_deviations + size_params
 }
 
-type DynBaseBit = Box<dyn BaseBit>;
-
 pub struct SelectBases {
     pub patience: usize,
 }
 
 impl Filter for SelectBases {
     type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, DynBaseBit);
+    type Output = (BitDataSet, Box<dyn BaseBit>);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
@@ -438,13 +436,13 @@ fn select_base_bits(
     best_base_bit_groups
 }
 
-pub struct SelectBasesOptimized {
+pub struct SelectBasesOptimizedv1 {
     pub patience: usize,
 }
 
-impl Filter for SelectBasesOptimized {
+impl Filter for SelectBasesOptimizedv1 {
     type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, DynBaseBit);
+    type Output = (BitDataSet, Box<dyn BaseBit>);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
@@ -452,18 +450,59 @@ impl Filter for SelectBasesOptimized {
             self.patience
         ));
         let (bit_data, entropy) = input;
-        let base_bit_groups = select_base_bits_optimized(&bit_data, entropy, self.patience);
-        Ok((bit_data, Box::new(base_bit_groups)))
+        let base_bit_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let base_bit_groups = select_base_bits_optimized(&bit_data, base_bit_groups, entropy, self.patience);
+        Ok((bit_data, base_bit_groups))
+    }
+}
+
+pub struct SelectBasesOptimizedv2 {
+    pub patience: usize,
+}
+
+impl Filter for SelectBasesOptimizedv2 {
+    type Input = (BitDataSet, Vec<(usize, f64)>);
+    type Output = (BitDataSet, Box<dyn BaseBit>);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Selecting base bits in batches with patience {}",
+            self.patience
+        ));
+        let (bit_data, entropy) = input;
+        let base_bit_groups = BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let base_bit_groups = select_base_bits_optimized(&bit_data, base_bit_groups, entropy, self.patience);
+        Ok((bit_data, base_bit_groups))
+    }
+}
+
+pub struct SelectBasesOptimizedv3 {
+    pub patience: usize,
+}
+
+impl Filter for SelectBasesOptimizedv3 {
+    type Input = (BitDataSet, Vec<(usize, f64)>);
+    type Output = (BitDataSet, Box<dyn BaseBit>);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Selecting base bits in batches with patience {}",
+            self.patience
+        ));
+        let (bit_data, entropy) = input;
+        let base_bit_groups = BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let base_bit_groups = select_base_bits_optimized(&bit_data, base_bit_groups, entropy, self.patience);
+        Ok((bit_data, base_bit_groups))
     }
 }
 
 fn select_base_bits_optimized(
     bit_data: &BitDataSet,
+    mut base_bit_groups: impl BaseBit + Clone + 'static,
     mut entropy: Vec<(usize, f64)>,
     patience: usize,
-) -> BaseBitBatchGroups {
+) -> Box<dyn BaseBit> {
     let mut non_improving_count = 0usize;
-    let mut base_bit_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
     let zero_entropy_bits: Vec<usize> = entropy
@@ -523,13 +562,13 @@ fn select_base_bits_optimized(
         %selected_mask,
         "selected base bit mask (optimized)"
     );
-    best_base_bit_groups
+    Box::new(best_base_bit_groups)
 }
 
 pub struct EncodeData {}
 
 impl Filter for EncodeData {
-    type Input = (BitDataSet, DynBaseBit);
+    type Input = (BitDataSet, Box<dyn BaseBit>);
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
@@ -549,7 +588,7 @@ impl Filter for EncodeData {
 pub struct EncodeDataOptimized {}
 
 impl Filter for EncodeDataOptimized {
-    type Input = (BitDataSet, DynBaseBit);
+    type Input = (BitDataSet, Box<dyn BaseBit>);
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
