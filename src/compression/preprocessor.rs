@@ -91,7 +91,7 @@ impl FeatureSpec {
 
 /// High-level metadata describing a bit-packed dataset.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BitDataInfo {
+pub struct BitDataCompressionInfo {
     pub features: Vec<FeatureSpec>,
     pub original_size_bits: usize,
     pub n_data_samples: usize,
@@ -101,10 +101,44 @@ pub struct BitDataInfo {
     chunk_size: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageReconstructionInfo {
+    pub width: u32,
+    pub height: u32,
+    pub channels: u8,
+    /// 0 = sRGB + linear alpha, 1 = all linear
+    pub colorspace: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BitDataReconstructionInfo {
+    Tabular,
+    Image(ImageReconstructionInfo),
+}
+
+/// High-level metadata describing a bit-packed dataset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitDataInfo {
+    pub compression: BitDataCompressionInfo,
+    pub reconstruction: BitDataReconstructionInfo,
+}
+
 impl BitDataInfo {
     pub fn new(
         features: Vec<FeatureSpec>,
         original_size_bits: usize,
+    ) -> Result<Self, EntroGdError> {
+        Self::new_with_reconstruction_info(
+            features,
+            original_size_bits,
+            BitDataReconstructionInfo::Tabular,
+        )
+    }
+
+    pub fn new_with_reconstruction_info(
+        features: Vec<FeatureSpec>,
+        original_size_bits: usize,
+        reconstruction: BitDataReconstructionInfo,
     ) -> Result<Self, EntroGdError> {
         debug!(
             "Creating BitDataInfo with {} features and original_size_bits={}.",
@@ -201,7 +235,7 @@ impl BitDataInfo {
             running += spec.bits;
         }
 
-        let info = BitDataInfo {
+        let compression = BitDataCompressionInfo {
             features,
             original_size_bits,
             n_data_samples: original_size_bits / running,
@@ -211,35 +245,70 @@ impl BitDataInfo {
             chunk_size: running,
         };
 
+        let info = BitDataInfo {
+            compression,
+            reconstruction,
+        };
+
         debug!(
             "BitDataInfo ready: chunk_size={} bits, n_data_samples={}",
-            info.chunk_size, info.n_data_samples
+            info.chunk_size(),
+            info.n_data_samples()
         );
 
         Ok(info)
     }
 
+    pub fn features(&self) -> &[FeatureSpec] {
+        &self.compression.features
+    }
+
+    pub fn feature_spec(&self, feature_idx: usize) -> &FeatureSpec {
+        &self.compression.features[feature_idx]
+    }
+
+    pub fn original_size_bits(&self) -> usize {
+        self.compression.original_size_bits
+    }
+
+    pub fn n_data_samples(&self) -> usize {
+        self.compression.n_data_samples
+    }
+
+    pub fn m_condensed_samples(&self) -> Option<usize> {
+        self.compression.m_condensed_samples
+    }
+
+    pub fn m_condensed_sample_weights(&self) -> Option<&[usize]> {
+        self.compression.m_condensed_sample_weights.as_deref()
+    }
+
+    pub fn set_condensed_sample_weights(&mut self, weights: Option<Vec<usize>>) {
+        self.compression.m_condensed_samples = weights.as_ref().map(Vec::len);
+        self.compression.m_condensed_sample_weights = weights;
+    }
+
     pub fn num_features(&self) -> usize {
-        self.features.len()
+        self.compression.features.len()
     }
 
     pub fn chunk_size(&self) -> usize {
-        self.chunk_size
+        self.compression.chunk_size
     }
 
     pub fn feature_bits(&self, feature_idx: usize) -> usize {
-        self.features[feature_idx].bits
+        self.compression.features[feature_idx].bits
     }
 
     pub fn feature_offset(&self, feature_idx: usize) -> usize {
-        self.feature_offsets[feature_idx]
+        self.compression.feature_offsets[feature_idx]
     }
 
     pub fn feature_index_for_bit(&self, bit_pos: usize) -> Option<usize> {
-        if bit_pos >= self.chunk_size {
+        if bit_pos >= self.compression.chunk_size {
             return None;
         }
-        match self.feature_offsets.binary_search(&bit_pos) {
+        match self.compression.feature_offsets.binary_search(&bit_pos) {
             Ok(idx) => Some(idx),
             Err(0) => None,
             Err(idx) => Some(idx - 1),
@@ -247,14 +316,18 @@ impl BitDataInfo {
     }
 
     pub fn with_original_size_bits(&self, original_size_bits: usize) -> Self {
+        let chunk_size = self.compression.chunk_size;
         BitDataInfo {
-            features: self.features.clone(),
-            original_size_bits,
-            n_data_samples: original_size_bits / self.chunk_size,
-            m_condensed_samples: self.m_condensed_samples,
-            m_condensed_sample_weights: self.m_condensed_sample_weights.clone(),
-            feature_offsets: self.feature_offsets.clone(),
-            chunk_size: self.chunk_size,
+            compression: BitDataCompressionInfo {
+                features: self.compression.features.clone(),
+                original_size_bits,
+                n_data_samples: original_size_bits / chunk_size,
+                m_condensed_samples: self.compression.m_condensed_samples,
+                m_condensed_sample_weights: self.compression.m_condensed_sample_weights.clone(),
+                feature_offsets: self.compression.feature_offsets.clone(),
+                chunk_size,
+            },
+            reconstruction: self.reconstruction.clone(),
         }
     }
 }
@@ -396,7 +469,7 @@ impl BitDataSet {
         let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
         for row_idx in 0..num_rows {
             for col_idx in 0..num_features {
-                let spec = &info.features[col_idx];
+                let spec = info.feature_spec(col_idx);
                 let value = dataset.value_at(row_idx, col_idx);
                 let bits = value_to_bits(value, spec);
                 if row_idx < 2 {
@@ -1160,7 +1233,7 @@ mod tests {
         let dataset = Dataset::from_columns(columns).unwrap();
 
         let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
-        let spec = &bit_data.info.features[0];
+        let spec = bit_data.info.feature_spec(0);
 
         assert_eq!(spec.data_type, FeatureDataType::F64);
         assert!(matches!(
@@ -1179,14 +1252,14 @@ mod tests {
         let dataset = Dataset::from_columns(columns).unwrap();
         let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
 
-        let spec0 = &bit_data.info.features[0];
+        let spec0 = bit_data.info.feature_spec(0);
         assert_eq!(spec0.bits, 8);
         assert!(matches!(
             spec0.transform,
             FeatureTransform::OffsetSignedInt { min_value: -5 }
         ));
 
-        let spec1 = &bit_data.info.features[1];
+        let spec1 = bit_data.info.feature_spec(1);
         assert_eq!(spec1.bits, 8);
         assert!(matches!(
             spec1.transform,
@@ -1208,11 +1281,11 @@ mod tests {
 
         let bit_data = BitDataSet::from_dataset_with_options(&dataset, options).unwrap();
 
-        let spec0 = &bit_data.info.features[0];
+        let spec0 = bit_data.info.feature_spec(0);
         assert_eq!(spec0.bits, 8);
         assert!(matches!(spec0.transform, FeatureTransform::None));
 
-        let spec1 = &bit_data.info.features[1];
+        let spec1 = bit_data.info.feature_spec(1);
         assert_eq!(spec1.bits, 16);
         assert!(matches!(spec1.transform, FeatureTransform::None));
     }
@@ -1228,7 +1301,7 @@ mod tests {
         };
 
         let bit_data = BitDataSet::from_dataset_with_options(&dataset, options).unwrap();
-        let spec = &bit_data.info.features[0];
+        let spec = bit_data.info.feature_spec(0);
         assert!(matches!(
             spec.transform,
             FeatureTransform::ScaledSignedInt { .. }

@@ -1,5 +1,6 @@
 use crate::compression::base_bits::{BaseBit, BaseBitGroups, BaseBitBatchGroups, BaseBitSignatureGroups, BaseBitIncSignatureGroups};
 use crate::compression::entropy::EntropyOptimized;
+use crate::compression::image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
 use crate::compression::preprocessor::{
     BitData, BitDataInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs, PreprocessOptions,
 };
@@ -8,6 +9,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::{Filter, FilterExt};
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 
@@ -44,6 +46,18 @@ pub fn build_compression_pipeline_with_preprocessing(
     .then(GenCondensedSamples { m_max })
     .then(SelectBases { patience })
     .then(EncodeDataOptimized {})
+}
+
+pub fn build_image_compression_pipeline(
+    colorspace: ImageColorSpace,
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = PathBuf, Output = CompressedData> {
+    BuildImageBitDataSet { colorspace }
+        .then(EntropyOptimized {})
+        .then(GenCondensedSamples { m_max })
+        .then(SelectBases { patience })
+        .then(EncodeDataOptimized {})
 }
 
 /// Represents the compressed output
@@ -316,8 +330,9 @@ fn append_condensed_samples(
     mut bit_data: BitDataSet,
     condensed_samples: CondensedSamples,
 ) -> BitDataSet {
-    bit_data.info.m_condensed_samples = Some(condensed_samples.samples.len());
-    bit_data.info.m_condensed_sample_weights = Some(condensed_samples.weights);
+    bit_data
+        .info
+        .set_condensed_sample_weights(Some(condensed_samples.weights));
 
     for sample in condensed_samples.samples {
         bit_data
@@ -665,7 +680,10 @@ impl Filter for EncodeData {
         );
         compressed.base_table = base_bit_groups.get_bases(&bit_data);
         compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
-        compressed.condensed_sample_weights = bit_data.info.m_condensed_sample_weights.clone();
+        compressed.condensed_sample_weights = bit_data
+            .info
+            .m_condensed_sample_weights()
+            .map(|weights| weights.to_vec());
         Ok(compressed)
     }
 }
@@ -685,7 +703,10 @@ impl Filter for EncodeDataOptimized {
         );
         compressed.base_table = base_bit_groups.get_bases(&bit_data);
         compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
-        compressed.condensed_sample_weights = bit_data.info.m_condensed_sample_weights.clone();
+        compressed.condensed_sample_weights = bit_data
+            .info
+            .m_condensed_sample_weights()
+            .map(|weights| weights.to_vec());
         Ok(compressed)
     }
 }
@@ -845,7 +866,7 @@ fn decompress_samples_batch(
     let data_info = &compressed.metadata;
     let num_features = data_info.num_features();
     let chunk_size = data_info.chunk_size();
-    let original_num_rows = data_info.original_size_bits / chunk_size;
+    let original_num_rows = data_info.original_size_bits() / chunk_size;
     if num_features == 0 {
         return Err(EntroGdError::InvalidMetadata {
             message: "num_features is 0".to_string(),
@@ -916,7 +937,7 @@ impl Filter for DecompressFileData {
 /// Decompress the original file data (first n samples)
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
     let data_info = &compressed.metadata;
-    let original_num_rows = data_info.original_size_bits / data_info.chunk_size();
+    let original_num_rows = data_info.original_size_bits() / data_info.chunk_size();
     let indices: Vec<usize> = (0..original_num_rows).collect();
     decompress_samples_batch(compressed, &indices)
 }
@@ -1093,7 +1114,7 @@ mod tests {
 
         // Check that we get a CompressedData struct with valid fields
         assert_eq!(compressed.metadata.num_features(), 16);
-        assert_eq!(compressed.metadata.original_size_bits, 100 * 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 100 * 32);
         assert!(!compressed.base_table.is_empty());
         assert!(compressed.encoded_data.get_encoded_size() > 0);
     }
@@ -1106,7 +1127,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 16);
-        assert_eq!(compressed.metadata.original_size_bits, 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 32);
         // Verify decompressed data matches original size
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 1);
@@ -1120,7 +1141,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 32);
-        assert_eq!(compressed.metadata.original_size_bits, 1000 * 64);
+        assert_eq!(compressed.metadata.original_size_bits(), 1000 * 64);
         // Verify decompressed data matches original size
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 1000);
@@ -1135,7 +1156,7 @@ mod tests {
 
         // Verify original size is preserved in metadata
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
-        assert_eq!(compressed.metadata.original_size_bits, 100 * 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 100 * 32);
         // Verify decompressed data matches original count
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 100);
@@ -1149,7 +1170,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 8);
-        assert_eq!(compressed.metadata.original_size_bits, 50 * 16);
+        assert_eq!(compressed.metadata.original_size_bits(), 50 * 16);
     }
 
     #[test]
@@ -1161,7 +1182,7 @@ mod tests {
 
         // Verify original metadata is correct
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
-        assert_eq!(compressed.metadata.original_size_bits, 20 * 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 20 * 32);
 
         // Verify decompress_file returns correct number of rows
         let decompressed = decompress_file(&compressed).unwrap();
@@ -1185,7 +1206,7 @@ mod tests {
 
         // Verify metadata is correct
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
-        assert_eq!(compressed.metadata.original_size_bits, 10 * 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 10 * 32);
     }
 
     #[test]
@@ -1223,7 +1244,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(compressed.metadata.num_features(), 16);
-            assert_eq!(compressed.metadata.original_size_bits, num_rows * 32);
+            assert_eq!(compressed.metadata.original_size_bits(), num_rows * 32);
 
             // Verify decompress_file returns correct number of rows
             let decompressed = decompress_file(&compressed).unwrap();
@@ -1267,8 +1288,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            compressed1.metadata.original_size_bits,
-            compressed2.metadata.original_size_bits
+            compressed1.metadata.original_size_bits(),
+            compressed2.metadata.original_size_bits()
         );
         // Verify both decompress to the same original row count
         let decompressed1 = decompress_file(&compressed1).unwrap();
@@ -1288,7 +1309,7 @@ mod tests {
                 .process(bit_data.clone())
                 .unwrap();
 
-            assert_eq!(compressed.metadata.original_size_bits, num_rows * 32);
+            assert_eq!(compressed.metadata.original_size_bits(), num_rows * 32);
             // Verify decompressed matches original
             let decompressed = decompress_file(&compressed).unwrap();
             assert_eq!(decompressed.data.num_rows, num_rows);
@@ -1304,7 +1325,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 8);
-        assert_eq!(compressed.metadata.original_size_bits, 100 * 8);
+        assert_eq!(compressed.metadata.original_size_bits(), 100 * 8);
         // Verify decompressed matches original
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 100);
@@ -1319,7 +1340,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 16);
-        assert_eq!(compressed.metadata.original_size_bits, 100 * 16);
+        assert_eq!(compressed.metadata.original_size_bits(), 100 * 16);
         // Verify decompressed matches original
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 100);
@@ -1334,7 +1355,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed.metadata.num_features(), 32);
-        assert_eq!(compressed.metadata.original_size_bits, 100 * 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 100 * 32);
         // Verify decompressed matches original
         let decompressed = decompress_file(&compressed).unwrap();
         assert_eq!(decompressed.data.num_rows, 100);
@@ -1353,7 +1374,7 @@ mod tests {
 
         // Verify metadata is correct
         // chunk_size = bits_per_feature * num_features = 2 * 16 = 32
-        assert_eq!(compressed.metadata.original_size_bits, 50 * 32);
+        assert_eq!(compressed.metadata.original_size_bits(), 50 * 32);
     }
 
     #[test]
@@ -1367,7 +1388,7 @@ mod tests {
         assert!(!compressed.base_table.is_empty());
         assert!(compressed.encoded_data.get_num_samples() > 0);
         assert_eq!(compressed.metadata.num_features(), 16);
-        assert!(compressed.metadata.original_size_bits > 0);
+        assert!(compressed.metadata.original_size_bits() > 0);
     }
 
     fn create_simulated_bit_data(

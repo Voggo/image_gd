@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter};
 pub enum EntroGdError {
     Io(std::io::Error),
     Csv(csv::Error),
+    Image(image::ImageError),
     ParseValue {
         value: String,
         row: usize,
@@ -41,6 +42,7 @@ impl Display for EntroGdError {
         match self {
             EntroGdError::Io(err) => write!(f, "IO error: {}", err),
             EntroGdError::Csv(err) => write!(f, "CSV error: {}", err),
+            EntroGdError::Image(err) => write!(f, "Image error: {}", err),
             EntroGdError::ParseValue {
                 value,
                 row,
@@ -89,6 +91,7 @@ impl Error for EntroGdError {
         match self {
             EntroGdError::Io(err) => Some(err),
             EntroGdError::Csv(err) => Some(err),
+            EntroGdError::Image(err) => Some(err),
             EntroGdError::ParseValue { source, .. } => Some(source),
             EntroGdError::ParseFloatValue { source, .. } => Some(source),
             _ => None,
@@ -105,5 +108,11 @@ impl From<std::io::Error> for EntroGdError {
 impl From<csv::Error> for EntroGdError {
     fn from(err: csv::Error) -> Self {
         EntroGdError::Csv(err)
+    }
+}
+
+impl From<image::ImageError> for EntroGdError {
+    fn from(err: image::ImageError) -> Self {
+        EntroGdError::Image(err)
     }
 }

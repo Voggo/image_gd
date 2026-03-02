@@ -3,7 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::compression::compress::{CompressedData, DeviationData};
-use crate::compression::preprocessor::{BitDataInfo, FeatureSpec, FeatureTransform};
+use crate::compression::preprocessor::{
+    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform,
+    ImageReconstructionInfo,
+};
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -40,7 +43,7 @@ impl EgdFile {
         }
 
         let chunk_size = data_info.chunk_size();
-        let original_num_rows = data_info.original_size_bits / chunk_size;
+        let original_num_rows = data_info.original_size_bits() / chunk_size;
         let condensed_weights = compressed
             .condensed_sample_weights
             .as_deref()
@@ -77,7 +80,7 @@ impl EgdFile {
 
         // Feature metadata
         for feature_idx in 0..num_features {
-            let feature_spec = &data_info.features[feature_idx];
+            let feature_spec = data_info.feature_spec(feature_idx);
             let feature_bits = data_info.feature_bits(feature_idx);
             let bits_per_feature =
                 u16::try_from(feature_bits).map_err(|_| EntroGdError::InvalidMetadata {
@@ -381,8 +384,7 @@ impl EgdFile {
                     message: "original size overflow".to_string(),
                 })?;
         let mut metadata = BitDataInfo::new(features, original_size_bits)?;
-        metadata.m_condensed_samples = if m == 0 { None } else { Some(m) };
-        metadata.m_condensed_sample_weights = if m == 0 { None } else { Some(weights.clone()) };
+        metadata.set_condensed_sample_weights(if m == 0 { None } else { Some(weights.clone()) });
 
         Ok(CompressedData {
             encoded_data: DeviationData::new(
@@ -451,12 +453,197 @@ pub fn load_compressed_from_egd<P: AsRef<Path>>(
     EgdFile::load(input_path)?.to_compressed_data()
 }
 
+pub const IMAGE_MAGIC_BYTES: [u8; 3] = *b"IGD";
+pub const IMAGE_FORMAT_VERSION: u8 = 1;
+
+/// In-memory IGD file contents (image + compressed payload) that can be saved to disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgdFile {
+    bytes: Vec<u8>,
+}
+
+impl IgdFile {
+    pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
+        let image_info = match compressed.metadata.reconstruction {
+            BitDataReconstructionInfo::Image(info) => info,
+            _ => {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "cannot build IGD from non-image reconstruction metadata".to_string(),
+                });
+            }
+        };
+
+        let egd_payload = EgdFile::from_compressed_data(compressed)?;
+        let payload = egd_payload.as_bytes();
+        let payload_len = u64::try_from(payload.len()).map_err(|_| EntroGdError::InvalidMetadata {
+            message: "IGD payload length does not fit into u64".to_string(),
+        })?;
+
+        let mut bytes = Vec::with_capacity(22 + payload.len());
+        bytes.extend_from_slice(&IMAGE_MAGIC_BYTES);
+        bytes.push(IMAGE_FORMAT_VERSION);
+        bytes.extend_from_slice(&image_info.width.to_be_bytes());
+        bytes.extend_from_slice(&image_info.height.to_be_bytes());
+        bytes.push(image_info.channels);
+        bytes.push(image_info.colorspace);
+        bytes.extend_from_slice(&payload_len.to_be_bytes());
+        bytes.extend_from_slice(payload);
+
+        Ok(IgdFile { bytes })
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        IgdFile { bytes }
+    }
+
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, EntroGdError> {
+        let bytes = fs::read(path)?;
+        Ok(IgdFile { bytes })
+    }
+
+    pub fn to_compressed_data(&self) -> Result<CompressedData, EntroGdError> {
+        const HEADER_LEN: usize = 22;
+        if self.bytes.len() < HEADER_LEN {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "IGD file too short".to_string(),
+            });
+        }
+
+        if self.bytes[0..3] != IMAGE_MAGIC_BYTES {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "invalid magic bytes (expected IGD)".to_string(),
+            });
+        }
+        if self.bytes[3] != IMAGE_FORMAT_VERSION {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "unsupported IGD format version {} (expected {})",
+                    self.bytes[3], IMAGE_FORMAT_VERSION
+                ),
+            });
+        }
+
+        let width = u32::from_be_bytes([self.bytes[4], self.bytes[5], self.bytes[6], self.bytes[7]]);
+        let height =
+            u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]]);
+        let channels = self.bytes[12];
+        let colorspace = self.bytes[13];
+        if !matches!(channels, 3 | 4) {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!("unsupported channel count {} in IGD metadata", channels),
+            });
+        }
+
+        let payload_len = u64::from_be_bytes([
+            self.bytes[14],
+            self.bytes[15],
+            self.bytes[16],
+            self.bytes[17],
+            self.bytes[18],
+            self.bytes[19],
+            self.bytes[20],
+            self.bytes[21],
+        ]) as usize;
+
+        let payload_start = HEADER_LEN;
+        let payload_end = payload_start
+            .checked_add(payload_len)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "IGD payload length overflow".to_string(),
+            })?;
+        if payload_end != self.bytes.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "IGD payload length does not match file size".to_string(),
+            });
+        }
+
+        let payload = self.bytes[payload_start..payload_end].to_vec();
+        let mut compressed = EgdFile::from_bytes(payload).to_compressed_data()?;
+        if compressed.metadata.num_features() != channels as usize {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "IGD channels {} do not match compressed feature count {}",
+                    channels,
+                    compressed.metadata.num_features()
+                ),
+            });
+        }
+        compressed.metadata.reconstruction = BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+            width,
+            height,
+            channels,
+            colorspace,
+        });
+
+        Ok(compressed)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, output_path: P) -> Result<PathBuf, EntroGdError> {
+        let target = ensure_igd_extension(output_path.as_ref());
+        fs::write(&target, &self.bytes)?;
+        Ok(target)
+    }
+}
+
+pub struct SaveIgdFile {
+    pub output_path: PathBuf,
+}
+
+impl Filter for SaveIgdFile {
+    type Input = CompressedData;
+    type Output = PathBuf;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let igd_file = IgdFile::from_compressed_data(&input)?;
+        igd_file.save(&self.output_path)
+    }
+}
+
+pub struct LoadIgdFile {}
+
+impl Filter for LoadIgdFile {
+    type Input = PathBuf;
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        IgdFile::load(input)?.to_compressed_data()
+    }
+}
+
+pub fn save_compressed_as_igd<P: AsRef<Path>>(
+    compressed: &CompressedData,
+    output_path: P,
+) -> Result<PathBuf, EntroGdError> {
+    IgdFile::from_compressed_data(compressed)?.save(output_path)
+}
+
+pub fn load_compressed_from_igd<P: AsRef<Path>>(
+    input_path: P,
+) -> Result<CompressedData, EntroGdError> {
+    IgdFile::load(input_path)?.to_compressed_data()
+}
+
 fn ensure_egd_extension(path: &Path) -> PathBuf {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("egd") => path.to_path_buf(),
         _ => {
             let mut out = path.to_path_buf();
             out.set_extension("egd");
+            out
+        }
+    }
+}
+
+fn ensure_igd_extension(path: &Path) -> PathBuf {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("igd") => path.to_path_buf(),
+        _ => {
+            let mut out = path.to_path_buf();
+            out.set_extension("igd");
             out
         }
     }
@@ -644,7 +831,10 @@ impl BitWriter {
 mod tests {
     use super::*;
     use crate::compression::compress::build_compression_pipeline;
-    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{
+        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
+        ImageReconstructionInfo,
+    };
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::Filter;
 
@@ -723,5 +913,44 @@ mod tests {
             assert_eq!(lhs.0, rhs.0);
             assert_eq!(lhs.1, rhs.1);
         }
+    }
+
+    #[test]
+    fn test_roundtrip_igd_to_compressed_data_with_image_metadata() {
+        let data = BitData {
+            data: bitvec![usize, Msb0; 0; 96],
+            num_rows: 4,
+            chunk_size: 24,
+        };
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 3];
+        let info = BitDataInfo::new_with_reconstruction_info(
+            features,
+            96,
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width: 2,
+                height: 2,
+                channels: 3,
+                colorspace: 0,
+            }),
+        )
+        .unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_compression_pipeline().process(bit_data).unwrap();
+
+        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let loaded = igd.to_compressed_data().unwrap();
+
+        assert_eq!(loaded.metadata.num_features(), 3);
+        assert_eq!(loaded.metadata.original_size_bits(), 96);
+        assert!(matches!(
+            loaded.metadata.reconstruction,
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width: 2,
+                height: 2,
+                channels: 3,
+                colorspace: 0
+            })
+        ));
     }
 }

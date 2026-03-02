@@ -82,8 +82,8 @@ fn main() -> Result<(), EntroGdError> {
     let loaded_compressed = LoadEgdFile {}.process(compressed_path)?;
 
     assert_eq!(
-        compressed.metadata.original_size_bits,
-        loaded_compressed.metadata.original_size_bits
+        compressed.metadata.original_size_bits(),
+        loaded_compressed.metadata.original_size_bits()
     );
     assert_eq!(
         compressed.metadata.num_features(),
@@ -106,7 +106,7 @@ fn main() -> Result<(), EntroGdError> {
     tracing::info!("Compression complete!");
     tracing::info!(
         "  Original size: {} bits",
-        compressed.metadata.original_size_bits
+        compressed.metadata.original_size_bits()
     );
     tracing::info!(
         "  Encoded stream size: {} bits",
@@ -123,7 +123,7 @@ fn main() -> Result<(), EntroGdError> {
         .sum::<usize>();
     let total_compressed_size = loaded_compressed.encoded_data.get_encoded_size() + base_table_size;
     let compression_ratio =
-        total_compressed_size as f64 / loaded_compressed.metadata.original_size_bits as f64;
+        total_compressed_size as f64 / loaded_compressed.metadata.original_size_bits() as f64;
     tracing::info!("  Approximate compression ratio: {:.2}", compression_ratio);
 
     // Decompress the data through filters
@@ -144,7 +144,7 @@ fn main() -> Result<(), EntroGdError> {
                 let feature_end =
                     feature_start + loaded_compressed.metadata.feature_bits(feature_idx);
                 let feature_bits = &sample[feature_start..feature_end];
-                let spec = &loaded_compressed.metadata.features[feature_idx];
+                let spec = loaded_compressed.metadata.feature_spec(feature_idx);
 
                 let formatted = match decode_value_from_bits(feature_bits, spec) {
                     DataValue::Unsigned(v) => v.to_string(),
@@ -202,7 +202,7 @@ fn write_bitdata_to_csv(
         let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
         for feature in 0..bit_data.info.num_features() {
             let feature_bits = bit_data.get_feature(row, feature);
-            let spec = &bit_data.info.features[feature];
+            let spec = bit_data.info.feature_spec(feature);
             let formatted = match decode_value_from_bits(feature_bits, spec) {
                 DataValue::Unsigned(v) => v.to_string(),
                 DataValue::Signed(v) => v.to_string(),
