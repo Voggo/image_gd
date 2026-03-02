@@ -2,8 +2,8 @@ use crate::compression::preprocessor::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
-use once_cell::unsync::OnceCell;
 use fxhash::FxHashMap;
+use once_cell::unsync::OnceCell;
 
 pub trait BaseBit {
     fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize;
@@ -229,12 +229,13 @@ impl BaseBitBatchGroups {
             return self.num_bases;
         }
 
-        // Avoid pathological allocations when too many bits are requested at once.
-        if bit_positions.len() >= usize::BITS as usize || bit_positions.len() > 16 {
-            for &bit_position in bit_positions {
-                self.add_bit_position(bit_data, bit_position);
-            }
-            return self.num_bases;
+        const BIT_LIMIT: usize = 8;
+
+        // Process in recursive batches, but ensure this frame only handles <= BIT_LIMIT bits.
+        if bit_positions.len() > BIT_LIMIT {
+            let (head, tail) = bit_positions.split_at(BIT_LIMIT);
+            self.add_bit_positions(bit_data, head);
+            return self.add_bit_positions(bit_data, tail);
         }
 
         let bucket_count = 1usize << bit_positions.len();
@@ -1016,7 +1017,14 @@ mod tests {
         let num_bases = batch_groups.add_bit_positions(&bit_data, &[4, 5]);
         assert_eq!(num_bases, 3);
         assert_eq!(batch_groups.get_num_bits_per_base(), 2);
-        assert_eq!(batch_groups.get_groups().iter().map(|g| g.len()).sum::<usize>(), num_rows);
+        assert_eq!(
+            batch_groups
+                .get_groups()
+                .iter()
+                .map(|g| g.len())
+                .sum::<usize>(),
+            num_rows
+        );
     }
 
     #[test]
