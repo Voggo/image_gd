@@ -2,7 +2,6 @@ pub use crate::compression::base_selection::{
     SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
 };
 pub use crate::compression::condensed_samples::GenCondensedSamples;
-use crate::compression::decompression::{decompress_analytics, decompress_file};
 pub use crate::compression::encoding::{EncodeData, EncodeDataOptimized, EncodeDataRLE};
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
@@ -458,6 +457,7 @@ fn calculate_original_size(bit_data: &BitDataSet) -> usize {
 mod tests {
     use super::*;
     use crate::compression::compress::build_compression_pipeline;
+    use crate::compression::decompression::{decompress_analytics, decompress_file};
     use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::Filter;

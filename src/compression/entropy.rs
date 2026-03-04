@@ -91,6 +91,7 @@ mod tests {
     use super::*;
     use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_entropy_calculation_1() {
@@ -147,9 +148,25 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
+        let exprected_entropies = vec![
+            (0, 0.9183),
+            (1, 0.9183),
+            (2, 0.9183),
+            (3, 0.9183),
+            (4, 0.65002),
+            (5, 0.65002),
+            (6, 0.9183),
+            (7, 1.0),
+        ];
         tracing::info!("Entropies: {:?}", entropies);
         assert_eq!(entropies.len(), chunk_size);
-        // Add more assertions based on expected entropy values
+        assert_eq!(
+            entropies
+            .iter()
+            .map(|(i, e)| (*i, (e * 100_000.0).round() / 100_000.0))
+            .collect::<Vec<_>>(),
+            exprected_entropies
+        );
     }
 
     #[test]

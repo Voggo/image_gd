@@ -31,8 +31,11 @@ pub use file_format::{
     LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile,
 };
 pub use image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
-pub use tabular_preprocessor::{
+pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    BuildBitDataSet, FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo,
-    InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
+    FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo, PreprocessOptions,
+    decode_value_from_bits,
+};
+pub use tabular_preprocessor::{
+    BuildBitDataSet, InferFeatureSpecs,
 };

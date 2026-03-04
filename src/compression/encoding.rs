@@ -349,3 +349,338 @@ fn encode_data_rle<B: BaseBit + ?Sized>(
         context.l_id,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compression::base_bits::BaseBitGroups;
+    use crate::compression::preprocessor::{
+        BitData, BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
+    };
+
+    /// Helper function to create a simple BitDataSet for testing
+    /// Creates a dataset with `num_rows` rows and `chunk_size` bits per row
+    fn create_test_bit_data_set(num_rows: usize, chunk_size: usize) -> BitDataSet {
+        let mut data = BitVec::<usize, Msb0>::with_capacity(num_rows * chunk_size);
+        for _ in 0..num_rows * chunk_size {
+            data.push(false);
+        }
+
+        let bit_data = BitData {
+            data,
+            chunk_size,
+            num_rows,
+        };
+
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UnsignedInt,
+            bits: chunk_size,
+            transform: FeatureTransform::None,
+        }];
+
+        let info = BitDataInfo::new(features, 0).expect("Failed to create BitDataInfo");
+
+        BitDataSet { data: bit_data, info }
+    }
+
+    /// Helper function to create a BitDataSet with specific bit patterns
+    fn create_test_bit_data_set_with_pattern(
+        rows_and_bits: Vec<Vec<bool>>,
+    ) -> BitDataSet {
+        assert!(!rows_and_bits.is_empty(), "Must have at least one row");
+        let chunk_size = rows_and_bits[0].len();
+        let num_rows = rows_and_bits.len();
+
+        let mut data = BitVec::<usize, Msb0>::with_capacity(num_rows * chunk_size);
+        for row in &rows_and_bits {
+            assert_eq!(
+                row.len(),
+                chunk_size,
+                "All rows must have the same size"
+            );
+            for &bit in row {
+                data.push(bit);
+            }
+        }
+
+        let bit_data = BitData {
+            data,
+            chunk_size,
+            num_rows,
+        };
+
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UnsignedInt,
+            bits: chunk_size,
+            transform: FeatureTransform::None,
+        }];
+
+        let info = BitDataInfo::new(features, 0).expect("Failed to create BitDataInfo");
+
+        BitDataSet { data: bit_data, info }
+    }
+
+    /// Helper function to create a simple BaseBitGroups instance for testing
+    /// This creates a groups structure where all rows are initially in one group
+    fn create_test_base_bit_groups(num_rows: usize, chunk_size: usize) -> BaseBitGroups {
+        BaseBitGroups::new(num_rows, chunk_size)
+    }
+
+    /// Helper function to add bit positions to a BaseBitGroups instance
+    fn add_base_bits(
+        groups: &mut BaseBitGroups,
+        bit_data: &BitDataSet,
+        bit_positions: &[usize],
+    ) {
+        for &pos in bit_positions {
+            groups.add_bit_position(bit_data, pos);
+        }
+    }
+
+    #[test]
+    fn test_encode_data_basic() {
+        let bit_data = create_test_bit_data_set(4, 8);
+        let mut base_groups = create_test_base_bit_groups(4, 8);
+
+        // Add some base bits at positions 0 and 1
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        // Should have encoded 6 deviation bits per row (8 - 2 = 6)
+        assert_eq!(result.get_num_deviation_bits(), 6);
+        assert_eq!(result.get_num_samples(), 4);
+    }
+
+    #[test]
+    fn test_encode_data_optimized_basic() {
+        let bit_data = create_test_bit_data_set(4, 8);
+        let mut base_groups = create_test_base_bit_groups(4, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let result = encode_data_optimized(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_deviation_bits(), 6);
+        assert_eq!(result.get_num_samples(), 4);
+    }
+
+    #[test]
+    fn test_encode_data_rle_basic() {
+        let bit_data = create_test_bit_data_set(4, 8);
+        let mut base_groups = create_test_base_bit_groups(4, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let result = encode_data_rle(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_deviation_bits(), 6);
+        assert_eq!(result.get_num_samples(), 4);
+        // RLE should produce rm_values entries
+        assert!(!result.rm_values().is_empty());
+    }
+
+    #[test]
+    fn test_encode_data_empty_dataset() {
+        let bit_data = create_test_bit_data_set(0, 8);
+        let base_groups = create_test_base_bit_groups(0, 8);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_samples(), 0);
+        assert_eq!(result.encoded_bit_stream().len(), 0);
+    }
+
+    #[test]
+    fn test_encode_data_no_base_bits() {
+        let bit_data = create_test_bit_data_set(2, 8);
+        let base_groups = create_test_base_bit_groups(2, 8);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        // With no base bits, all 8 bits should be encoded as deviation
+        assert_eq!(result.get_num_deviation_bits(), 8);
+        assert_eq!(result.get_num_id_bits(), 1); // log2(1) = 0, but clamped to 1
+    }
+
+    #[test]
+    fn test_encode_data_all_base_bits() {
+        let bit_data = create_test_bit_data_set(2, 8);
+        let mut base_groups = create_test_base_bit_groups(2, 8);
+
+        // Add all bit positions as base bits
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1, 2, 3, 4, 5, 6, 7]);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        // With all bits as base bits, no deviation bits
+        assert_eq!(result.get_num_deviation_bits(), 0);
+        // With 2 rows, all zero pattern creates 1 group, so l_id = 1
+        assert_eq!(result.get_num_id_bits(), 1);
+    }
+
+    #[test]
+    fn test_prepare_encoding_context_creates_valid_id_bits() {
+        let bit_data = create_test_bit_data_set(8, 8);
+        let mut base_groups = create_test_base_bit_groups(8, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0]);
+
+        let context = prepare_encoding_context(&bit_data, &base_groups);
+
+        // With 8 identical zero rows, adding 1 base bit creates at most 2 groups (zeros and ones)
+        // Since all rows are zeros, we get 1 group, so l_id = 1
+        assert_eq!(context.l_id, 1);
+        assert_eq!(context.id_bits_per_base.len(), 1);
+    }
+
+    #[test]
+    fn test_encode_filter_process() {
+        let bit_data = create_test_bit_data_set(2, 8);
+        let mut base_groups = create_test_base_bit_groups(2, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let filter = EncodeData {};
+        let result = filter.process((bit_data, Box::new(base_groups)));
+
+        assert!(result.is_ok());
+        let compressed = result.unwrap();
+        assert_eq!(compressed.metadata.chunk_size(), 8);
+    }
+
+    #[test]
+    fn test_encode_data_optimized_filter_process() {
+        let bit_data = create_test_bit_data_set(2, 8);
+        let mut base_groups = create_test_base_bit_groups(2, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let filter = EncodeDataOptimized {};
+        let result = filter.process((bit_data, Box::new(base_groups)));
+
+        assert!(result.is_ok());
+        let compressed = result.unwrap();
+        assert_eq!(compressed.metadata.chunk_size(), 8);
+    }
+
+    #[test]
+    fn test_encode_data_rle_filter_process() {
+        let bit_data = create_test_bit_data_set(2, 8);
+        let mut base_groups = create_test_base_bit_groups(2, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let filter = EncodeDataRLE {};
+        let result = filter.process((bit_data, Box::new(base_groups)));
+
+        assert!(result.is_ok());
+        let compressed = result.unwrap();
+        assert_eq!(compressed.metadata.chunk_size(), 8);
+    }
+
+    #[test]
+    fn test_encode_data_with_specific_patterns() {
+        // Create a dataset with specific bit patterns: all 0s followed by all 1s
+        let patterns = vec![
+            vec![false, false, false, false, false, false, false, false],
+            vec![false, false, false, false, false, false, false, false],
+            vec![true, true, true, true, true, true, true, true],
+            vec![true, true, true, true, true, true, true, true],
+        ];
+
+        let bit_data = create_test_bit_data_set_with_pattern(patterns);
+        let mut base_groups = create_test_base_bit_groups(4, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 4]);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_samples(), 4);
+        assert_eq!(result.get_num_deviation_bits(), 6);
+    }
+
+    #[test]
+    fn test_encoding_context_row_to_group_mapping() {
+        let bit_data = create_test_bit_data_set(4, 8);
+        let mut base_groups = create_test_base_bit_groups(4, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0]);
+
+        let context = prepare_encoding_context(&bit_data, &base_groups);
+
+        // Initially all rows should be in same group, but after adding a base bit
+        // the rows might be split into groups
+        assert_eq!(context.row_to_group_id.len(), 4);
+    }
+
+    #[test]
+    fn test_symbol_stream_encoding_consistency() {
+        let bit_data = create_test_bit_data_set(3, 8);
+        let mut base_groups = create_test_base_bit_groups(3, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[1, 3]);
+
+        let result_normal = encode_data(&bit_data, &base_groups);
+        let result_optimized = encode_data_optimized(&bit_data, &base_groups);
+
+        // Both encoding methods should produce the same size output
+        assert_eq!(
+            result_normal.encoded_bit_stream().len(),
+            result_optimized.encoded_bit_stream().len()
+        );
+    }
+
+    #[test]
+    fn test_single_row_encoding() {
+        let bit_data = create_test_bit_data_set(1, 16);
+        let mut base_groups = create_test_base_bit_groups(1, 16);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 5, 10, 15]);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_samples(), 1);
+        assert_eq!(result.get_num_deviation_bits(), 12);
+        assert_eq!(result.get_num_id_bits(), 1); // log2(1) = 0, but clamped to 1
+    }
+
+    #[test]
+    fn test_large_dataset_encoding() {
+        let bit_data = create_test_bit_data_set(256, 32);
+        let mut base_groups = create_test_base_bit_groups(256, 32);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 8, 16, 24]);
+
+        let result = encode_data(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_samples(), 256);
+        assert_eq!(result.get_num_deviation_bits(), 28);
+        // Since all rows have same bit pattern (all zeros), adding bits won't split them
+        // So we get 1 group -> l_id = 1
+        assert_eq!(result.get_num_id_bits(), 1);
+    }
+
+    #[test]
+    fn test_rle_compression_with_repeated_rows() {
+        // Create a dataset where rows alternate between two patterns
+        let patterns = vec![
+            vec![true, false, true, false, true, false, true, false],
+            vec![true, false, true, false, true, false, true, false],
+            vec![false, true, false, true, false, true, false, true],
+            vec![true, false, true, false, true, false, true, false],
+            vec![true, false, true, false, true, false, true, false],
+        ];
+
+        let bit_data = create_test_bit_data_set_with_pattern(patterns);
+        let mut base_groups = create_test_base_bit_groups(5, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 2]);
+
+        let result = encode_data_rle(&bit_data, &base_groups);
+
+        assert_eq!(result.get_num_samples(), 5);
+        // RLE should have some run-length encoding
+        assert!(!result.rm_values().is_empty());
+    }
+}

@@ -914,6 +914,38 @@ mod tests {
     use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
 
+    /// Helper function to create standard test data with 6 rows and 8 bits per row
+    fn create_test_bit_data() -> BitDataSet {
+        let num_rows = 6;
+        let chunk_size = 8;
+        let num_features = 8;
+        let bits_per_feature = 1;
+
+        let data = vec![
+            true, false, true, false, false, true, true, false, // Row 0
+            true, true, false, true, true, true, false, false, // Row 1
+            false, true, true, false, true, false, true, true, // Row 2
+            true, false, false, false, true, true, false, true, // Row 3
+            false, true, false, false, true, true, false, true, // Row 4
+            true, true, false, true, true, true, false, false, // Row 5
+        ];
+
+        let bit_data = BitData {
+            data: data.into_iter().collect(),
+            chunk_size,
+            num_rows,
+        };
+
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+
+        BitDataSet {
+            data: bit_data,
+            info,
+        }
+    }
+
     fn print_bases(base_bit_groups: &BaseBitGroups, bit_data: &BitDataSet) {
         tracing::info!("Bases after adding bit:");
         for (i, (base, count)) in base_bit_groups.get_bases(bit_data).iter().enumerate() {
@@ -923,33 +955,14 @@ mod tests {
 
     #[test]
     fn test_base_bit_groups() {
-        // Create a simple BitData for testing
-        let num_rows = 6;
-        let chunk_size = 8;
-        let num_features = 8;
-        let bits_per_feature = 1;
-        let data = vec![
-            true, false, true, false, false, true, true, false, // Row 0
-            true, true, false, true, true, true, false, false, // Row 1
-            false, true, true, false, true, false, true, true, // Row 2
-            true, false, false, false, true, true, false, true, // Row 3
-            false, true, false, false, true, true, false, true, // Row 4
-            true, true, false, true, true, true, false, false, // Row 5
-        ];
-        let data = BitData {
-            data: data.into_iter().collect(),
-            chunk_size,
-            num_rows,
-        };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
-        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
-        let bit_data = BitDataSet { data, info };
+        let bit_data = create_test_bit_data();
         tracing::info!("BitData: {}", bit_data);
+
         let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
         assert_eq!(num_bases, 2);
         print_bases(&base_bit_groups, &bit_data);
+
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
         assert_eq!(num_bases, 3);
         print_bases(&base_bit_groups, &bit_data);
@@ -957,33 +970,14 @@ mod tests {
 
     #[test]
     fn test_base_bit_groups_with_initial_bits() {
-        // Create a simple BitData for testing
-        let num_rows = 6;
-        let chunk_size = 8;
-        let num_features = 8;
-        let bits_per_feature = 1;
-        let data = vec![
-            true, false, true, false, false, true, true, false, // Row 0
-            true, true, false, true, true, true, false, false, // Row 1
-            false, true, true, false, true, false, true, true, // Row 2
-            true, false, false, false, true, true, false, true, // Row 3
-            false, true, false, false, true, true, false, true, // Row 4
-            true, true, false, true, true, true, false, false, // Row 5
-        ];
-        let data = BitData {
-            data: data.into_iter().collect(),
-            chunk_size,
-            num_rows,
-        };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
-        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
-        let bit_data = BitDataSet { data, info };
+        let bit_data = create_test_bit_data();
         tracing::info!("BitData: {}", bit_data);
+
         let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
         assert_eq!(num_bases, 2);
         print_bases(&base_bit_groups, &bit_data);
+
         let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
         assert_eq!(num_bases, 3);
         print_bases(&base_bit_groups, &bit_data);
@@ -991,27 +985,7 @@ mod tests {
 
     #[test]
     fn test_base_bit_batch_groups_add_multiple_bits() {
-        let num_rows = 6;
-        let chunk_size = 8;
-        let num_features = 8;
-        let bits_per_feature = 1;
-        let data = vec![
-            true, false, true, false, false, true, true, false, // Row 0
-            true, true, false, true, true, true, false, false, // Row 1
-            false, true, true, false, true, false, true, true, // Row 2
-            true, false, false, false, true, true, false, true, // Row 3
-            false, true, false, false, true, true, false, true, // Row 4
-            true, true, false, true, true, true, false, false, // Row 5
-        ];
-        let data = BitData {
-            data: data.into_iter().collect(),
-            chunk_size,
-            num_rows,
-        };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
-        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
-        let bit_data = BitDataSet { data, info };
+        let bit_data = create_test_bit_data();
 
         let mut batch_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
         let num_bases = batch_groups.add_bit_positions(&bit_data, &[4, 5]);
@@ -1023,33 +997,13 @@ mod tests {
                 .iter()
                 .map(|g| g.len())
                 .sum::<usize>(),
-            num_rows
+            bit_data.num_rows()
         );
     }
 
     #[test]
     fn test_base_bit_signature_groups_add_multiple_bits() {
-        let num_rows = 6;
-        let chunk_size = 8;
-        let num_features = 8;
-        let bits_per_feature = 1;
-        let data = vec![
-            true, false, true, false, false, true, true, false, // Row 0
-            true, true, false, true, true, true, false, false, // Row 1
-            false, true, true, false, true, false, true, true, // Row 2
-            true, false, false, false, true, true, false, true, // Row 3
-            false, true, false, false, true, true, false, true, // Row 4
-            true, true, false, true, true, true, false, false, // Row 5
-        ];
-        let data = BitData {
-            data: data.into_iter().collect(),
-            chunk_size,
-            num_rows,
-        };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
-        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
-        let bit_data = BitDataSet { data, info };
+        let bit_data = create_test_bit_data();
 
         let mut signature_groups =
             BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
@@ -1062,7 +1016,7 @@ mod tests {
                 .iter()
                 .map(|g| g.len())
                 .sum::<usize>(),
-            num_rows
+            bit_data.num_rows()
         );
     }
 }
