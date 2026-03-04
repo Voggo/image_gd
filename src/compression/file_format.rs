@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::compression::compress::{CompressedData, DeviationData, EncodedData, RleDeviationData};
-use crate::compression::preprocessor::{
+use crate::compression::tabular_preprocessor::{
     BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageReconstructionInfo,
 };
 use crate::data_loader::FeatureDataType;
@@ -909,7 +909,7 @@ mod tests {
         EncodeDataRLE, EncodedData, GenCondensedSamples, SelectBases, build_compression_pipeline,
     };
     use crate::compression::entropy::EntropyOptimized;
-    use crate::compression::preprocessor::{
+    use crate::compression::tabular_preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
         ImageReconstructionInfo,
     };

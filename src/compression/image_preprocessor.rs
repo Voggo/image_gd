@@ -2,7 +2,7 @@ use bitvec::prelude::*;
 use image::DynamicImage;
 use std::path::PathBuf;
 
-use crate::compression::preprocessor::{
+use crate::compression::tabular_preprocessor::{
     BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
     ImageReconstructionInfo,
 };

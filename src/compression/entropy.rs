@@ -1,4 +1,4 @@
-use crate::compression::preprocessor::BitDataSet;
+use crate::compression::tabular_preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -89,7 +89,7 @@ pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
 
     #[test]
