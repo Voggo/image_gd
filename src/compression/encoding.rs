@@ -6,6 +6,9 @@ use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
+const RLE_MAX_CONTROL_VALUE: usize = 134;
+const RLE_MAX_RUN_LEN: usize = RLE_MAX_CONTROL_VALUE + 1;
+
 pub struct EncodeData {}
 
 impl Filter for EncodeData {
@@ -290,7 +293,7 @@ fn encode_data_rle<B: BaseBit + ?Sized>(
         let current_symbol = make_row_symbol(bit_data, &context, i);
 
         let mut run_len = 1usize;
-        while i + run_len < num_rows && run_len < 255 {
+        while i + run_len < num_rows && run_len < RLE_MAX_RUN_LEN {
             let next_symbol = make_row_symbol(bit_data, &context, i + run_len);
             if next_symbol == current_symbol {
                 run_len += 1;
@@ -310,11 +313,11 @@ fn encode_data_rle<B: BaseBit + ?Sized>(
 
         let literal_start = i;
         let mut literal_count = 0usize;
-        while i < num_rows && literal_count < 254 {
+        while i < num_rows && literal_count < RLE_MAX_CONTROL_VALUE {
             let this_symbol = make_row_symbol(bit_data, &context, i);
 
             let mut lookahead_run = 1usize;
-            while i + lookahead_run < num_rows && lookahead_run < 255 {
+            while i + lookahead_run < num_rows && lookahead_run < RLE_MAX_RUN_LEN {
                 let lookahead_symbol = make_row_symbol(bit_data, &context, i + lookahead_run);
                 if lookahead_symbol == this_symbol {
                     lookahead_run += 1;

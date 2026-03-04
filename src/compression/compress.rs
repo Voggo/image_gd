@@ -136,6 +136,11 @@ pub enum EncodedData {
     Rle(RleDeviationData),
 }
 
+pub(crate) const RLE_SHORT_MAX: u8 = 7;
+pub(crate) const RLE_LONG_MIN: u8 = 8;
+pub(crate) const RLE_LONG_MAX: u8 = 134;
+pub(crate) const RLE_TERMINATOR_PAYLOAD: u8 = 0x7F;
+
 pub(crate) fn build_base_bit_mask(
     chunk_size: usize,
     base_bit_positions: &[usize],
@@ -208,16 +213,13 @@ impl RleDeviationData {
     ) -> Self {
         let mut rm_control_stream = BitVec::<usize, Msb0>::new();
         for &(r, m) in &rm_values {
-            for shift in (0..8).rev() {
-                rm_control_stream.push(((r >> shift) & 1) == 1);
-            }
-            for shift in (0..8).rev() {
-                rm_control_stream.push(((m >> shift) & 1) == 1);
-            }
+            write_rle_control_value(&mut rm_control_stream, r);
+            write_rle_control_value(&mut rm_control_stream, m);
         }
-        let end_marker: u8 = 0xFF;
-        for shift in (0..8).rev() {
-            rm_control_stream.push(((end_marker >> shift) & 1) == 1);
+        // Terminator packet: 1-bit long-packet flag + 7-bit reserved payload (= 127) -> 0xFF.
+        rm_control_stream.push(true);
+        for shift in (0..7).rev() {
+            rm_control_stream.push(((RLE_TERMINATOR_PAYLOAD >> shift) & 1) == 1);
         }
 
         RleDeviationData {
@@ -385,6 +387,30 @@ impl RleDeviationData {
             self.num_deviation_bits,
             self.num_id_bits,
         ))
+    }
+}
+
+fn write_rle_control_value(out: &mut BitVec<usize, Msb0>, value: u8) {
+    assert!(
+        value <= RLE_LONG_MAX,
+        "RLE control value {} out of range (max {})",
+        value,
+        RLE_LONG_MAX
+    );
+
+    if value <= RLE_SHORT_MAX {
+        // 4-bit packet: 0 + 3-bit payload
+        out.push(false);
+        for shift in (0..3).rev() {
+            out.push(((value >> shift) & 1) == 1);
+        }
+    } else {
+        // 8-bit packet: 1 + 7-bit payload with bias -8 (stored payload = value - 8)
+        out.push(true);
+        let payload = value - RLE_LONG_MIN;
+        for shift in (0..7).rev() {
+            out.push(((payload >> shift) & 1) == 1);
+        }
     }
 }
 
@@ -1204,8 +1230,8 @@ mod tests {
         };
 
         for &(r, m) in rle.rm_values() {
-            assert!(r <= 254, "r is encoded with bias -1 and capped to 254");
-            assert!(m <= 254, "m is capped to 254 because 255 is reserved");
+            assert!(r <= 134, "r must fit packed RLE control encoding (<= 134)");
+            assert!(m <= 134, "m must fit packed RLE control encoding (<= 134)");
         }
 
         let ctrl = rle.rm_control_stream();

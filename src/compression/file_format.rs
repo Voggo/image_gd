@@ -2,7 +2,10 @@ use bitvec::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compression::compress::{CompressedData, DeviationData, EncodedData, RleDeviationData};
+use crate::compression::compress::{
+    CompressedData, DeviationData, EncodedData, RLE_LONG_MAX, RLE_SHORT_MAX,
+    RLE_TERMINATOR_PAYLOAD, RleDeviationData,
+};
 use crate::compression::tabular_preprocessor::{
     BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageReconstructionInfo,
 };
@@ -14,7 +17,7 @@ pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
 
 const ENCODING_TAG_NORMAL: u8 = 0;
-const ENCODING_TAG_RLE_RM_U8: u8 = 1;
+const ENCODING_TAG_RLE_RM_PACKED: u8 = 1;
 
 /// In-memory EGD file contents that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +41,7 @@ impl EgdFile {
     ///    - encoding tag (u8)
     ///    - payload (depends on tag)
     ///      tag=0: raw encoded data stream bits
-    ///      tag=1: rm-control bytes (r,m pairs, terminated by 0xFF), then symbol stream bits
+    ///      tag=1: rm-control packed stream (alternating r,m 4/8-bit packets, terminated by 0xFF), then symbol stream bits
     pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
         let data_info = &compressed.metadata;
         let num_features = data_info.num_features();
@@ -163,7 +166,7 @@ impl EgdFile {
                 writer.write_bitslice(raw.encoded_bit_stream());
             }
             EncodedData::Rle(rle) => {
-                writer.write_u8(ENCODING_TAG_RLE_RM_U8);
+                writer.write_u8(ENCODING_TAG_RLE_RM_PACKED);
                 writer.write_bitslice(rle.rm_control_stream());
                 writer.write_bitslice(rle.symbol_bit_stream());
             }
@@ -362,20 +365,39 @@ impl EgdFile {
                     num_id_bits,
                 ))
             }
-            ENCODING_TAG_RLE_RM_U8 => {
+            ENCODING_TAG_RLE_RM_PACKED => {
                 let mut rm_values: Vec<(u8, u8)> = Vec::new();
+                let mut flat_values: Vec<u8> = Vec::new();
                 loop {
-                    let r = reader.read_u8()?;
-                    if r == 0xFF {
+                    let is_long_packet = reader.read_bit()?;
+                    if !is_long_packet {
+                        let val = reader.read_usize_bits(3)? as u8;
+                        flat_values.push(val);
+                        continue;
+                    }
+
+                    let payload = reader.read_usize_bits(7)? as u8;
+                    if payload == RLE_TERMINATOR_PAYLOAD {
                         break;
                     }
-                    let m_val = reader.read_u8()?;
-                    if r == 0xFF || m_val == 0xFF {
+
+                    let val = payload.saturating_add(8);
+                    if !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&val) {
                         return Err(EntroGdError::InvalidMetadata {
-                            message: "invalid rm control stream: reserved 0xFF encountered before terminator".to_string(),
+                            message: "invalid rm control packet value".to_string(),
                         });
                     }
-                    rm_values.push((r, m_val));
+                    flat_values.push(val);
+                }
+
+                if flat_values.len() % 2 != 0 {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "invalid rm control stream: odd number of values".to_string(),
+                    });
+                }
+
+                for pair in flat_values.chunks_exact(2) {
+                    rm_values.push((pair[0], pair[1]));
                 }
 
                 let symbol_count = rm_values
