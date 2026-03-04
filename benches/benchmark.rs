@@ -8,9 +8,9 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use std::hint::black_box;
 
-use entro_gd::compression::compress::DecompressRowsData;
 use entro_gd::CompressedData;
 use entro_gd::Dataset;
+use entro_gd::compression::compress::DecompressRowsData;
 use entro_gd::prelude::*;
 
 #[derive(Clone, Copy)]
@@ -226,7 +226,12 @@ fn benchmark_decompression_warm(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(prepared.source_size));
         group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
             b.iter_batched(
-                || (Arc::new(prepared.compressed_seed.clone()), prepared.row_indices.clone()),
+                || {
+                    (
+                        Arc::new(prepared.compressed_seed.clone()),
+                        prepared.row_indices.clone(),
+                    )
+                },
                 |input| {
                     let decompressed = DecompressRowsData {}.process(input).unwrap();
                     black_box(decompressed);

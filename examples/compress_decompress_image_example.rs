@@ -1,5 +1,5 @@
-use entro_gd::prelude::*;
 use entro_gd::BitDataReconstructionInfo;
+use entro_gd::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::env;
 use std::path::Path;
@@ -28,7 +28,8 @@ fn main() -> Result<(), EntroGdError> {
     tracing::info!("IGD output: {}", igd_path.display());
     tracing::info!("Decoded image output: {}", output_path.display());
 
-    let compression_pipeline = build_image_compression_pipeline(ImageColorSpace::SrgbWithLinearAlpha, 50, 10);
+    let compression_pipeline =
+        build_image_compression_pipeline(ImageColorSpace::SrgbWithLinearAlpha, 50, 10);
 
     let compressed = compression_pipeline.process(input.to_path_buf())?;
     let compressed_path = SaveIgdFile {
@@ -92,7 +93,13 @@ fn write_bitdata_to_image(bit_data: &BitDataSet, output_path: &Path) -> Result<(
         }
     }
 
-    save_raw_image(output_path, image_info.width, image_info.height, image_info.channels, raw)
+    save_raw_image(
+        output_path,
+        image_info.width,
+        image_info.height,
+        image_info.channels,
+        raw,
+    )
 }
 
 fn save_raw_image(

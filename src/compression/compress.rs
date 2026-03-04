@@ -1,4 +1,6 @@
-use crate::compression::base_bits::{BaseBit, BaseBitGroups, BaseBitBatchGroups, BaseBitSignatureGroups, BaseBitIncSignatureGroups};
+use crate::compression::base_bits::{
+    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitIncSignatureGroups, BaseBitSignatureGroups,
+};
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
 use crate::compression::preprocessor::{
@@ -11,7 +13,6 @@ use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-
 
 pub fn build_compression_pipeline(
     m_max: usize,
@@ -57,14 +58,14 @@ pub fn build_image_compression_pipeline(
         .then(EntropyOptimized {})
         .then(GenCondensedSamples { m_max })
         .then(SelectBases { patience })
-        .then(EncodeDataOptimized {})
+        .then(EncodeDataRLE {})
 }
 
 /// Represents the compressed output
 #[derive(Debug, Clone)]
 pub struct CompressedData {
     /// The encoded data stream
-    pub encoded_data: DeviationData,
+    pub encoded_data: EncodedData,
     /// The Weights for the condensed samples (if used)
     // Should be stored as a bitstream of length m * l_w (log_2(n).ceil() bits per weight)
     pub condensed_sample_weights: Option<Vec<usize>>,
@@ -77,7 +78,7 @@ pub struct CompressedData {
 }
 
 impl CompressedData {
-    pub fn new(encoded_data: DeviationData, metadata: BitDataInfo) -> Self {
+    pub fn new(encoded_data: EncodedData, metadata: BitDataInfo) -> Self {
         CompressedData {
             encoded_data,
             condensed_sample_weights: None,
@@ -106,6 +107,22 @@ pub struct DeviationData {
     num_samples: usize,
     num_deviation_bits: usize,
     num_id_bits: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RleDeviationData {
+    symbol_bit_stream: BitVec<usize, Msb0>,
+    rm_values: Vec<(u8, u8)>,
+    rm_control_stream: BitVec<usize, Msb0>,
+    num_samples: usize,
+    num_deviation_bits: usize,
+    num_id_bits: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum EncodedData {
+    Normal(DeviationData),
+    Rle(RleDeviationData),
 }
 
 fn build_base_bit_mask(chunk_size: usize, base_bit_positions: &[usize]) -> BitVec<usize, Msb0> {
@@ -164,6 +181,247 @@ impl DeviationData {
 
     pub fn get_num_id_bits(&self) -> usize {
         self.num_id_bits
+    }
+}
+
+impl RleDeviationData {
+    pub fn new(
+        symbol_bit_stream: BitVec<usize, Msb0>,
+        rm_values: Vec<(u8, u8)>,
+        num_samples: usize,
+        num_deviation_bits: usize,
+        num_id_bits: usize,
+    ) -> Self {
+        let mut rm_control_stream = BitVec::<usize, Msb0>::new();
+        for &(r, m) in &rm_values {
+            for shift in (0..8).rev() {
+                rm_control_stream.push(((r >> shift) & 1) == 1);
+            }
+            for shift in (0..8).rev() {
+                rm_control_stream.push(((m >> shift) & 1) == 1);
+            }
+        }
+        let end_marker: u8 = 0xFF;
+        for shift in (0..8).rev() {
+            rm_control_stream.push(((end_marker >> shift) & 1) == 1);
+        }
+
+        RleDeviationData {
+            symbol_bit_stream,
+            rm_values,
+            rm_control_stream,
+            num_samples,
+            num_deviation_bits,
+            num_id_bits,
+        }
+    }
+
+    pub fn get_sample(&self, sample_idx: usize) -> Option<DeviationSample> {
+        if sample_idx >= self.num_samples {
+            return None;
+        }
+
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let mut symbol_cursor = 0usize;
+        let mut logical_idx = 0usize;
+
+        for &(r_encoded, m_count) in &self.rm_values {
+            if r_encoded > 0 {
+                if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return None;
+                }
+                let run_symbol = self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width]
+                    .to_bitvec();
+                symbol_cursor += symbol_width;
+
+                let run_len = (r_encoded as usize) + 1;
+                if sample_idx < logical_idx + run_len {
+                    return Some(DeviationSample {
+                        deviation: run_symbol[0..self.num_deviation_bits].to_bitvec(),
+                        id: run_symbol[self.num_deviation_bits..].to_bitvec(),
+                    });
+                }
+                logical_idx += run_len;
+                if logical_idx >= self.num_samples {
+                    break;
+                }
+            }
+
+            let literals = m_count as usize;
+            if sample_idx < logical_idx + literals {
+                let offset = sample_idx - logical_idx;
+                let start = symbol_cursor + offset * symbol_width;
+                let end = start + symbol_width;
+                if end > self.symbol_bit_stream.len() {
+                    return None;
+                }
+                let symbol = self.symbol_bit_stream[start..end].to_bitvec();
+                return Some(DeviationSample {
+                    deviation: symbol[0..self.num_deviation_bits].to_bitvec(),
+                    id: symbol[self.num_deviation_bits..].to_bitvec(),
+                });
+            }
+
+            symbol_cursor += literals * symbol_width;
+            logical_idx += literals;
+            if logical_idx >= self.num_samples {
+                break;
+            }
+        }
+
+        None
+    }
+
+    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Msb0> {
+        &self.symbol_bit_stream
+    }
+
+    pub fn rm_control_stream(&self) -> &BitVec<usize, Msb0> {
+        &self.rm_control_stream
+    }
+
+    pub fn rm_values(&self) -> &[(u8, u8)] {
+        &self.rm_values
+    }
+
+    pub fn get_num_samples(&self) -> usize {
+        self.num_samples
+    }
+
+    pub fn get_num_deviation_bits(&self) -> usize {
+        self.num_deviation_bits
+    }
+
+    pub fn get_num_id_bits(&self) -> usize {
+        self.num_id_bits
+    }
+
+    pub fn get_encoded_size(&self) -> usize {
+        self.symbol_bit_stream.len() + self.rm_control_stream.len()
+    }
+
+    pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let expected_raw_bits = self.num_samples.checked_mul(symbol_width).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
+                message: "raw deviation stream length overflow".to_string(),
+            }
+        })?;
+
+        let mut raw = BitVec::<usize, Msb0>::with_capacity(expected_raw_bits);
+        let mut symbol_cursor = 0usize;
+        let mut decoded_samples = 0usize;
+
+        for &(r_encoded, m_count) in &self.rm_values {
+            if r_encoded > 0 {
+                let run_len = (r_encoded as usize) + 1;
+                if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE run symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+
+                let run_symbol =
+                    &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width];
+                for _ in 0..run_len {
+                    raw.extend_from_bitslice(run_symbol);
+                }
+                symbol_cursor += symbol_width;
+                decoded_samples += run_len;
+            }
+
+            let literal_count = m_count as usize;
+            for _ in 0..literal_count {
+                if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE literal symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+
+                raw.extend_from_bitslice(&self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width]);
+                symbol_cursor += symbol_width;
+            }
+            decoded_samples += literal_count;
+        }
+
+        if decoded_samples != self.num_samples {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "RLE decoded sample count mismatch: expected {}, got {}",
+                    self.num_samples, decoded_samples
+                ),
+            });
+        }
+
+        if symbol_cursor != self.symbol_bit_stream.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "RLE symbol stream not fully consumed: consumed {} of {} bits",
+                    symbol_cursor,
+                    self.symbol_bit_stream.len()
+                ),
+            });
+        }
+
+        Ok(DeviationData::new(
+            raw,
+            self.num_samples,
+            self.num_deviation_bits,
+            self.num_id_bits,
+        ))
+    }
+}
+
+impl EncodedData {
+    pub fn get_sample(&self, sample_idx: usize) -> Option<DeviationSample> {
+        match self {
+            EncodedData::Normal(data) => data.get_sample(sample_idx),
+            EncodedData::Rle(data) => data.get_sample(sample_idx),
+        }
+    }
+
+    pub fn get_encoded_size(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_encoded_size(),
+            EncodedData::Rle(data) => data.get_encoded_size(),
+        }
+    }
+
+    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Msb0> {
+        match self {
+            EncodedData::Normal(data) => data.encoded_bit_stream(),
+            EncodedData::Rle(data) => data.symbol_bit_stream(),
+        }
+    }
+
+    pub fn get_num_samples(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_num_samples(),
+            EncodedData::Rle(data) => data.get_num_samples(),
+        }
+    }
+
+    pub fn get_num_deviation_bits(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_num_deviation_bits(),
+            EncodedData::Rle(data) => data.get_num_deviation_bits(),
+        }
+    }
+
+    pub fn get_num_id_bits(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_num_id_bits(),
+            EncodedData::Rle(data) => data.get_num_id_bits(),
+        }
+    }
+
+    pub fn to_raw_deviation_data(&self) -> DeviationData {
+        match self {
+            EncodedData::Normal(data) => data.clone(),
+            EncodedData::Rle(data) => data
+                .to_deviation_data()
+                .expect("RLE encoded data should be valid when converting to raw deviation data"),
+        }
     }
 }
 
@@ -445,8 +703,9 @@ fn select_base_bits(
     tracing::info!(
         selected_num_bases = best_base_bit_groups.get_num_bases(),
         selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        %selected_mask,
-        "selected base bit mask"
+        selected_mask = %selected_mask,
+        selected_compressed_size_bytes = best_compressed_size / 8,
+        "selected base bit mask (compressed size in bytes)"
     );
     best_base_bit_groups
 }
@@ -466,7 +725,13 @@ impl Filter for SelectBasesOptimizedv1 {
         ));
         let (bit_data, entropy) = input;
         let base_bit_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let base_bit_groups = select_base_bits_threshold_optimized(&bit_data, base_bit_groups, entropy, 0.80, self.patience);
+        let base_bit_groups = select_base_bits_threshold_optimized(
+            &bit_data,
+            base_bit_groups,
+            entropy,
+            0.80,
+            self.patience,
+        );
         Ok((bit_data, base_bit_groups))
     }
 }
@@ -485,8 +750,15 @@ impl Filter for SelectBasesOptimizedv2 {
             self.patience
         ));
         let (bit_data, entropy) = input;
-        let base_bit_groups = BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let base_bit_groups = select_base_bits_threshold_optimized(&bit_data, base_bit_groups, entropy, 0.80, self.patience);
+        let base_bit_groups =
+            BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let base_bit_groups = select_base_bits_threshold_optimized(
+            &bit_data,
+            base_bit_groups,
+            entropy,
+            0.80,
+            self.patience,
+        );
         Ok((bit_data, base_bit_groups))
     }
 }
@@ -505,8 +777,15 @@ impl Filter for SelectBasesOptimizedv3 {
             self.patience
         ));
         let (bit_data, entropy) = input;
-        let base_bit_groups = BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let base_bit_groups = select_base_bits_threshold_optimized(&bit_data, base_bit_groups, entropy, 0.80, self.patience);
+        let base_bit_groups =
+            BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let base_bit_groups = select_base_bits_threshold_optimized(
+            &bit_data,
+            base_bit_groups,
+            entropy,
+            0.80,
+            self.patience,
+        );
         Ok((bit_data, base_bit_groups))
     }
 }
@@ -574,8 +853,9 @@ fn select_base_bits_optimized(
     tracing::info!(
         selected_num_bases = best_base_bit_groups.get_num_bases(),
         selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        %selected_mask,
-        "selected base bit mask (optimized)"
+        selected_mask = %selected_mask,
+        selected_compressed_size_bytes = best_compressed_size / 8,
+        "selected base bit mask (optimized, compressed size in bytes)"
     );
     Box::new(best_base_bit_groups)
 }
@@ -590,7 +870,10 @@ fn select_base_bits_threshold_optimized(
     let mut non_improving_count = 0usize;
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
-    tracing::debug!("Sorted entropies (bit position, entropy value): {:?}", entropy);
+    tracing::debug!(
+        "Sorted entropies (bit position, entropy value): {:?}",
+        entropy
+    );
 
     // Bulk-add all bits at or below the entropy threshold (includes zero-entropy bits)
     let threshold_bits: Vec<usize> = entropy
@@ -604,7 +887,13 @@ fn select_base_bits_threshold_optimized(
     let zero_entropy_bits: Vec<usize> = threshold_bits
         .iter()
         .copied()
-        .take_while(|&pos| entropy.iter().find(|(p, _)| *p == pos).map(|(_, e)| *e == 0.0).unwrap_or(false))
+        .take_while(|&pos| {
+            entropy
+                .iter()
+                .find(|(p, _)| *p == pos)
+                .map(|(_, e)| *e == 0.0)
+                .unwrap_or(false)
+        })
         .collect();
     base_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
 
@@ -659,8 +948,9 @@ fn select_base_bits_threshold_optimized(
     tracing::info!(
         selected_num_bases = best_base_bit_groups.get_num_bases(),
         selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        %selected_mask,
-        "selected base bit mask (optimized)"
+        selected_mask = %selected_mask,
+        selected_compressed_size_bytes = best_compressed_size / 8,
+        "selected base bit mask (threshold optimized, compressed size in bytes)"
     );
     Box::new(best_base_bit_groups)
 }
@@ -675,7 +965,7 @@ impl Filter for EncodeData {
         let _timer = ScopedTimer::info("Encoding data into compressed format");
         let (bit_data, base_bit_groups) = input;
         let mut compressed = CompressedData::new(
-            encode_data(&bit_data, base_bit_groups.as_ref()),
+            EncodedData::Normal(encode_data(&bit_data, base_bit_groups.as_ref())),
             bit_data.info.clone(),
         );
         compressed.base_table = base_bit_groups.get_bases(&bit_data);
@@ -698,7 +988,7 @@ impl Filter for EncodeDataOptimized {
         let _timer = ScopedTimer::info("Encoding data into compressed format (optimized)");
         let (bit_data, base_bit_groups) = input;
         let mut compressed = CompressedData::new(
-            encode_data_optimized(&bit_data, base_bit_groups.as_ref()),
+            EncodedData::Normal(encode_data_optimized(&bit_data, base_bit_groups.as_ref())),
             bit_data.info.clone(),
         );
         compressed.base_table = base_bit_groups.get_bases(&bit_data);
@@ -709,6 +999,153 @@ impl Filter for EncodeDataOptimized {
             .map(|weights| weights.to_vec());
         Ok(compressed)
     }
+}
+
+pub struct EncodeDataRLE {}
+
+impl Filter for EncodeDataRLE {
+    type Input = (BitDataSet, Box<dyn BaseBit>);
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format (optimized + RLE)");
+        let (bit_data, base_bit_groups) = input;
+        let mut compressed = CompressedData::new(
+            EncodedData::Rle(encode_data_rle(&bit_data, base_bit_groups.as_ref())),
+            bit_data.info.clone(),
+        );
+        compressed.base_table = base_bit_groups.get_bases(&bit_data);
+        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        compressed.condensed_sample_weights = bit_data
+            .info
+            .m_condensed_sample_weights()
+            .map(|weights| weights.to_vec());
+        Ok(compressed)
+    }
+}
+
+struct EncodingContext {
+    l_id: usize,
+    num_deviation_bits: usize,
+    row_to_group_id: Vec<usize>,
+    deviation_ranges: Vec<(usize, usize)>,
+    id_bits_per_base: Vec<BitVec<usize, Msb0>>,
+}
+
+fn prepare_encoding_context<B: BaseBit + ?Sized>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+) -> EncodingContext {
+    let base_bit_mask = base_bit_groups.get_base_bit_mask();
+    let num_bases = base_bit_groups.get_num_bases();
+    let l_id = {
+        let bits = (num_bases as f64).log2().ceil() as usize;
+        if bits == 0 { 1 } else { bits }
+    };
+
+    let chunk_size = bit_data.chunk_size();
+    let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
+    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
+
+    let mut deviation_positions = Vec::with_capacity(num_deviation_bits);
+    for bit_pos in 0..chunk_size {
+        if !base_bit_mask[bit_pos] {
+            deviation_positions.push(bit_pos);
+        }
+    }
+
+    let mut deviation_ranges: Vec<(usize, usize)> = Vec::new();
+    if let Some(&first_pos) = deviation_positions.first() {
+        let mut range_start = first_pos;
+        let mut prev = first_pos;
+        for &pos in deviation_positions.iter().skip(1) {
+            if pos == prev + 1 {
+                prev = pos;
+            } else {
+                deviation_ranges.push((range_start, prev + 1));
+                range_start = pos;
+                prev = pos;
+            }
+        }
+        deviation_ranges.push((range_start, prev + 1));
+    }
+
+    let mut id_bits_per_base: Vec<BitVec<usize, Msb0>> = Vec::new();
+    if l_id > 0 {
+        id_bits_per_base = Vec::with_capacity(num_bases);
+        for id in 0..num_bases {
+            let mut id_bits = BitVec::<usize, Msb0>::with_capacity(l_id);
+            for shift in (0..l_id).rev() {
+                id_bits.push(((id >> shift) & 1) == 1);
+            }
+            id_bits_per_base.push(id_bits);
+        }
+    }
+
+    let num_rows = bit_data.num_rows();
+    let mut row_to_group_id = vec![0usize; num_rows];
+    for (id, group) in base_bit_groups.get_groups().iter().enumerate() {
+        for &row in group.iter() {
+            row_to_group_id[row] = id;
+        }
+    }
+
+    EncodingContext {
+        l_id,
+        num_deviation_bits,
+        row_to_group_id,
+        deviation_ranges,
+        id_bits_per_base,
+    }
+}
+
+fn encode_rows_as_symbol_stream(
+    bit_data: &BitDataSet,
+    context: &EncodingContext,
+) -> BitVec<usize, Msb0> {
+    let symbol_width = context.num_deviation_bits + context.l_id;
+    let num_rows = bit_data.num_rows();
+    let mut symbol_stream = BitVec::<usize, Msb0>::with_capacity(num_rows * symbol_width);
+
+    for (row, id_ref) in context.row_to_group_id.iter().enumerate().take(num_rows) {
+        let id = *id_ref;
+        let chunk = bit_data.get_chunk(row);
+
+        for &(start, end) in &context.deviation_ranges {
+            symbol_stream.extend_from_bitslice(&chunk[start..end]);
+        }
+
+        if context.l_id > 0 {
+            symbol_stream.extend_from_bitslice(context.id_bits_per_base[id].as_bitslice());
+        }
+    }
+
+    symbol_stream
+}
+
+fn append_row_symbol_to(
+    bit_data: &BitDataSet,
+    context: &EncodingContext,
+    row: usize,
+    out: &mut BitVec<usize, Msb0>,
+) {
+    let id = context.row_to_group_id[row];
+    let chunk = bit_data.get_chunk(row);
+
+    for &(start, end) in &context.deviation_ranges {
+        out.extend_from_bitslice(&chunk[start..end]);
+    }
+
+    if context.l_id > 0 {
+        out.extend_from_bitslice(context.id_bits_per_base[id].as_bitslice());
+    }
+}
+
+fn make_row_symbol(bit_data: &BitDataSet, context: &EncodingContext, row: usize) -> BitVec<usize, Msb0> {
+    let symbol_width = context.num_deviation_bits + context.l_id;
+    let mut symbol = BitVec::<usize, Msb0>::with_capacity(symbol_width);
+    append_row_symbol_to(bit_data, context, row, &mut symbol);
+    symbol
 }
 
 fn encode_data<B: BaseBit + ?Sized>(bit_data: &BitDataSet, base_bit_groups: &B) -> DeviationData {
@@ -762,86 +1199,99 @@ fn encode_data_optimized<B: BaseBit + ?Sized>(
     bit_data: &BitDataSet,
     base_bit_groups: &B,
 ) -> DeviationData {
-    let base_bit_mask = base_bit_groups.get_base_bit_mask();
-
-    let num_bases = base_bit_groups.get_num_bases();
-    let l_id = {
-        let bits = (num_bases as f64).log2().ceil() as usize;
-        if bits == 0 { 1 } else { bits }
-    };
-
-    let chunk_size = bit_data.chunk_size();
-    let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
-    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
-
-    // Precompute non-base (deviation) bit positions once.
-    let mut deviation_positions = Vec::with_capacity(num_deviation_bits);
-    for bit_pos in 0..chunk_size {
-        if !base_bit_mask[bit_pos] {
-            deviation_positions.push(bit_pos);
-        }
-    }
-
-    // Collapse consecutive deviation positions into contiguous ranges so we can
-    // append whole slices instead of pushing one bit at a time.
-    let mut deviation_ranges: Vec<(usize, usize)> = Vec::new();
-    if let Some(&first_pos) = deviation_positions.first() {
-        let mut range_start = first_pos;
-        let mut prev = first_pos;
-
-        for &pos in deviation_positions.iter().skip(1) {
-            if pos == prev + 1 {
-                prev = pos;
-            } else {
-                deviation_ranges.push((range_start, prev + 1));
-                range_start = pos;
-                prev = pos;
-            }
-        }
-        deviation_ranges.push((range_start, prev + 1));
-    }
-
-    // Precompute ID bit patterns per base to avoid per-row shift/push loops.
-    let mut id_bits_per_base: Vec<BitVec<usize, Msb0>> = Vec::new();
-    if l_id > 0 {
-        id_bits_per_base = Vec::with_capacity(num_bases);
-        for id in 0..num_bases {
-            let mut id_bits = BitVec::<usize, Msb0>::with_capacity(l_id);
-            for shift in (0..l_id).rev() {
-                id_bits.push(((id >> shift) & 1) == 1);
-            }
-            id_bits_per_base.push(id_bits);
-        }
-    }
-
-    let num_rows = bit_data.num_rows();
-    let mut row_to_group_id = vec![0usize; num_rows];
-    let mut encoded_bit_stream =
-        BitVec::<usize, Msb0>::with_capacity(num_rows * (num_deviation_bits + l_id));
-    for (id, group) in base_bit_groups.get_groups().iter().enumerate() {
-        for &row in group.iter() {
-            row_to_group_id[row] = id;
-        }
-    }
-
-    for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
-        let id = *id_ref;
-        let chunk = bit_data.get_chunk(row);
-
-        for &(start, end) in &deviation_ranges {
-            encoded_bit_stream.extend_from_bitslice(&chunk[start..end]);
-        }
-
-        if l_id > 0 {
-            encoded_bit_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
-        }
-    }
+    let context = prepare_encoding_context(bit_data, base_bit_groups);
+    let encoded_bit_stream = encode_rows_as_symbol_stream(bit_data, &context);
 
     DeviationData::new(
         encoded_bit_stream,
         bit_data.num_rows(),
-        num_deviation_bits,
-        l_id,
+        context.num_deviation_bits,
+        context.l_id,
+    )
+}
+
+fn encode_data_rle<B: BaseBit + ?Sized>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+) -> RleDeviationData {
+    let context = prepare_encoding_context(bit_data, base_bit_groups);
+    let symbol_width = context.num_deviation_bits + context.l_id;
+    let num_rows = bit_data.num_rows();
+    let mut symbol_stream = BitVec::<usize, Msb0>::new();
+    let mut rm_values: Vec<(u8, u8)> = Vec::new();
+
+    if num_rows == 0 || symbol_width == 0 {
+        return RleDeviationData::new(
+            symbol_stream,
+            rm_values,
+            num_rows,
+            context.num_deviation_bits,
+            context.l_id,
+        );
+    }
+
+    let mut i = 0usize;
+    while i < num_rows {
+        let current_symbol = make_row_symbol(bit_data, &context, i);
+
+        let mut run_len = 1usize;
+        while i + run_len < num_rows && run_len < 255 {
+            let next_symbol = make_row_symbol(bit_data, &context, i + run_len);
+            if next_symbol == current_symbol {
+                run_len += 1;
+            } else {
+                break;
+            }
+        }
+
+        let r_encoded: u8;
+        if run_len >= 2 {
+            r_encoded = (run_len - 1) as u8;
+            symbol_stream.extend_from_bitslice(current_symbol.as_bitslice());
+            i += run_len;
+        } else {
+            r_encoded = 0;
+        }
+
+        let literal_start = i;
+        let mut literal_count = 0usize;
+        while i < num_rows && literal_count < 254 {
+            let this_symbol = make_row_symbol(bit_data, &context, i);
+
+            let mut lookahead_run = 1usize;
+            while i + lookahead_run < num_rows && lookahead_run < 255 {
+                let lookahead_symbol = make_row_symbol(bit_data, &context, i + lookahead_run);
+                if lookahead_symbol == this_symbol {
+                    lookahead_run += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if lookahead_run >= 2 {
+                break;
+            }
+
+            symbol_stream.extend_from_bitslice(this_symbol.as_bitslice());
+            literal_count += 1;
+            i += 1;
+        }
+
+        if r_encoded == 0 && literal_count == 0 {
+            symbol_stream.extend_from_bitslice(current_symbol.as_bitslice());
+            literal_count = 1;
+            i = literal_start + 1;
+        }
+
+        rm_values.push((r_encoded, literal_count as u8));
+    }
+
+    RleDeviationData::new(
+        symbol_stream,
+        rm_values,
+        num_rows,
+        context.num_deviation_bits,
+        context.l_id,
     )
 }
 
@@ -989,6 +1439,13 @@ mod tests {
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         build_compression_pipeline(100, 5)
+    }
+
+    fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+        EntropyOptimized {}
+            .then(GenCondensedSamples { m_max: 100 })
+            .then(SelectBases { patience: 5 })
+            .then(EncodeDataRLE {})
     }
 
     // Helper function to create test BitData
@@ -1673,5 +2130,60 @@ mod tests {
         assert_eq!(subset.data.num_rows, 3);
         assert_eq!(subset.data.chunk_size, 16);
         assert_eq!(subset.info.num_features(), 8);
+    }
+
+    #[test]
+    fn test_encode_data_rle_roundtrip() {
+        let original_rows = 64;
+        let bit_data = create_simulated_bit_data(original_rows, 1, 8);
+        let compressed = get_rle_compression_pipeline().process(bit_data.clone()).unwrap();
+        let decompressed = decompress_file(&compressed).unwrap();
+
+        assert_eq!(decompressed.data.num_rows, original_rows);
+        assert_eq!(decompressed.data.chunk_size, bit_data.chunk_size());
+        assert_eq!(
+            decompressed.data.data,
+            bit_data.data.data[0..(original_rows * bit_data.chunk_size())]
+        );
+    }
+
+    #[test]
+    fn test_encode_data_rle_sample_retrieval() {
+        let bit_data = create_simulated_bit_data(32, 1, 8);
+        let compressed = get_rle_compression_pipeline().process(bit_data).unwrap();
+
+        for i in 0..compressed.encoded_data.get_num_samples() {
+            let sample = compressed.encoded_data.get_sample(i);
+            assert!(sample.is_some());
+            let sample = sample.unwrap();
+            assert_eq!(
+                sample.deviation.len() + sample.id.len(),
+                compressed.encoded_data.get_num_deviation_bits() + compressed.encoded_data.get_num_id_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_data_rle_control_stream_terminator_and_bounds() {
+        let bit_data = create_simulated_bit_data(600, 1, 8);
+        let compressed = get_rle_compression_pipeline().process(bit_data).unwrap();
+
+        let rle = match &compressed.encoded_data {
+            EncodedData::Rle(data) => data,
+            _ => panic!("expected RLE encoded data"),
+        };
+
+        for &(r, m) in rle.rm_values() {
+            assert!(r <= 254, "r is encoded with bias -1 and capped to 254");
+            assert!(m <= 254, "m is capped to 254 because 255 is reserved");
+        }
+
+        let ctrl = rle.rm_control_stream();
+        assert!(ctrl.len() >= 8);
+        let end = &ctrl[ctrl.len() - 8..ctrl.len()];
+        let as_u8 = end
+            .iter()
+            .fold(0u8, |acc, b| (acc << 1) | (*b as u8));
+        assert_eq!(as_u8, 0xFF);
     }
 }

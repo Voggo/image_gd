@@ -2,10 +2,9 @@ use bitvec::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compression::compress::{CompressedData, DeviationData};
+use crate::compression::compress::{CompressedData, DeviationData, EncodedData, RleDeviationData};
 use crate::compression::preprocessor::{
-    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform,
-    ImageReconstructionInfo,
+    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageReconstructionInfo,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -13,6 +12,9 @@ use crate::filter_pipeline::Filter;
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
+
+const ENCODING_TAG_NORMAL: u8 = 0;
+const ENCODING_TAG_RLE_RM_U8: u8 = 1;
 
 /// In-memory EGD file contents that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +34,11 @@ impl EgdFile {
     /// 5) condensed weights bitstream (m * ceil(log2(n)) bits)
     /// 6) zero-padding to next byte
     /// 7) base table: num_bases (u64) then packed base bits for each base
-    /// 8) encoded data stream bits
+    /// 8) byte-align, then encoded data section:
+    ///    - encoding tag (u8)
+    ///    - payload (depends on tag)
+    ///      tag=0: raw encoded data stream bits
+    ///      tag=1: rm-control bytes (r,m pairs, terminated by 0xFF), then symbol stream bits
     pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
         let data_info = &compressed.metadata;
         let num_features = data_info.num_features();
@@ -149,8 +155,19 @@ impl EgdFile {
             }
         }
 
-        // Data stream
-        writer.write_bitslice(compressed.encoded_data.encoded_bit_stream());
+        // Encoded data section: byte-aligned + tagged payload.
+        writer.align_to_byte();
+        match &compressed.encoded_data {
+            EncodedData::Normal(raw) => {
+                writer.write_u8(ENCODING_TAG_NORMAL);
+                writer.write_bitslice(raw.encoded_bit_stream());
+            }
+            EncodedData::Rle(rle) => {
+                writer.write_u8(ENCODING_TAG_RLE_RM_U8);
+                writer.write_bitslice(rle.rm_control_stream());
+                writer.write_bitslice(rle.symbol_bit_stream());
+            }
+        }
 
         Ok(EgdFile {
             bytes: writer.into_bytes(),
@@ -325,14 +342,76 @@ impl EgdFile {
         let num_deviation_bits = chunk_size.saturating_sub(base_bit_positions.len());
 
         let bits_per_sample = num_deviation_bits + num_id_bits;
-        let expected_encoded_len = num_samples.checked_mul(bits_per_sample).ok_or_else(|| {
-            EntroGdError::InvalidMetadata {
-                message: "encoded stream expected length overflow".to_string(),
-            }
-        })?;
 
-        // Encoded data stream (exact logical bit-length).
-        let encoded_stream = reader.read_bits(expected_encoded_len)?;
+        // Encoded data section (byte-aligned + tagged payload)
+        reader.align_to_byte();
+        let encoding_tag = reader.read_u8()?;
+        let encoded_data = match encoding_tag {
+            ENCODING_TAG_NORMAL => {
+                let expected_encoded_len =
+                    num_samples.checked_mul(bits_per_sample).ok_or_else(|| {
+                        EntroGdError::InvalidMetadata {
+                            message: "encoded stream expected length overflow".to_string(),
+                        }
+                    })?;
+                let encoded_stream = reader.read_bits(expected_encoded_len)?;
+                EncodedData::Normal(DeviationData::new(
+                    encoded_stream,
+                    num_samples,
+                    num_deviation_bits,
+                    num_id_bits,
+                ))
+            }
+            ENCODING_TAG_RLE_RM_U8 => {
+                let mut rm_values: Vec<(u8, u8)> = Vec::new();
+                loop {
+                    let r = reader.read_u8()?;
+                    if r == 0xFF {
+                        break;
+                    }
+                    let m_val = reader.read_u8()?;
+                    if r == 0xFF || m_val == 0xFF {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: "invalid rm control stream: reserved 0xFF encountered before terminator".to_string(),
+                        });
+                    }
+                    rm_values.push((r, m_val));
+                }
+
+                let symbol_count = rm_values
+                    .iter()
+                    .try_fold(0usize, |acc, (r, m_val)| {
+                        let run_symbols = if *r > 0 { 1usize } else { 0usize };
+                        let literals = *m_val as usize;
+                        acc.checked_add(run_symbols + literals)
+                    })
+                    .ok_or_else(|| EntroGdError::InvalidMetadata {
+                        message: "rm symbol count overflow".to_string(),
+                    })?;
+
+                let expected_symbol_bits =
+                    symbol_count.checked_mul(bits_per_sample).ok_or_else(|| {
+                        EntroGdError::InvalidMetadata {
+                            message: "rle symbol stream expected length overflow".to_string(),
+                        }
+                    })?;
+
+                let symbol_stream = reader.read_bits(expected_symbol_bits)?;
+                let rle = RleDeviationData::new(
+                    symbol_stream,
+                    rm_values,
+                    num_samples,
+                    num_deviation_bits,
+                    num_id_bits,
+                );
+                EncodedData::Normal(rle.to_deviation_data()?)
+            }
+            other => {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!("unsupported encoded-data tag {}", other),
+                });
+            }
+        };
 
         // Any remaining bits must be zero-padding in the final byte.
         while reader.remaining_bits() > 0 {
@@ -343,26 +422,24 @@ impl EgdFile {
             }
         }
 
-        if encoded_stream.len() != expected_encoded_len {
-            return Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "encoded stream length mismatch: expected {}, got {}",
-                    expected_encoded_len,
-                    encoded_stream.len()
-                ),
-            });
-        }
-
         // Reconstruct base frequencies from encoded IDs.
         if num_bases > 0 {
             let mut counts = vec![0usize; num_bases];
             for sample_idx in 0..num_samples {
-                let id_start = sample_idx * bits_per_sample + num_deviation_bits;
-                let id_end = id_start + num_id_bits;
+                let sample = encoded_data.get_sample(sample_idx).ok_or_else(|| {
+                    EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "failed to decode sample {} from encoded stream",
+                            sample_idx
+                        ),
+                    }
+                })?;
+
                 let mut base_id = 0usize;
-                for bit in &encoded_stream[id_start..id_end] {
+                for bit in sample.id.iter() {
                     base_id = (base_id << 1) | (*bit as usize);
                 }
+
                 if base_id >= num_bases {
                     return Err(EntroGdError::InvalidMetadata {
                         message: format!(
@@ -387,12 +464,7 @@ impl EgdFile {
         metadata.set_condensed_sample_weights(if m == 0 { None } else { Some(weights.clone()) });
 
         Ok(CompressedData {
-            encoded_data: DeviationData::new(
-                encoded_stream,
-                num_samples,
-                num_deviation_bits,
-                num_id_bits,
-            ),
+            encoded_data,
             condensed_sample_weights: if m == 0 { None } else { Some(weights) },
             base_table,
             base_bit_positions,
@@ -475,9 +547,10 @@ impl IgdFile {
 
         let egd_payload = EgdFile::from_compressed_data(compressed)?;
         let payload = egd_payload.as_bytes();
-        let payload_len = u64::try_from(payload.len()).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "IGD payload length does not fit into u64".to_string(),
-        })?;
+        let payload_len =
+            u64::try_from(payload.len()).map_err(|_| EntroGdError::InvalidMetadata {
+                message: "IGD payload length does not fit into u64".to_string(),
+            })?;
 
         let mut bytes = Vec::with_capacity(22 + payload.len());
         bytes.extend_from_slice(&IMAGE_MAGIC_BYTES);
@@ -523,7 +596,8 @@ impl IgdFile {
             });
         }
 
-        let width = u32::from_be_bytes([self.bytes[4], self.bytes[5], self.bytes[6], self.bytes[7]]);
+        let width =
+            u32::from_be_bytes([self.bytes[4], self.bytes[5], self.bytes[6], self.bytes[7]]);
         let height =
             u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]]);
         let channels = self.bytes[12];
@@ -546,11 +620,11 @@ impl IgdFile {
         ]) as usize;
 
         let payload_start = HEADER_LEN;
-        let payload_end = payload_start
-            .checked_add(payload_len)
-            .ok_or_else(|| EntroGdError::InvalidMetadata {
+        let payload_end = payload_start.checked_add(payload_len).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
                 message: "IGD payload length overflow".to_string(),
-            })?;
+            }
+        })?;
         if payload_end != self.bytes.len() {
             return Err(EntroGdError::InvalidMetadata {
                 message: "IGD payload length does not match file size".to_string(),
@@ -568,12 +642,13 @@ impl IgdFile {
                 ),
             });
         }
-        compressed.metadata.reconstruction = BitDataReconstructionInfo::Image(ImageReconstructionInfo {
-            width,
-            height,
-            channels,
-            colorspace,
-        });
+        compressed.metadata.reconstruction =
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width,
+                height,
+                channels,
+                colorspace,
+            });
 
         Ok(compressed)
     }
@@ -830,16 +905,26 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::compress::build_compression_pipeline;
+    use crate::compression::compress::{
+        EncodeDataRLE, EncodedData, GenCondensedSamples, SelectBases, build_compression_pipeline,
+    };
+    use crate::compression::entropy::EntropyOptimized;
     use crate::compression::preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
         ImageReconstructionInfo,
     };
     use crate::data_loader::FeatureDataType;
-    use crate::filter_pipeline::Filter;
+    use crate::filter_pipeline::{Filter, FilterExt};
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         build_compression_pipeline(100, 5)
+    }
+
+    fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+        EntropyOptimized {}
+            .then(GenCondensedSamples { m_max: 100 })
+            .then(SelectBases { patience: 5 })
+            .then(EncodeDataRLE {})
     }
 
     #[test]
@@ -952,5 +1037,35 @@ mod tests {
                 colorspace: 0
             })
         ));
+    }
+
+    #[test]
+    fn test_roundtrip_egd_with_rle_payload() {
+        let data = BitData {
+            data: bitvec![usize, Msb0; 0; 512],
+            num_rows: 8,
+            chunk_size: 64,
+        };
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
+        let info = BitDataInfo::new(features, 512).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_rle_compression_pipeline().process(bit_data).unwrap();
+        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let loaded = egd.to_compressed_data().unwrap();
+
+        match (&compressed.encoded_data, &loaded.encoded_data) {
+            (EncodedData::Rle(src), EncodedData::Normal(dst)) => {
+                let src_as_raw = src.to_deviation_data().unwrap();
+                assert_eq!(src_as_raw.encoded_bit_stream(), dst.encoded_bit_stream());
+                assert_eq!(src_as_raw.get_num_samples(), dst.get_num_samples());
+                assert_eq!(
+                    src_as_raw.get_num_deviation_bits(),
+                    dst.get_num_deviation_bits()
+                );
+                assert_eq!(src_as_raw.get_num_id_bits(), dst.get_num_id_bits());
+            }
+            _ => panic!("expected source RLE data and loaded normalized data"),
+        }
     }
 }

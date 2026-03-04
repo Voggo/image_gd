@@ -6,14 +6,14 @@ pub mod timing;
 
 pub use compression::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    BuildBitDataSet, BuildImageBitDataSet, CompressedData, CondensedSamples,
-    DecompressAnalytics, DecompressFileData, DeviationData, DeviationSample, EgdFile, EncodeData,
-    EncodeDataOptimized, EntropyNaive, EntropyOptimized, FORMAT_VERSION, FeatureSpec,
+    BuildBitDataSet, BuildImageBitDataSet, CompressedData, CondensedSamples, DecompressAnalytics,
+    DecompressFileData, DeviationData, DeviationSample, EgdFile, EncodeData, EncodeDataOptimized,
+    EncodeDataRLE, EncodedData, EntropyNaive, EntropyOptimized, FORMAT_VERSION, FeatureSpec,
     FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
     IMAGE_MAGIC_BYTES, IgdFile, ImageColorSpace, ImageReconstructionInfo, InferFeatureSpecs,
-    LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, SaveEgdFile, SaveIgdFile,
-    SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
-    build_compression_pipeline, build_compression_pipeline_optimized,
+    LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, RleDeviationData, SaveEgdFile,
+    SaveIgdFile, SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2,
+    SelectBasesOptimizedv3, build_compression_pipeline, build_compression_pipeline_optimized,
     build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
     calculate_entropy, decode_value_from_bits,
 };
@@ -28,15 +28,14 @@ pub use timing::ScopedTimer;
 pub mod prelude {
     pub use crate::{
         BitDataSet, CsvDataLoader, DataLoader, DataValue, DecompressAnalytics, DecompressFileData,
-        EncodeData, EncodeDataOptimized, EntroGdError, EntropyNaive, EntropyOptimized,
-        FeatureDataType, Filter, FilterExt, FloatScalingMode, GenCondensedSamples,
-        ImageColorSpace, InferFeatureSpecs, LoadEgdFile, LoadIgdFile, PreprocessOptions,
-        SaveEgdFile, SaveIgdFile, ScopedTimer, SelectBases, SelectBasesOptimizedv1,
-        SelectBasesOptimizedv2, SelectBasesOptimizedv3,
+        EncodeData, EncodeDataOptimized, EncodeDataRLE, EncodedData, EntroGdError, EntropyNaive,
+        EntropyOptimized, FeatureDataType, Filter, FilterExt, FloatScalingMode,
+        GenCondensedSamples, ImageColorSpace, InferFeatureSpecs, LoadEgdFile, LoadIgdFile,
+        PreprocessOptions, SaveEgdFile, SaveIgdFile, ScopedTimer, SelectBases,
+        SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
         build_compression_pipeline, build_compression_pipeline_optimized,
         build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
-        calculate_entropy, decode_value_from_bits,
-        init_logging,
+        calculate_entropy, decode_value_from_bits, init_logging,
     };
 }
 

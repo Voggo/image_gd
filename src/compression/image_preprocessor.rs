@@ -44,12 +44,20 @@ impl Filter for BuildImageBitDataSet {
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let decoded = image::open(&input)?;
         match decoded {
-            DynamicImage::ImageRgb8(img) => {
-                build_image_bitdataset(img.width(), img.height(), 3, self.colorspace.as_u8(), img.into_raw())
-            }
-            DynamicImage::ImageRgba8(img) => {
-                build_image_bitdataset(img.width(), img.height(), 4, self.colorspace.as_u8(), img.into_raw())
-            }
+            DynamicImage::ImageRgb8(img) => build_image_bitdataset(
+                img.width(),
+                img.height(),
+                3,
+                self.colorspace.as_u8(),
+                img.into_raw(),
+            ),
+            DynamicImage::ImageRgba8(img) => build_image_bitdataset(
+                img.width(),
+                img.height(),
+                4,
+                self.colorspace.as_u8(),
+                img.into_raw(),
+            ),
             other => Err(EntroGdError::InvalidMetadata {
                 message: format!(
                     "unsupported image color type for dataset ingestion: {:?} (expected RGB8 or RGBA8)",
@@ -84,11 +92,11 @@ fn build_image_bitdataset(
             message: "image dimensions overflow row count".to_string(),
         })?;
     let channels_usize = channels as usize;
-    let expected_len = rows
-        .checked_mul(channels_usize)
-        .ok_or_else(|| EntroGdError::InvalidMetadata {
-            message: "image dimensions overflow raw data length".to_string(),
-        })?;
+    let expected_len =
+        rows.checked_mul(channels_usize)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "image dimensions overflow raw data length".to_string(),
+            })?;
     if raw.len() != expected_len {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(

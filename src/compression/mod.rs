@@ -8,10 +8,11 @@ pub mod preprocessor;
 pub use base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitSignatureGroups};
 pub use compress::{
     CompressedData, CondensedSamples, DecompressAnalytics, DecompressFileData, DeviationData,
-    DeviationSample, EncodeData, EncodeDataOptimized, GenCondensedSamples, SelectBases,
-    SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
-    build_compression_pipeline, build_compression_pipeline_optimized,
-    build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
+    DeviationSample, EncodeData, EncodeDataOptimized, EncodeDataRLE, EncodedData,
+    GenCondensedSamples, RleDeviationData, SelectBases, SelectBasesOptimizedv1,
+    SelectBasesOptimizedv2, SelectBasesOptimizedv3, build_compression_pipeline,
+    build_compression_pipeline_optimized, build_compression_pipeline_with_preprocessing,
+    build_image_compression_pipeline,
 };
 pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
 pub use file_format::{
