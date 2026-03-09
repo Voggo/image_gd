@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::compression::compress::{
-    CompressedData, DeviationData, EncodedData, RLE_LONG_MAX, RLE_SHORT_MAX,
-    RLE_TERMINATOR_PAYLOAD, RleDeviationData,
+    CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX,
+    RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
 use crate::compression::tabular_preprocessor::{
     BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageReconstructionInfo,
@@ -12,12 +12,15 @@ use crate::compression::tabular_preprocessor::{
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
+use crate::utils::bits_needed_nonzero;
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
 
 const ENCODING_TAG_NORMAL: u8 = 0;
 const ENCODING_TAG_RLE_RM_PACKED: u8 = 1;
+const ENCODING_TAG_HUFFMAN_CANONICAL: u8 = 2;
+const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
 
 /// In-memory EGD file contents that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +45,7 @@ impl EgdFile {
     ///    - payload (depends on tag)
     ///      tag=0: raw encoded data stream bits
     ///      tag=1: rm-control packed stream (alternating r,m 4/8-bit packets, terminated by 0xFF), then symbol stream bits
+    ///      tag=2: canonical Huffman table + row offsets + pixel bitstream
     pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
         let data_info = &compressed.metadata;
         let num_features = data_info.num_features();
@@ -169,6 +173,43 @@ impl EgdFile {
                 writer.write_u8(ENCODING_TAG_RLE_RM_PACKED);
                 writer.write_bitslice(rle.rm_control_stream());
                 writer.write_bitslice(rle.symbol_bit_stream());
+            }
+            EncodedData::Huffman(huffman) => {
+                writer.write_u8(ENCODING_TAG_HUFFMAN_CANONICAL);
+                writer.write_u16(u16::try_from(huffman.canonical_symbols().len()).map_err(
+                    |_| EntroGdError::InvalidMetadata {
+                        message: "Huffman symbol count does not fit into u16".to_string(),
+                    },
+                )?);
+                writer.write_u8(u8::try_from(huffman.get_num_id_bits()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman l_id does not fit into u8".to_string(),
+                    }
+                })?);
+                writer.write_u8(u8::try_from(huffman.get_num_deviation_bits()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman l_d does not fit into u8".to_string(),
+                    }
+                })?);
+                writer.write_u32(u32::try_from(huffman.row_offsets().len()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman row count does not fit into u32".to_string(),
+                    }
+                })?);
+
+                let symbol_width = huffman.get_num_id_bits() + huffman.get_num_deviation_bits();
+                for (&symbol, &code_len) in huffman
+                    .canonical_symbols()
+                    .iter()
+                    .zip(huffman.canonical_code_lengths().iter())
+                {
+                    writer.write_u64_bits(symbol, symbol_width);
+                    writer.write_usize_bits((code_len - 1) as usize, HUFFMAN_CODE_LENGTH_BITS);
+                }
+                for &offset in huffman.row_offsets() {
+                    writer.write_u32(offset);
+                }
+                writer.write_bitslice(huffman.pixel_bit_stream());
             }
         }
 
@@ -390,7 +431,7 @@ impl EgdFile {
                     flat_values.push(val);
                 }
 
-                if flat_values.len() % 2 != 0 {
+                if !flat_values.len().is_multiple_of(2) {
                     return Err(EntroGdError::InvalidMetadata {
                         message: "invalid rm control stream: odd number of values".to_string(),
                     });
@@ -428,6 +469,73 @@ impl EgdFile {
                 );
                 EncodedData::Normal(rle.to_deviation_data()?)
             }
+            ENCODING_TAG_HUFFMAN_CANONICAL => {
+                let symbol_count = usize::from(reader.read_u16()?);
+                let huffman_num_id_bits = usize::from(reader.read_u8()?);
+                let huffman_num_deviation_bits = usize::from(reader.read_u8()?);
+                let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman row count does not fit into usize".to_string(),
+                    }
+                })?;
+
+                if huffman_num_id_bits != num_id_bits {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "Huffman l_id mismatch: header={}, expected={}",
+                            huffman_num_id_bits, num_id_bits
+                        ),
+                    });
+                }
+                if huffman_num_deviation_bits != num_deviation_bits {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "Huffman l_d mismatch: header={}, expected={}",
+                            huffman_num_deviation_bits, num_deviation_bits
+                        ),
+                    });
+                }
+
+                let symbol_width = huffman_num_id_bits + huffman_num_deviation_bits;
+                let mut canonical_symbols = Vec::with_capacity(symbol_count);
+                let mut canonical_code_lengths = Vec::with_capacity(symbol_count);
+                for _ in 0..symbol_count {
+                    canonical_symbols.push(reader.read_u64_bits(symbol_width)?);
+                    canonical_code_lengths
+                        .push(reader.read_usize_bits(HUFFMAN_CODE_LENGTH_BITS)? as u8 + 1);
+                }
+
+                let mut row_offsets = Vec::with_capacity(row_count);
+                for _ in 0..row_count {
+                    row_offsets.push(reader.read_u32()?);
+                }
+
+                let row_width = if row_count == 0 {
+                    0
+                } else {
+                    if !n.is_multiple_of(row_count) {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "original sample count {} is not divisible by Huffman row count {}",
+                                n, row_count
+                            ),
+                        });
+                    }
+                    n / row_count
+                };
+
+                EncodedData::Huffman(HuffmanDeviationData::new(
+                    reader.read_bits(reader.remaining_bits())?,
+                    canonical_symbols,
+                    canonical_code_lengths,
+                    row_offsets,
+                    num_samples,
+                    n,
+                    huffman_num_deviation_bits,
+                    huffman_num_id_bits,
+                    row_width,
+                )?)
+            }
             other => {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!("unsupported encoded-data tag {}", other),
@@ -436,11 +544,13 @@ impl EgdFile {
         };
 
         // Any remaining bits must be zero-padding in the final byte.
-        while reader.remaining_bits() > 0 {
-            if reader.read_bit()? {
-                return Err(EntroGdError::InvalidMetadata {
-                    message: "non-zero trailing bits after encoded stream".to_string(),
-                });
+        if encoding_tag != ENCODING_TAG_HUFFMAN_CANONICAL {
+            while reader.remaining_bits() > 0 {
+                if reader.read_bit()? {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "non-zero trailing bits after encoded stream".to_string(),
+                    });
+                }
             }
         }
 
@@ -747,11 +857,7 @@ fn ensure_igd_extension(path: &Path) -> PathBuf {
 }
 
 fn bits_needed(value: usize) -> usize {
-    if value <= 1 {
-        1
-    } else {
-        usize::BITS as usize - (value - 1).leading_zeros() as usize
-    }
+    bits_needed_nonzero(value)
 }
 
 fn encode_data_type(data_type: FeatureDataType) -> u8 {
@@ -821,9 +927,30 @@ impl<'a> BitReader<'a> {
         Ok(value)
     }
 
+    fn read_u32(&mut self) -> Result<u32, EntroGdError> {
+        let mut value = 0u32;
+        for _ in 0..32 {
+            value = (value << 1) | (self.read_bit()? as u32);
+        }
+        Ok(value)
+    }
+
     fn read_u64(&mut self) -> Result<u64, EntroGdError> {
         let mut value = 0u64;
         for _ in 0..64 {
+            value = (value << 1) | (self.read_bit()? as u64);
+        }
+        Ok(value)
+    }
+
+    fn read_u64_bits(&mut self, width: usize) -> Result<u64, EntroGdError> {
+        if width > 64 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!("cannot read {} bits into u64", width),
+            });
+        }
+        let mut value = 0u64;
+        for _ in 0..width {
             value = (value << 1) | (self.read_bit()? as u64);
         }
         Ok(value)
@@ -901,8 +1028,18 @@ impl BitWriter {
         self.write_usize_bits(value as usize, 16);
     }
 
+    fn write_u32(&mut self, value: u32) {
+        self.write_usize_bits(value as usize, 32);
+    }
+
     fn write_u64(&mut self, value: u64) {
         for shift in (0..64).rev() {
+            self.write_bit(((value >> shift) & 1) == 1);
+        }
+    }
+
+    fn write_u64_bits(&mut self, value: u64, width: usize) {
+        for shift in (0..width).rev() {
             self.write_bit(((value >> shift) & 1) == 1);
         }
     }
@@ -928,9 +1065,11 @@ impl BitWriter {
 mod tests {
     use super::*;
     use crate::compression::compress::{
-        EncodeDataRLE, EncodedData, GenCondensedSamples, SelectBases, build_compression_pipeline,
+        EncodeDataHuffman, EncodeDataRLE, EncodedData, GenCondensedSamples, SelectBases,
+        build_compression_pipeline,
     };
     use crate::compression::entropy::EntropyOptimized;
+    use crate::compression::decompression::decompress_file;
     use crate::compression::tabular_preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
         ImageReconstructionInfo,
@@ -947,6 +1086,14 @@ mod tests {
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(EncodeDataRLE {})
+    }
+
+    fn get_huffman_compression_pipeline(
+    ) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+        EntropyOptimized {}
+            .then(GenCondensedSamples { m_max: 100 })
+            .then(SelectBases { patience: 5 })
+            .then(EncodeDataHuffman {})
     }
 
     #[test]
@@ -1089,5 +1236,79 @@ mod tests {
             }
             _ => panic!("expected source RLE data and loaded normalized data"),
         }
+    }
+
+    #[test]
+    fn test_roundtrip_egd_with_huffman_payload() {
+        let data = BitData {
+            data: bitvec![usize, Msb0;
+                0, 1, 0, 1, 0, 1, 0, 1,
+                0, 1, 1, 0, 0, 1, 1, 0,
+                1, 0, 0, 1, 1, 0, 0, 1,
+                1, 1, 0, 0, 1, 1, 0, 0,
+            ],
+            num_rows: 4,
+            chunk_size: 8,
+        };
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
+        let info = BitDataInfo::new(features, 32).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_huffman_compression_pipeline().process(bit_data.clone()).unwrap();
+        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let loaded = egd.to_compressed_data().unwrap();
+
+        assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
+        assert_eq!(loaded.metadata, compressed.metadata);
+        assert_eq!(
+            decompress_file(&loaded).unwrap().data.data,
+            bit_data.data.data[0..32]
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_igd_with_huffman_image_payload() {
+        let data = BitData {
+            data: bitvec![usize, Msb0;
+                0,0,0,1, 0,0,1,0, 0,0,1,1,
+                0,1,0,0, 0,1,0,1, 0,1,1,0,
+                0,1,1,1, 1,0,0,0, 1,0,0,1,
+                1,0,1,0, 1,0,1,1, 1,1,0,0,
+            ],
+            num_rows: 4,
+            chunk_size: 12,
+        };
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 4); 3];
+        let info = BitDataInfo::new_with_reconstruction_info(
+            features,
+            48,
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width: 2,
+                height: 2,
+                channels: 3,
+                colorspace: 0,
+            }),
+        )
+        .unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_huffman_compression_pipeline().process(bit_data.clone()).unwrap();
+        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let loaded = igd.to_compressed_data().unwrap();
+
+        assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
+        assert!(matches!(
+            loaded.metadata.reconstruction,
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width: 2,
+                height: 2,
+                channels: 3,
+                colorspace: 0
+            })
+        ));
+        assert_eq!(
+            decompress_file(&loaded).unwrap().data.data,
+            bit_data.data.data[0..48]
+        );
     }
 }

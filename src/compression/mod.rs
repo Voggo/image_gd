@@ -24,7 +24,7 @@ pub use decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRowsData, decompress_analytics,
     decompress_file,
 };
-pub use encoding::{EncodeData, EncodeDataOptimized, EncodeDataRLE};
+pub use encoding::{EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE};
 pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
 pub use file_format::{
     EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,

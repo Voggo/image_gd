@@ -34,7 +34,7 @@ fn main() -> Result<(), EntroGdError> {
     };
 
     tracing::info!("Loading CSV data from: {}", input_path);
-    let loader = CsvDataLoader::new(true).with_float_type(FeatureDataType::F32);
+    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
     let loaded = loader.load(input_path)?;
     let dataset = loaded.dataset;
     let metadata = loaded.metadata;

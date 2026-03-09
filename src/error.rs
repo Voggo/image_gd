@@ -6,6 +6,13 @@ pub enum EntroGdError {
     Io(std::io::Error),
     Csv(csv::Error),
     Image(image::ImageError),
+    InvalidCsvConfiguration {
+        message: String,
+    },
+    MissingCsvValue {
+        row: usize,
+        column: usize,
+    },
     ParseValue {
         value: String,
         row: usize,
@@ -43,6 +50,12 @@ impl Display for EntroGdError {
             EntroGdError::Io(err) => write!(f, "IO error: {}", err),
             EntroGdError::Csv(err) => write!(f, "CSV error: {}", err),
             EntroGdError::Image(err) => write!(f, "Image error: {}", err),
+            EntroGdError::InvalidCsvConfiguration { message } => {
+                write!(f, "Invalid CSV loader configuration: {}", message)
+            }
+            EntroGdError::MissingCsvValue { row, column } => {
+                write!(f, "Missing CSV value at row {}, column {}", row, column)
+            }
             EntroGdError::ParseValue {
                 value,
                 row,

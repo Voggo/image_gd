@@ -1,4 +1,4 @@
-use csv::ReaderBuilder;
+use csv::{Reader, ReaderBuilder};
 use std::fs::File;
 use std::path::Path;
 
@@ -12,6 +12,20 @@ pub enum FeatureDataType {
     UnsignedInt,
     F32,
     F64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FloatStorage {
+    F32,
+    #[default]
+    F64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MissingValuePolicy {
+    #[default]
+    Error,
+    Zero,
 }
 
 /// Strongly-typed value used when accessing row/column data.
@@ -55,13 +69,17 @@ impl ColumnData {
         }
     }
 
-    pub fn value_at(&self, row: usize) -> DataValue {
+    pub fn get(&self, row: usize) -> Option<DataValue> {
         match self {
-            ColumnData::Signed(values) => DataValue::Signed(values[row]),
-            ColumnData::Unsigned(values) => DataValue::Unsigned(values[row]),
-            ColumnData::F32(values) => DataValue::F32(values[row]),
-            ColumnData::F64(values) => DataValue::F64(values[row]),
+            ColumnData::Signed(values) => values.get(row).copied().map(DataValue::Signed),
+            ColumnData::Unsigned(values) => values.get(row).copied().map(DataValue::Unsigned),
+            ColumnData::F32(values) => values.get(row).copied().map(DataValue::F32),
+            ColumnData::F64(values) => values.get(row).copied().map(DataValue::F64),
         }
+    }
+
+    pub fn value_at(&self, row: usize) -> Option<DataValue> {
+        self.get(row)
     }
 }
 
@@ -106,14 +124,18 @@ impl Dataset {
         &self.columns
     }
 
+    pub fn column(&self, column: usize) -> Option<&ColumnData> {
+        self.columns.get(column)
+    }
+
     /// Get the data type of a column
-    pub fn column_type(&self, column: usize) -> FeatureDataType {
-        self.columns[column].data_type()
+    pub fn column_type(&self, column: usize) -> Option<FeatureDataType> {
+        self.column(column).map(ColumnData::data_type)
     }
 
     /// Access a value by row and column
-    pub fn value_at(&self, row: usize, column: usize) -> DataValue {
-        self.columns[column].value_at(row)
+    pub fn value_at(&self, row: usize, column: usize) -> Option<DataValue> {
+        self.column(column)?.get(row)
     }
 }
 
@@ -135,208 +157,266 @@ pub trait DataLoader {
     fn load<P: AsRef<Path>>(&self, path: P) -> Result<LoadedDataset, EntroGdError>;
 }
 
-/// CSV loader with simple type inference for columns.
+/// CSV loader with explicit float storage and missing-value handling.
 #[derive(Debug, Clone, Copy)]
 pub struct CsvDataLoader {
     has_headers: bool,
-    float_type: FeatureDataType,
+    float_storage: FloatStorage,
+    missing_value_policy: MissingValuePolicy,
 }
 
 impl CsvDataLoader {
     pub fn new(has_headers: bool) -> Self {
         CsvDataLoader {
             has_headers,
-            float_type: FeatureDataType::F64,
+            float_storage: FloatStorage::F64,
+            missing_value_policy: MissingValuePolicy::Error,
         }
     }
 
-    pub fn with_float_type(mut self, float_type: FeatureDataType) -> Self {
-        if matches!(float_type, FeatureDataType::F32 | FeatureDataType::F64) {
-            self.float_type = float_type;
-        }
+    pub fn with_float_storage(mut self, float_storage: FloatStorage) -> Self {
+        self.float_storage = float_storage;
         self
+    }
+
+    pub fn with_missing_value_policy(mut self, missing_value_policy: MissingValuePolicy) -> Self {
+        self.missing_value_policy = missing_value_policy;
+        self
+    }
+
+    pub fn with_float_type(mut self, float_type: FeatureDataType) -> Result<Self, EntroGdError> {
+        self.float_storage = match float_type {
+            FeatureDataType::F32 => FloatStorage::F32,
+            FeatureDataType::F64 => FloatStorage::F64,
+            FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
+                return Err(EntroGdError::InvalidCsvConfiguration {
+                    message: format!(
+                        "float storage must be F32 or F64, got {:?}",
+                        float_type
+                    ),
+                });
+            }
+        };
+
+        Ok(self)
     }
 }
 
 impl DataLoader for CsvDataLoader {
     fn load<P: AsRef<Path>>(&self, path: P) -> Result<LoadedDataset, EntroGdError> {
-        let _timer = ScopedTimer::info(format!("Loading dataset from CSV: {:?}", path.as_ref()));
+        let path = path.as_ref();
+        let _timer = ScopedTimer::info(format!("Loading dataset from CSV: {:?}", path));
 
-        let file = File::open(path)?;
-        let mut reader = ReaderBuilder::new()
-            .has_headers(self.has_headers)
-            .from_reader(file);
+        let scan = scan_csv(path, self.has_headers)?;
+        let mut reader = open_csv_reader(path, self.has_headers)?;
+        let mut columns = scan
+            .column_types
+            .iter()
+            .copied()
+            .map(|column_type| ColumnBuffer::new(column_type, self.float_storage, scan.num_rows))
+            .collect::<Vec<_>>();
 
-        let headers = if self.has_headers {
-            Some(reader.headers()?.iter().map(|s| s.to_string()).collect())
-        } else {
-            None
-        };
-
-        let mut builders: Vec<ColumnBuilder> = Vec::new();
-
-        for (num_rows, record_result) in reader.records().enumerate() {
+        for (row_idx, record_result) in reader.records().enumerate() {
             let record = record_result?;
-            let row_len = record.len();
-
-            if row_len > builders.len() {
-                for _ in builders.len()..row_len {
-                    builders.push(ColumnBuilder::new_with_len(num_rows));
-                }
-            }
-
-            let total_cols = builders.len();
-            for (col_idx, builder) in builders.iter_mut().enumerate().take(total_cols) {
-                if col_idx < row_len {
-                    let raw = record.get(col_idx).unwrap_or("").trim();
-                    if raw.is_empty() {
-                        builder.push_missing();
-                    } else {
-                        builder.push_value(raw, num_rows, col_idx)?;
-                    }
-                } else {
-                    builder.push_missing();
-                }
+            for (col_idx, column) in columns.iter_mut().enumerate() {
+                let raw = record.get(col_idx).map(str::trim);
+                column.push_field(raw, row_idx, col_idx, self.missing_value_policy)?;
             }
         }
 
-        let float_type = self.float_type;
-        let columns = builders
-            .into_iter()
-            .map(|builder| builder.into_column(float_type))
-            .collect();
-
-        let dataset = Dataset::from_columns(columns)?;
-        let metadata = DatasetMetadata { headers };
+        let dataset =
+            Dataset::from_columns(columns.into_iter().map(ColumnBuffer::into_column).collect())?;
+        let metadata = DatasetMetadata {
+            headers: scan.headers,
+        };
 
         Ok(LoadedDataset { dataset, metadata })
     }
 }
 
-#[derive(Debug, Clone)]
-enum ColumnBuilder {
-    Unsigned(Vec<u64>),
-    Signed(Vec<i64>),
-    Float(Vec<f64>),
+#[derive(Debug, Clone, Copy, Default)]
+enum InferredColumnType {
+    #[default]
+    Unsigned,
+    Signed,
+    Float,
 }
 
-impl ColumnBuilder {
-    fn new_with_len(len: usize) -> Self {
-        ColumnBuilder::Unsigned(vec![0u64; len])
-    }
+#[derive(Debug)]
+struct CsvScanSummary {
+    headers: Option<Vec<String>>,
+    num_rows: usize,
+    column_types: Vec<InferredColumnType>,
+}
 
-    fn push_missing(&mut self) {
-        match self {
-            ColumnBuilder::Unsigned(values) => values.push(0),
-            ColumnBuilder::Signed(values) => values.push(0),
-            ColumnBuilder::Float(values) => values.push(0.0),
+#[derive(Debug)]
+enum ColumnBuffer {
+    Unsigned(Vec<u64>),
+    Signed(Vec<i64>),
+    F32(Vec<f32>),
+    F64(Vec<f64>),
+}
+
+impl ColumnBuffer {
+    fn new(column_type: InferredColumnType, float_storage: FloatStorage, capacity: usize) -> Self {
+        match column_type {
+            InferredColumnType::Unsigned => ColumnBuffer::Unsigned(Vec::with_capacity(capacity)),
+            InferredColumnType::Signed => ColumnBuffer::Signed(Vec::with_capacity(capacity)),
+            InferredColumnType::Float => match float_storage {
+                FloatStorage::F32 => ColumnBuffer::F32(Vec::with_capacity(capacity)),
+                FloatStorage::F64 => ColumnBuffer::F64(Vec::with_capacity(capacity)),
+            },
         }
     }
 
+    fn push_field(
+        &mut self,
+        raw: Option<&str>,
+        row: usize,
+        column: usize,
+        missing_value_policy: MissingValuePolicy,
+    ) -> Result<(), EntroGdError> {
+        match raw {
+            Some(raw) if !raw.is_empty() => self.push_value(raw, row, column),
+            _ => self.push_missing(row, column, missing_value_policy),
+        }
+    }
+
+    fn push_missing(
+        &mut self,
+        row: usize,
+        column: usize,
+        missing_value_policy: MissingValuePolicy,
+    ) -> Result<(), EntroGdError> {
+        if matches!(missing_value_policy, MissingValuePolicy::Error) {
+            return Err(EntroGdError::MissingCsvValue { row, column });
+        }
+
+        match self {
+            ColumnBuffer::Unsigned(values) => values.push(0),
+            ColumnBuffer::Signed(values) => values.push(0),
+            ColumnBuffer::F32(values) => values.push(0.0),
+            ColumnBuffer::F64(values) => values.push(0.0),
+        }
+
+        Ok(())
+    }
+
     fn push_value(&mut self, raw: &str, row: usize, column: usize) -> Result<(), EntroGdError> {
-        if looks_float(raw) {
-            let value: f64 = raw
-                .parse()
-                .map_err(|source| EntroGdError::ParseFloatValue {
+        match self {
+            ColumnBuffer::Unsigned(values) => {
+                let value = raw.parse().map_err(|source| EntroGdError::ParseValue {
                     value: raw.to_string(),
                     row,
                     column,
                     source,
                 })?;
-            self.push_float(value);
-            return Ok(());
+                values.push(value);
+            }
+            ColumnBuffer::Signed(values) => {
+                let value = raw.parse().map_err(|source| EntroGdError::ParseValue {
+                    value: raw.to_string(),
+                    row,
+                    column,
+                    source,
+                })?;
+                values.push(value);
+            }
+            ColumnBuffer::F32(values) => {
+                let value = raw
+                    .parse::<f32>()
+                    .map_err(|source| EntroGdError::ParseFloatValue {
+                        value: raw.to_string(),
+                        row,
+                        column,
+                        source,
+                    })?;
+                values.push(value);
+            }
+            ColumnBuffer::F64(values) => {
+                let value = raw
+                    .parse::<f64>()
+                    .map_err(|source| EntroGdError::ParseFloatValue {
+                        value: raw.to_string(),
+                        row,
+                        column,
+                        source,
+                    })?;
+                values.push(value);
+            }
         }
 
-        if raw.starts_with('-') {
-            let value: i64 = raw.parse().map_err(|source| EntroGdError::ParseValue {
-                value: raw.to_string(),
-                row,
-                column,
-                source,
-            })?;
-            self.push_signed(value)?;
-            return Ok(());
-        }
-
-        let value: u64 = raw.parse().map_err(|source| EntroGdError::ParseValue {
-            value: raw.to_string(),
-            row,
-            column,
-            source,
-        })?;
-        self.push_unsigned(value);
         Ok(())
     }
 
-    fn push_unsigned(&mut self, value: u64) {
+    fn into_column(self) -> ColumnData {
         match self {
-            ColumnBuilder::Unsigned(values) => values.push(value),
-            ColumnBuilder::Signed(values) => values.push(value as i64),
-            ColumnBuilder::Float(values) => values.push(value as f64),
+            ColumnBuffer::Unsigned(values) => ColumnData::Unsigned(values),
+            ColumnBuffer::Signed(values) => ColumnData::Signed(values),
+            ColumnBuffer::F32(values) => ColumnData::F32(values),
+            ColumnBuffer::F64(values) => ColumnData::F64(values),
+        }
+    }
+}
+
+fn open_csv_reader(path: &Path, has_headers: bool) -> Result<Reader<File>, EntroGdError> {
+    let file = File::open(path)?;
+    Ok(ReaderBuilder::new()
+        .has_headers(has_headers)
+        .from_reader(file))
+}
+
+fn scan_csv(path: &Path, has_headers: bool) -> Result<CsvScanSummary, EntroGdError> {
+    let mut reader = open_csv_reader(path, has_headers)?;
+    let headers = if has_headers {
+        Some(reader.headers()?.iter().map(|s| s.to_string()).collect())
+    } else {
+        None
+    };
+
+    let mut column_types = Vec::new();
+    let mut num_rows = 0usize;
+
+    for record_result in reader.records() {
+        let record = record_result?;
+        num_rows += 1;
+
+        if record.len() > column_types.len() {
+            column_types.resize(record.len(), InferredColumnType::default());
+        }
+
+        for (column, field) in record.iter().enumerate() {
+            let raw = field.trim();
+            if raw.is_empty() {
+                continue;
+            }
+
+            column_types[column] = merge_column_types(column_types[column], infer_column_type(raw));
         }
     }
 
-    fn push_signed(&mut self, value: i64) -> Result<(), EntroGdError> {
-        match self {
-            ColumnBuilder::Unsigned(values) => {
-                let mut signed = Vec::with_capacity(values.len() + 1);
-                for &v in values.iter() {
-                    if v > i64::MAX as u64 {
-                        return Err(EntroGdError::InvalidMetadata {
-                            message: "unsigned value too large for signed column".to_string(),
-                        });
-                    }
-                    signed.push(v as i64);
-                }
-                signed.push(value);
-                *self = ColumnBuilder::Signed(signed);
-                Ok(())
-            }
-            ColumnBuilder::Signed(values) => {
-                values.push(value);
-                Ok(())
-            }
-            ColumnBuilder::Float(values) => {
-                values.push(value as f64);
-                Ok(())
-            }
-        }
-    }
+    Ok(CsvScanSummary {
+        headers,
+        num_rows,
+        column_types,
+    })
+}
 
-    fn push_float(&mut self, value: f64) {
-        match self {
-            ColumnBuilder::Unsigned(values) => {
-                let mut floats = Vec::with_capacity(values.len() + 1);
-                for &v in values.iter() {
-                    floats.push(v as f64);
-                }
-                floats.push(value);
-                *self = ColumnBuilder::Float(floats);
-            }
-            ColumnBuilder::Signed(values) => {
-                let mut floats = Vec::with_capacity(values.len() + 1);
-                for &v in values.iter() {
-                    floats.push(v as f64);
-                }
-                floats.push(value);
-                *self = ColumnBuilder::Float(floats);
-            }
-            ColumnBuilder::Float(values) => values.push(value),
-        }
+fn infer_column_type(value: &str) -> InferredColumnType {
+    if looks_float(value) {
+        InferredColumnType::Float
+    } else if value.starts_with('-') {
+        InferredColumnType::Signed
+    } else {
+        InferredColumnType::Unsigned
     }
+}
 
-    fn into_column(self, float_type: FeatureDataType) -> ColumnData {
-        match self {
-            ColumnBuilder::Unsigned(values) => ColumnData::Unsigned(values),
-            ColumnBuilder::Signed(values) => ColumnData::Signed(values),
-            ColumnBuilder::Float(values) => match float_type {
-                FeatureDataType::F32 => {
-                    ColumnData::F32(values.into_iter().map(|v| v as f32).collect())
-                }
-                FeatureDataType::F64 => ColumnData::F64(values),
-                _ => ColumnData::F64(values),
-            },
-        }
+fn merge_column_types(lhs: InferredColumnType, rhs: InferredColumnType) -> InferredColumnType {
+    match (lhs, rhs) {
+        (InferredColumnType::Float, _) | (_, InferredColumnType::Float) => InferredColumnType::Float,
+        (InferredColumnType::Signed, _) | (_, InferredColumnType::Signed) => InferredColumnType::Signed,
+        _ => InferredColumnType::Unsigned,
     }
 }
 
@@ -375,10 +455,11 @@ mod tests {
         ];
         let dataset = Dataset::from_columns(columns).unwrap();
 
-        assert_eq!(dataset.value_at(0, 0), DataValue::Signed(10));
-        assert_eq!(dataset.value_at(1, 0), DataValue::Signed(20));
-        assert_eq!(dataset.value_at(0, 1), DataValue::F64(1.5));
-        assert_eq!(dataset.value_at(1, 1), DataValue::F64(2.5));
+        assert_eq!(dataset.value_at(0, 0), Some(DataValue::Signed(10)));
+        assert_eq!(dataset.value_at(1, 0), Some(DataValue::Signed(20)));
+        assert_eq!(dataset.value_at(0, 1), Some(DataValue::F64(1.5)));
+        assert_eq!(dataset.value_at(1, 1), Some(DataValue::F64(2.5)));
+        assert_eq!(dataset.value_at(2, 1), None);
     }
 
     #[test]
@@ -392,7 +473,7 @@ mod tests {
         };
 
         assert_eq!(metadata.headers.as_ref().unwrap()[0], "feature1");
-        assert_eq!(dataset.value_at(0, 0), DataValue::Unsigned(10));
+        assert_eq!(dataset.value_at(0, 0), Some(DataValue::Unsigned(10)));
     }
 
     #[test]
@@ -404,5 +485,39 @@ mod tests {
 
         assert_eq!(dataset.num_rows(), 1);
         assert_eq!(metadata.headers.unwrap()[0], "col");
+    }
+
+    #[test]
+    fn test_missing_value_policy_zero() {
+        let path = std::env::temp_dir().join("entro_gd_missing_zero.csv");
+        std::fs::write(&path, "a,b\n1,\n2,3\n").unwrap();
+
+        let loaded = CsvDataLoader::new(true)
+            .with_missing_value_policy(MissingValuePolicy::Zero)
+            .load(&path)
+            .unwrap();
+
+        assert_eq!(loaded.dataset.value_at(0, 1), Some(DataValue::Unsigned(0)));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_missing_value_policy_error() {
+        let path = std::env::temp_dir().join("entro_gd_missing_error.csv");
+        std::fs::write(&path, "a,b\n1,\n").unwrap();
+
+        let err = CsvDataLoader::new(true).load(&path).unwrap_err();
+        assert!(matches!(err, EntroGdError::MissingCsvValue { row: 0, column: 1 }));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_with_float_type_rejects_integer_type() {
+        let err = CsvDataLoader::new(true)
+            .with_float_type(FeatureDataType::UnsignedInt)
+            .unwrap_err();
+        assert!(matches!(err, EntroGdError::InvalidCsvConfiguration { .. }));
     }
 }

@@ -5,19 +5,12 @@ use crate::compression::tabular_preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
+use crate::utils::bits_needed_nonzero;
 
 pub(crate) fn calculate_compressed_size<B: BaseBit>(
     bit_data: &BitDataSet,
     base_bit_groups: &B,
 ) -> usize {
-    fn min_bit_length(value: usize) -> usize {
-        match value {
-            0 => 0,
-            1 => 1,
-            _ => (usize::BITS as usize) - ((value - 1).leading_zeros() as usize),
-        }
-    }
-
     let n = bit_data.num_rows();
     let d = bit_data.num_features();
     let n_b = base_bit_groups.get_num_bases();
@@ -26,8 +19,8 @@ pub(crate) fn calculate_compressed_size<B: BaseBit>(
     let len_b = base_bit_groups.get_num_bits_per_base().min(chunk_size);
     let len_d = chunk_size - len_b;
 
-    let len_bc = min_bit_length(n);
-    let len_id = min_bit_length(n_b);
+    let len_bc = if n == 0 { 0 } else { bits_needed_nonzero(n) };
+    let len_id = if n_b == 0 { 0 } else { bits_needed_nonzero(n_b) };
 
     let size_bases = n_b * len_b;
     let size_base_counts = n_b * len_bc;

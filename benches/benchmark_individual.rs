@@ -170,7 +170,26 @@ impl DecompressRowsImpl {
 
     fn process(self, input: (Arc<CompressedData>, Vec<usize>)) -> Result<BitDataSet, EntroGdError> {
         match self {
-            DecompressRowsImpl::Current => DecompressRowsData.process(input),
+            DecompressRowsImpl::Current => DecompressRowsData {}.process(input),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DecompressFileImpl {
+    Current,
+}
+
+impl DecompressFileImpl {
+    fn label(self) -> &'static str {
+        match self {
+            DecompressFileImpl::Current => "current",
+        }
+    }
+
+    fn process(self, input: CompressedData) -> Result<BitDataSet, EntroGdError> {
+        match self {
+            DecompressFileImpl::Current => DecompressFileData {}.process(input),
         }
     }
 }
@@ -178,7 +197,7 @@ impl DecompressRowsImpl {
 #[derive(Clone, Copy)]
 struct StepBenchCase {
     data_file_path: &'static str,
-    float_type: FeatureDataType,
+    float_storage: FloatStorage,
     m_max: usize,
     patience: usize,
 }
@@ -187,13 +206,13 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
     vec![
         StepBenchCase {
             data_file_path: "data/aarhus-citylab.csv",
-            float_type: FeatureDataType::F32,
+            float_storage: FloatStorage::F32,
             m_max: 50,
             patience: 10,
         },
         StepBenchCase {
             data_file_path: "data/aarhus-citylab_duplicated.csv",
-            float_type: FeatureDataType::F32,
+            float_storage: FloatStorage::F32,
             m_max: 50,
             patience: 10,
         },
@@ -212,6 +231,7 @@ const ENCODE_IMPLS: [EncodeImpl; 2] = [EncodeImpl::Naive, EncodeImpl::Optimized]
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
 const LOAD_IMPLS: [LoadImpl; 1] = [LoadImpl::Current];
 const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 1] = [DecompressRowsImpl::Current];
+const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 1] = [DecompressFileImpl::Current];
 
 fn dataset_label(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
@@ -228,9 +248,15 @@ fn case_label(case: StepBenchCase) -> String {
 
 fn output_path(case: StepBenchCase) -> PathBuf {
     PathBuf::from(format!(
-        "target/bench-artifacts/{}.egd",
+        "target/bench-artifacts/{}-m{}-p{}.egd",
         dataset_label(case.data_file_path),
+        case.m_max,
+        case.patience,
     ))
+}
+
+fn build_loader(case: StepBenchCase) -> CsvDataLoader {
+    CsvDataLoader::new(true).with_float_storage(case.float_storage)
 }
 
 struct PreparedCase {
@@ -242,12 +268,13 @@ struct PreparedCase {
     entropy_seed: (BitDataSet, Vec<(usize, f64)>),
     condensed_seed: (BitDataSet, Vec<(usize, f64)>),
     compressed_seed: CompressedData,
+    loaded_compressed_seed: CompressedData,
     egd_path: PathBuf,
     rows_input_seed: (Arc<CompressedData>, Vec<usize>),
 }
 
 fn prepare_case(case: StepBenchCase) -> PreparedCase {
-    let loader = CsvDataLoader::new(true).with_float_type(case.float_type);
+    let loader = build_loader(case);
     let loaded = loader.load(case.data_file_path).unwrap();
     let dataset = loaded.dataset;
     let source_size = std::fs::metadata(case.data_file_path).unwrap().len() as u64;
@@ -272,7 +299,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     .unwrap();
     let loaded_compressed_seed = LoadEgdFile {}.process(egd_path.clone()).unwrap();
     let rows_seed = (0..dataset.num_rows()).collect::<Vec<usize>>();
-    let rows_input_seed = (Arc::new(loaded_compressed_seed), rows_seed);
+    let rows_input_seed = (Arc::new(loaded_compressed_seed.clone()), rows_seed);
 
     PreparedCase {
         name: case_label(case),
@@ -283,6 +310,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
         entropy_seed,
         condensed_seed,
         compressed_seed,
+        loaded_compressed_seed,
         egd_path,
         rows_input_seed,
     }
@@ -411,6 +439,16 @@ fn benchmark_filter_steps(c: &mut Criterion) {
                 case.rows_input_seed.1.clone(),
             )
         },
+        |implementation, input, _case| implementation.process(input),
+    );
+
+    bench_step_group(
+        c,
+        "Step/DecompressFileData.process",
+        &prepared_cases,
+        &DECOMPRESS_FILE_IMPLS,
+        DecompressFileImpl::label,
+        |case| case.loaded_compressed_seed.clone(),
         |implementation, input, _case| implementation.process(input),
     );
 }

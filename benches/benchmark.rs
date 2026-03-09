@@ -30,7 +30,7 @@ impl CompressionVariant {
 struct RoundtripCase {
     data_file_path: &'static str,
     variant: CompressionVariant,
-    float_type: FeatureDataType,
+    float_storage: FloatStorage,
     m_max: usize,
     patience: usize,
 }
@@ -39,7 +39,7 @@ fn roundtrip_cases() -> Vec<RoundtripCase> {
     vec![RoundtripCase {
         data_file_path: "data/aarhus-citylab.csv",
         variant: CompressionVariant::BaselineV1,
-        float_type: FeatureDataType::F32,
+        float_storage: FloatStorage::F32,
         m_max: 50,
         patience: 10,
     }]
@@ -68,6 +68,10 @@ fn compressed_output_path(case: RoundtripCase) -> PathBuf {
     .into()
 }
 
+fn build_loader(case: RoundtripCase) -> CsvDataLoader {
+    CsvDataLoader::new(true).with_float_storage(case.float_storage)
+}
+
 fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> CompressedData {
     match case.variant {
         CompressionVariant::BaselineV1 => EntropyOptimized {}
@@ -94,7 +98,7 @@ struct PreparedRoundtripCase {
 
 fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
     let _ = std::fs::create_dir_all("target/bench-artifacts");
-    let loader = CsvDataLoader::new(true).with_float_type(case.float_type);
+    let loader = build_loader(case);
     let loaded = loader.load(case.data_file_path).unwrap();
     let dataset_seed = loaded.dataset;
     let source_size = std::fs::metadata(case.data_file_path).unwrap().len() as u64;
@@ -129,7 +133,7 @@ fn benchmark_load_csv(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::from_parameter(benchmark_label(case)), |b| {
             b.iter(|| {
-                let loader = CsvDataLoader::new(true).with_float_type(case.float_type);
+                let loader = build_loader(case);
                 let loaded = loader.load(case.data_file_path).unwrap();
                 black_box(loaded);
             });
@@ -244,6 +248,30 @@ fn benchmark_decompression_warm(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_decompress_file_warm(c: &mut Criterion) {
+    let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
+        .into_iter()
+        .map(prepare_roundtrip_case)
+        .collect();
+    let mut group = c.benchmark_group("DecompressFileWarm");
+
+    for prepared in &prepared_cases {
+        group.throughput(Throughput::Bytes(prepared.source_size));
+        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
+            b.iter_batched(
+                || prepared.compressed_seed.clone(),
+                |compressed| {
+                    let decompressed = DecompressFileData {}.process(compressed).unwrap();
+                    black_box(decompressed);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
 fn benchmark_decompression_cold(c: &mut Criterion) {
     let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
         .into_iter()
@@ -269,6 +297,29 @@ fn benchmark_decompression_cold(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_decompress_file_cold(c: &mut Criterion) {
+    let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
+        .into_iter()
+        .map(prepare_roundtrip_case)
+        .collect();
+    let mut group = c.benchmark_group("DecompressFileCold");
+
+    for prepared in &prepared_cases {
+        group.throughput(Throughput::Bytes(prepared.source_size));
+        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
+            b.iter(|| {
+                let loaded_compressed = LoadEgdFile {}
+                    .process(prepared.compressed_path.clone())
+                    .unwrap();
+                let decompressed = DecompressFileData {}.process(loaded_compressed).unwrap();
+                black_box(decompressed);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_load_csv,
@@ -276,6 +327,8 @@ criterion_group!(
     benchmark_compression_core,
     benchmark_save_egd,
     benchmark_decompression_warm,
-    benchmark_decompression_cold
+    benchmark_decompress_file_warm,
+    benchmark_decompression_cold,
+    benchmark_decompress_file_cold
 );
 criterion_main!(benches);
