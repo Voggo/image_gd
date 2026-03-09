@@ -2,7 +2,8 @@ use entro_gd::BitDataReconstructionInfo;
 use entro_gd::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::fs;
 
 fn main() -> Result<(), EntroGdError> {
     init_logging();
@@ -15,38 +16,77 @@ fn main() -> Result<(), EntroGdError> {
     };
 
     let input = Path::new(&input_path);
-    let stem = input
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("image_dataset");
-    let parent = input.parent().unwrap_or_else(|| Path::new("."));
 
-    let igd_path = parent.join(format!("{}.igd", stem));
-    let output_path = parent.join(format!("{}-decompressed.png", stem));
+    let files_to_process = if input.is_dir() {
+        // If it's a directory, collect all image files
+        let mut files = Vec::new();
+        for entry in fs::read_dir(input)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if matches!(ext_str.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+        files.sort();
+        files
+    } else {
+        // If it's a file, process just that file
+        vec![input.to_path_buf()]
+    };
 
-    tracing::info!("Image input: {}", input.display());
-    tracing::info!("IGD output: {}", igd_path.display());
-    tracing::info!("Decoded image output: {}", output_path.display());
+    if files_to_process.is_empty() {
+        tracing::warn!("No image files found to process");
+        return Ok(());
+    }
+
+    let data_folder = Path::new("data");
+    let compressed_folder = data_folder.join("compressed");
+    let decompressed_folder = data_folder.join("decompressed");
+
+    fs::create_dir_all(&compressed_folder)?;
+    fs::create_dir_all(&decompressed_folder)?;
 
     let compression_pipeline =
         build_image_compression_pipeline(ImageColorSpace::SrgbWithLinearAlpha, 50, 10);
 
-    let compressed = compression_pipeline.process(input.to_path_buf())?;
-    let compressed_path = SaveIgdFile {
-        output_path: igd_path.clone(),
+    for image_file in files_to_process {
+        tracing::info!("Processing: {}", image_file.display());
+
+        let stem = image_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image_dataset");
+
+        let igd_path = compressed_folder.join(format!("{}.igd", stem));
+        let decompressed_path = decompressed_folder.join(format!("{}-decompressed.png", stem));
+
+        tracing::info!("IGD output: {}", igd_path.display());
+        tracing::info!("Decoded image output: {}", decompressed_path.display());
+
+        let compressed = compression_pipeline.process(image_file.clone())?;
+        let compressed_path = SaveIgdFile {
+            output_path: igd_path.clone(),
+        }
+        .process(compressed.clone())?;
+
+        let loaded_compressed = LoadIgdFile {}.process(compressed_path)?;
+        let decompressed = (DecompressFileData {}).process(loaded_compressed.clone())?;
+
+        write_bitdata_to_image(&decompressed, &decompressed_path)?;
+
+        tracing::info!(
+            "Compression done: original={} bits, encoded={} bits",
+            compressed.metadata.original_size_bits(),
+            compressed.encoded_data.get_encoded_size()
+        );
+        tracing::info!("Completed processing: {}", image_file.display());
     }
-    .process(compressed.clone())?;
 
-    let loaded_compressed = LoadIgdFile {}.process(compressed_path)?;
-    let decompressed = (DecompressFileData {}).process(loaded_compressed.clone())?;
-
-    write_bitdata_to_image(&decompressed, &output_path)?;
-
-    tracing::info!(
-        "Compression done: original={} bits, encoded={} bits",
-        compressed.metadata.original_size_bits(),
-        compressed.encoded_data.get_encoded_size()
-    );
     tracing::info!("Done.");
 
     Ok(())
