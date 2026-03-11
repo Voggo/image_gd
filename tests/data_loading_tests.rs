@@ -35,9 +35,9 @@ fn test_dataset_row_access() {
     let value_100_0 = dataset.value_at(100, 0);
     let value_9999_0 = dataset.value_at(9999, 0);
 
-    assert!(matches!(value_0_0, DataValue::Unsigned(_)));
-    assert!(matches!(value_100_0, DataValue::Unsigned(_)));
-    assert!(matches!(value_9999_0, DataValue::Unsigned(_)));
+    assert!(matches!(value_0_0, Some(DataValue::Unsigned(_))));
+    assert!(matches!(value_100_0, Some(DataValue::Unsigned(_))));
+    assert!(matches!(value_9999_0, Some(DataValue::Unsigned(_))));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn test_dataset_values_are_numeric() {
     for row_idx in 0..10 {
         for col_idx in 0..dataset.num_columns() {
             let value = dataset.value_at(row_idx, col_idx);
-            assert!(matches!(value, DataValue::Unsigned(_)));
+            assert!(matches!(value, Some(DataValue::Unsigned(_))));
         }
     }
 }
@@ -61,7 +61,7 @@ fn test_dataset_values_in_u8_range() {
     for row_idx in 0..100 {
         for col_idx in 0..dataset.num_columns() {
             match dataset.value_at(row_idx, col_idx) {
-                DataValue::Unsigned(value) => assert!(value <= 255),
+                Some(DataValue::Unsigned(value)) => assert!(value <= 255),
                 other => panic!("Unexpected value type: {:?}", other),
             }
         }
@@ -98,8 +98,8 @@ fn test_dataset_create_from_rows() {
     assert_eq!(dataset.num_rows(), 2);
     assert_eq!(dataset.num_columns(), 8);
 
-    assert_eq!(dataset.value_at(0, 0), DataValue::Unsigned(1));
-    assert_eq!(dataset.value_at(0, 7), DataValue::Unsigned(8));
+    assert_eq!(dataset.value_at(0, 0), Some(DataValue::Unsigned(1)));
+    assert_eq!(dataset.value_at(0, 7), Some(DataValue::Unsigned(8)));
 }
 
 #[test]
@@ -165,6 +165,6 @@ fn test_sample_data_values() {
 
     for col_idx in 0..dataset.num_columns() {
         let value = dataset.value_at(0, col_idx);
-        assert!(matches!(value, DataValue::Unsigned(_)));
+        assert!(matches!(value, Some(DataValue::Unsigned(_))));
     }
 }

@@ -2,17 +2,24 @@ pub use crate::compression::base_selection::{
     SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
 };
 pub use crate::compression::condensed_samples::GenCondensedSamples;
-pub use crate::compression::encoding::{EncodeData, EncodeDataOptimized, EncodeDataRLE};
+pub use crate::compression::encoding::{
+    EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE,
+};
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
 use crate::compression::tabular_preprocessor::{
-    BitDataInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs, PreprocessOptions,
+    BitDataInfo, BitDataReconstructionInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs,
+    PreprocessOptions,
 };
 use crate::data_loader::Dataset;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::{Filter, FilterExt};
 use bitvec::prelude::*;
+use fxhash::FxHashMap;
 use std::path::PathBuf;
+
+const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
+const HUFFMAN_MAX_CODE_LENGTH: u8 = 24;
 
 pub use crate::compression::decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRowsData,
@@ -72,6 +79,51 @@ pub fn build_image_compression_pipeline(
         .then(EncodeDataRLE {})
 }
 
+pub(crate) fn huffman_row_layout(
+    metadata: &BitDataInfo,
+) -> Result<(usize, usize, usize), EntroGdError> {
+    let chunk_size = metadata.chunk_size();
+    if chunk_size == 0 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "chunk_size is 0".to_string(),
+        });
+    }
+
+    let original_num_samples = metadata.original_size_bits() / chunk_size;
+    match metadata.reconstruction {
+        BitDataReconstructionInfo::Image(info) => {
+            let row_count = info.height as usize;
+            let row_width = info.width as usize;
+            if row_count == 0 && original_num_samples == 0 {
+                return Ok((0, 0, 0));
+            }
+            if row_count == 0 || row_width == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "invalid image row layout width={} height={}",
+                        info.width, info.height
+                    ),
+                });
+            }
+            let expected_samples = row_count.checked_mul(row_width).ok_or_else(|| {
+                EntroGdError::InvalidMetadata {
+                    message: "image row layout overflows sample count".to_string(),
+                }
+            })?;
+            if expected_samples != original_num_samples {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "image row layout mismatch: width * height = {}, original samples = {}",
+                        expected_samples, original_num_samples
+                    ),
+                });
+            }
+            Ok((original_num_samples, row_count, row_width))
+        }
+        BitDataReconstructionInfo::Tabular => Ok((original_num_samples, original_num_samples, 1)),
+    }
+}
+
 /// Represents the compressed output
 #[derive(Debug, Clone)]
 pub struct CompressedData {
@@ -112,6 +164,11 @@ pub struct DeviationSample {
     pub id: BitVec<usize, Msb0>,
 }
 
+pub(crate) struct DeviationSampleRef<'a> {
+    pub deviation: &'a BitSlice<usize, Msb0>,
+    pub id: &'a BitSlice<usize, Msb0>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DeviationData {
     encoded_bit_stream: BitVec<usize, Msb0>,
@@ -131,9 +188,33 @@ pub struct RleDeviationData {
 }
 
 #[derive(Debug, Clone)]
+pub struct HuffmanDeviationData {
+    pixel_bit_stream: BitVec<usize, Msb0>,
+    canonical_symbols: Vec<u64>,
+    canonical_code_lengths: Vec<u8>,
+    row_offsets: Vec<u32>,
+    num_samples: usize,
+    original_num_samples: usize,
+    num_deviation_bits: usize,
+    num_id_bits: usize,
+    row_width: usize,
+    max_code_length: u8,
+    decode_by_length: Vec<FxHashMap<u32, u64>>,
+    original_stream_end_offset_bits: usize,
+}
+
+#[derive(Debug, Clone)]
 pub enum EncodedData {
     Normal(DeviationData),
     Rle(RleDeviationData),
+    Huffman(HuffmanDeviationData),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HuffmanCode {
+    symbol: u64,
+    code: u32,
+    len: u8,
 }
 
 pub(crate) const RLE_SHORT_MAX: u8 = 7;
@@ -200,6 +281,24 @@ impl DeviationData {
 
     pub fn get_num_id_bits(&self) -> usize {
         self.num_id_bits
+    }
+
+    pub(crate) fn for_each_sample(
+        &self,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let sample_width = self.num_deviation_bits + self.num_id_bits;
+
+        for sample_idx in 0..self.num_samples {
+            let start_bit = sample_idx * sample_width;
+            let end_bit = start_bit + sample_width;
+            f(DeviationSampleRef {
+                deviation: &self.encoded_bit_stream[start_bit..start_bit + self.num_deviation_bits],
+                id: &self.encoded_bit_stream[start_bit + self.num_deviation_bits..end_bit],
+            })?;
+        }
+
+        Ok(())
     }
 }
 
@@ -316,6 +415,79 @@ impl RleDeviationData {
         self.symbol_bit_stream.len() + self.rm_control_stream.len()
     }
 
+    pub(crate) fn for_each_sample(
+        &self,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let mut symbol_cursor = 0usize;
+        let mut decoded_samples = 0usize;
+
+        for &(r_encoded, m_count) in &self.rm_values {
+            if r_encoded > 0 {
+                let run_len = (r_encoded as usize) + 1;
+                if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE run symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+
+                let run_symbol =
+                    &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width];
+                let sample = DeviationSampleRef {
+                    deviation: &run_symbol[..self.num_deviation_bits],
+                    id: &run_symbol[self.num_deviation_bits..],
+                };
+                for _ in 0..run_len {
+                    f(DeviationSampleRef {
+                        deviation: sample.deviation,
+                        id: sample.id,
+                    })?;
+                }
+                symbol_cursor += symbol_width;
+                decoded_samples += run_len;
+            }
+
+            let literal_count = m_count as usize;
+            for _ in 0..literal_count {
+                if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE literal symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+
+                let literal = &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width];
+                f(DeviationSampleRef {
+                    deviation: &literal[..self.num_deviation_bits],
+                    id: &literal[self.num_deviation_bits..],
+                })?;
+                symbol_cursor += symbol_width;
+            }
+            decoded_samples += literal_count;
+        }
+
+        if decoded_samples != self.num_samples {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "RLE decoded sample count mismatch: expected {}, got {}",
+                    self.num_samples, decoded_samples
+                ),
+            });
+        }
+
+        if symbol_cursor != self.symbol_bit_stream.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "RLE symbol stream not fully consumed: consumed {} of {} bits",
+                    symbol_cursor,
+                    self.symbol_bit_stream.len()
+                ),
+            });
+        }
+
+        Ok(())
+    }
+
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
         let expected_raw_bits = self.num_samples.checked_mul(symbol_width).ok_or_else(|| {
@@ -390,6 +562,420 @@ impl RleDeviationData {
     }
 }
 
+impl HuffmanDeviationData {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pixel_bit_stream: BitVec<usize, Msb0>,
+        canonical_symbols: Vec<u64>,
+        canonical_code_lengths: Vec<u8>,
+        row_offsets: Vec<u32>,
+        num_samples: usize,
+        original_num_samples: usize,
+        num_deviation_bits: usize,
+        num_id_bits: usize,
+        row_width: usize,
+    ) -> Result<Self, EntroGdError> {
+        if canonical_symbols.len() != canonical_code_lengths.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "Huffman symbol and length tables differ in size".to_string(),
+            });
+        }
+        if original_num_samples > num_samples {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "original sample count exceeds total sample count".to_string(),
+            });
+        }
+        if original_num_samples > 0 && row_width == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "row width must be > 0 when original samples are present".to_string(),
+            });
+        }
+
+        let expected_row_count = if original_num_samples == 0 {
+            0
+        } else {
+            if !original_num_samples.is_multiple_of(row_width) {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "original sample count {} is not divisible by row width {}",
+                        original_num_samples, row_width
+                    ),
+                });
+            }
+            original_num_samples / row_width
+        };
+
+        if row_offsets.len() != expected_row_count {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "row offset count mismatch: expected {}, got {}",
+                    expected_row_count,
+                    row_offsets.len()
+                ),
+            });
+        }
+
+        let symbol_width = num_deviation_bits + num_id_bits;
+        if symbol_width > 64 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "Huffman symbol width {} exceeds supported 64-bit range",
+                    symbol_width
+                ),
+            });
+        }
+
+        let max_symbol = if symbol_width >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << symbol_width) - 1
+        };
+        for &symbol in &canonical_symbols {
+            if symbol > max_symbol {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "Huffman symbol {} exceeds declared symbol width {}",
+                        symbol, symbol_width
+                    ),
+                });
+            }
+        }
+
+        let codes = rebuild_huffman_codes(&canonical_symbols, &canonical_code_lengths)?;
+        let max_code_length = codes.iter().map(|code| code.len).max().unwrap_or(0);
+        let mut decode_by_length = vec![FxHashMap::default(); max_code_length as usize + 1];
+
+        for code in &codes {
+            if decode_by_length[code.len as usize]
+                .insert(code.code, code.symbol)
+                .is_some()
+            {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "duplicate Huffman code {} with length {}",
+                        code.code, code.len
+                    ),
+                });
+            }
+        }
+
+        if num_samples > 0 && codes.is_empty() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "non-empty Huffman stream is missing a symbol table".to_string(),
+            });
+        }
+
+        let mut previous_offset = 0usize;
+        for &offset in &row_offsets {
+            let current_offset = offset as usize;
+            if current_offset < previous_offset {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "row offsets must be non-decreasing".to_string(),
+                });
+            }
+            if current_offset > pixel_bit_stream.len() {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "row offset {} exceeds Huffman pixel stream length {}",
+                        current_offset,
+                        pixel_bit_stream.len()
+                    ),
+                });
+            }
+            previous_offset = current_offset;
+        }
+
+        let mut data = HuffmanDeviationData {
+            pixel_bit_stream,
+            canonical_symbols,
+            canonical_code_lengths,
+            row_offsets,
+            num_samples,
+            original_num_samples,
+            num_deviation_bits,
+            num_id_bits,
+            row_width,
+            max_code_length,
+            decode_by_length,
+            original_stream_end_offset_bits: 0,
+        };
+
+        data.original_stream_end_offset_bits = if data.original_num_samples == 0 {
+            0
+        } else {
+            let last_row_offset = data.row_offsets[data.row_offsets.len() - 1] as usize;
+            let last_row_len = data.row_width;
+            data.advance_by_symbols(last_row_offset, last_row_len)?
+        };
+
+        if data.original_stream_end_offset_bits > data.pixel_bit_stream.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "decoded original stream length exceeds Huffman bitstream size"
+                    .to_string(),
+            });
+        }
+
+        Ok(data)
+    }
+
+    pub fn pixel_bit_stream(&self) -> &BitVec<usize, Msb0> {
+        &self.pixel_bit_stream
+    }
+
+    pub fn canonical_symbols(&self) -> &[u64] {
+        &self.canonical_symbols
+    }
+
+    pub fn canonical_code_lengths(&self) -> &[u8] {
+        &self.canonical_code_lengths
+    }
+
+    pub fn row_offsets(&self) -> &[u32] {
+        &self.row_offsets
+    }
+
+    pub fn row_width(&self) -> usize {
+        self.row_width
+    }
+
+    pub fn original_num_samples(&self) -> usize {
+        self.original_num_samples
+    }
+
+    pub fn get_sample(&self, sample_idx: usize) -> Option<DeviationSample> {
+        if sample_idx >= self.num_samples {
+            return None;
+        }
+
+        let (start_bit, symbols_to_decode) = if sample_idx < self.original_num_samples {
+            let row_idx = sample_idx / self.row_width;
+            let col_idx = sample_idx % self.row_width;
+            (
+                *self.row_offsets.get(row_idx)? as usize,
+                col_idx.saturating_add(1),
+            )
+        } else {
+            (
+                self.original_stream_end_offset_bits,
+                sample_idx
+                    .checked_sub(self.original_num_samples)?
+                    .saturating_add(1),
+            )
+        };
+
+        let mut bit_pos = start_bit;
+        let mut symbol = 0u64;
+        for _ in 0..symbols_to_decode {
+            let (decoded_symbol, decoded_len) = self.decode_one(bit_pos).ok()?;
+            symbol = decoded_symbol;
+            bit_pos += decoded_len;
+        }
+
+        self.sample_from_symbol(symbol).ok()
+    }
+
+    pub fn get_num_samples(&self) -> usize {
+        self.num_samples
+    }
+
+    pub fn get_num_deviation_bits(&self) -> usize {
+        self.num_deviation_bits
+    }
+
+    pub fn get_num_id_bits(&self) -> usize {
+        self.num_id_bits
+    }
+
+    pub fn get_encoded_size(&self) -> usize {
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        16 + 8 + 8 + 32
+            + self.row_offsets.len() * 32
+            + self.canonical_symbols.len() * (symbol_width + HUFFMAN_CODE_LENGTH_BITS)
+            + self.pixel_bit_stream.len()
+    }
+
+    pub(crate) fn for_each_sample(
+        &self,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let raw = self.to_deviation_data()?;
+        raw.for_each_sample(|sample| {
+            f(DeviationSampleRef {
+                deviation: sample.deviation,
+                id: sample.id,
+            })
+        })
+    }
+
+    pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let expected_bits = self.num_samples.checked_mul(symbol_width).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
+                message: "decoded Huffman deviation stream length overflow".to_string(),
+            }
+        })?;
+        let mut raw = BitVec::<usize, Msb0>::with_capacity(expected_bits);
+        let mut bit_pos = 0usize;
+
+        for _ in 0..self.num_samples {
+            let (symbol, consumed_bits) = self.decode_one(bit_pos)?;
+            let deviation_value = symbol & bit_mask(self.num_deviation_bits);
+            let id_value = symbol >> self.num_deviation_bits;
+            append_symbol_bits(&mut raw, deviation_value, self.num_deviation_bits);
+            append_symbol_bits(&mut raw, id_value, self.num_id_bits);
+            bit_pos += consumed_bits;
+        }
+
+        Ok(DeviationData::new(
+            raw,
+            self.num_samples,
+            self.num_deviation_bits,
+            self.num_id_bits,
+        ))
+    }
+
+    fn advance_by_symbols(
+        &self,
+        start_bit: usize,
+        symbol_count: usize,
+    ) -> Result<usize, EntroGdError> {
+        let mut bit_pos = start_bit;
+        for _ in 0..symbol_count {
+            let (_, consumed_bits) = self.decode_one(bit_pos)?;
+            bit_pos += consumed_bits;
+        }
+        Ok(bit_pos)
+    }
+
+    fn decode_one(&self, bit_pos: usize) -> Result<(u64, usize), EntroGdError> {
+        if self.max_code_length == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "attempted to decode from an empty Huffman table".to_string(),
+            });
+        }
+
+        let mut code = 0u32;
+        for len in 1..=self.max_code_length as usize {
+            let next_bit_pos = bit_pos + len - 1;
+            if next_bit_pos >= self.pixel_bit_stream.len() {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "unexpected end of Huffman pixel stream".to_string(),
+                });
+            }
+
+            code = (code << 1) | u32::from(self.pixel_bit_stream[next_bit_pos]);
+            if let Some(symbol) = self.decode_by_length[len].get(&code) {
+                return Ok((*symbol, len));
+            }
+        }
+
+        Err(EntroGdError::InvalidMetadata {
+            message: "failed to decode Huffman symbol from bitstream".to_string(),
+        })
+    }
+
+    fn sample_from_symbol(&self, symbol: u64) -> Result<DeviationSample, EntroGdError> {
+        let deviation_mask = bit_mask(self.num_deviation_bits);
+        let deviation_value = symbol & deviation_mask;
+        let id_value = symbol >> self.num_deviation_bits;
+
+        Ok(DeviationSample {
+            deviation: bitvec_from_u64(deviation_value, self.num_deviation_bits),
+            id: bitvec_from_u64(id_value, self.num_id_bits),
+        })
+    }
+}
+
+fn rebuild_huffman_codes(
+    canonical_symbols: &[u64],
+    canonical_code_lengths: &[u8],
+) -> Result<Vec<HuffmanCode>, EntroGdError> {
+    if canonical_symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut codes = Vec::with_capacity(canonical_symbols.len());
+    let mut next_code = 0u32;
+    let mut previous_len = 0u8;
+    let mut previous_symbol = None;
+
+    for (&symbol, &len) in canonical_symbols.iter().zip(canonical_code_lengths.iter()) {
+        if !(1..=HUFFMAN_MAX_CODE_LENGTH).contains(&len) {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!("invalid Huffman code length {}", len),
+            });
+        }
+
+        if let Some((prev_len, prev_symbol_value)) = previous_symbol {
+            if len < prev_len || (len == prev_len && symbol <= prev_symbol_value) {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "Huffman canonical table is not sorted by (length, symbol)"
+                        .to_string(),
+                });
+            }
+        }
+
+        next_code <<= (len - previous_len) as u32;
+        if (next_code as u64) >= (1u64 << len) {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "Huffman canonical table violates prefix-code bounds".to_string(),
+            });
+        }
+
+        codes.push(HuffmanCode {
+            symbol,
+            code: next_code,
+            len,
+        });
+
+        previous_len = len;
+        previous_symbol = Some((len, symbol));
+        next_code = next_code.saturating_add(1);
+    }
+
+    Ok(codes)
+}
+
+pub(crate) fn build_huffman_code_map(
+    canonical_symbols: &[u64],
+    canonical_code_lengths: &[u8],
+) -> Result<FxHashMap<u64, (u32, u8)>, EntroGdError> {
+    let mut codes_by_symbol = FxHashMap::default();
+    for code in rebuild_huffman_codes(canonical_symbols, canonical_code_lengths)? {
+        if codes_by_symbol
+            .insert(code.symbol, (code.code, code.len))
+            .is_some()
+        {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!("duplicate Huffman symbol {}", code.symbol),
+            });
+        }
+    }
+    Ok(codes_by_symbol)
+}
+
+fn bit_mask(width: usize) -> u64 {
+    if width == 0 {
+        0
+    } else if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    }
+}
+
+fn bitvec_from_u64(value: u64, width: usize) -> BitVec<usize, Msb0> {
+    let mut bits = BitVec::<usize, Msb0>::with_capacity(width);
+    append_symbol_bits(&mut bits, value, width);
+    bits
+}
+
+fn append_symbol_bits(out: &mut BitVec<usize, Msb0>, value: u64, width: usize) {
+    for shift in (0..width).rev() {
+        out.push(((value >> shift) & 1) == 1);
+    }
+}
+
 fn write_rle_control_value(out: &mut BitVec<usize, Msb0>, value: u8) {
     assert!(
         value <= RLE_LONG_MAX,
@@ -419,6 +1005,7 @@ impl EncodedData {
         match self {
             EncodedData::Normal(data) => data.get_sample(sample_idx),
             EncodedData::Rle(data) => data.get_sample(sample_idx),
+            EncodedData::Huffman(data) => data.get_sample(sample_idx),
         }
     }
 
@@ -426,6 +1013,7 @@ impl EncodedData {
         match self {
             EncodedData::Normal(data) => data.get_encoded_size(),
             EncodedData::Rle(data) => data.get_encoded_size(),
+            EncodedData::Huffman(data) => data.get_encoded_size(),
         }
     }
 
@@ -433,6 +1021,7 @@ impl EncodedData {
         match self {
             EncodedData::Normal(data) => data.encoded_bit_stream(),
             EncodedData::Rle(data) => data.symbol_bit_stream(),
+            EncodedData::Huffman(data) => data.pixel_bit_stream(),
         }
     }
 
@@ -440,6 +1029,7 @@ impl EncodedData {
         match self {
             EncodedData::Normal(data) => data.get_num_samples(),
             EncodedData::Rle(data) => data.get_num_samples(),
+            EncodedData::Huffman(data) => data.get_num_samples(),
         }
     }
 
@@ -447,6 +1037,7 @@ impl EncodedData {
         match self {
             EncodedData::Normal(data) => data.get_num_deviation_bits(),
             EncodedData::Rle(data) => data.get_num_deviation_bits(),
+            EncodedData::Huffman(data) => data.get_num_deviation_bits(),
         }
     }
 
@@ -454,6 +1045,18 @@ impl EncodedData {
         match self {
             EncodedData::Normal(data) => data.get_num_id_bits(),
             EncodedData::Rle(data) => data.get_num_id_bits(),
+            EncodedData::Huffman(data) => data.get_num_id_bits(),
+        }
+    }
+
+    pub(crate) fn for_each_sample(
+        &self,
+        f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        match self {
+            EncodedData::Normal(data) => data.for_each_sample(f),
+            EncodedData::Rle(data) => data.for_each_sample(f),
+            EncodedData::Huffman(data) => data.for_each_sample(f),
         }
     }
 
@@ -463,15 +1066,12 @@ impl EncodedData {
             EncodedData::Rle(data) => data
                 .to_deviation_data()
                 .expect("RLE encoded data should be valid when converting to raw deviation data"),
+            EncodedData::Huffman(data) => data.to_deviation_data().expect(
+                "Huffman encoded data should be valid when converting to raw deviation data",
+            ),
         }
     }
 }
-
-// Compression pipeline steps are implemented in dedicated modules:
-// - condensed_samples.rs
-// - base_selection.rs
-// - encoding.rs
-// - decompression.rs
 
 /// Calculate the original uncompressed size in bits
 #[cfg(test)]

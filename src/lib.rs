@@ -3,12 +3,14 @@ pub mod data_loader;
 pub mod error;
 pub mod filter_pipeline;
 pub mod timing;
+mod utils;
 
 pub use compression::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
     BuildBitDataSet, BuildImageBitDataSet, CompressedData, CondensedSamples, DecompressAnalytics,
     DecompressFileData, DeviationData, DeviationSample, EgdFile, EncodeData, EncodeDataOptimized,
-    EncodeDataRLE, EncodedData, EntropyNaive, EntropyOptimized, FORMAT_VERSION, FeatureSpec,
+    EncodeDataHuffman, EncodeDataRLE, EncodedData, EntropyNaive, EntropyOptimized,
+    FORMAT_VERSION, FeatureSpec,
     FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
     IMAGE_MAGIC_BYTES, IgdFile, ImageColorSpace, ImageReconstructionInfo, InferFeatureSpecs,
     LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, RleDeviationData, SaveEgdFile,
@@ -19,7 +21,7 @@ pub use compression::{
 };
 pub use data_loader::{
     ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
-    LoadedDataset,
+    FloatStorage, LoadedDataset, MissingValuePolicy,
 };
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
@@ -28,10 +30,11 @@ pub use timing::ScopedTimer;
 pub mod prelude {
     pub use crate::{
         BitDataSet, CsvDataLoader, DataLoader, DataValue, DecompressAnalytics, DecompressFileData,
-        EncodeData, EncodeDataOptimized, EncodeDataRLE, EncodedData, EntroGdError, EntropyNaive,
-        EntropyOptimized, FeatureDataType, Filter, FilterExt, FloatScalingMode,
-        GenCondensedSamples, ImageColorSpace, InferFeatureSpecs, LoadEgdFile, LoadIgdFile,
-        PreprocessOptions, SaveEgdFile, SaveIgdFile, ScopedTimer, SelectBases,
+        EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE, EncodedData,
+        EntroGdError, EntropyNaive, EntropyOptimized, FeatureDataType, Filter, FilterExt,
+        FloatScalingMode, FloatStorage, GenCondensedSamples, ImageColorSpace,
+        InferFeatureSpecs, LoadEgdFile, LoadIgdFile, MissingValuePolicy, PreprocessOptions,
+        SaveEgdFile, SaveIgdFile, ScopedTimer, SelectBases,
         SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
         build_compression_pipeline, build_compression_pipeline_optimized,
         build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,

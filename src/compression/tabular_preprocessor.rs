@@ -106,7 +106,9 @@ fn infer_feature_specs(dataset: &Dataset, options: PreprocessOptions) -> Vec<Fea
     let num_features = dataset.num_columns();
     let mut features = Vec::with_capacity(num_features);
     for feature_idx in 0..num_features {
-        let data_type = dataset.column_type(feature_idx);
+        let data_type = dataset
+            .column_type(feature_idx)
+            .expect("feature index should be in bounds while inferring schema");
         let spec = match data_type {
             FeatureDataType::F32 | FeatureDataType::F64 => {
                 infer_float_feature_spec(dataset, feature_idx, data_type, options)
@@ -212,7 +214,7 @@ fn infer_integer_feature_spec(
             let mut max_value = i64::MIN;
 
             for row in 0..dataset.num_rows() {
-                let value = match dataset.value_at(row, column) {
+                let value = match dataset.value_at(row, column).expect("row/column should be valid") {
                     DataValue::Signed(v) => v,
                     _ => unreachable!("signed column type mismatch while inferring schema"),
                 };
@@ -257,7 +259,7 @@ fn infer_integer_feature_spec(
             let mut max_value = u64::MIN;
 
             for row in 0..dataset.num_rows() {
-                let value = match dataset.value_at(row, column) {
+                let value = match dataset.value_at(row, column).expect("row/column should be valid") {
                     DataValue::Unsigned(v) => v,
                     _ => unreachable!("unsigned column type mismatch while inferring schema"),
                 };
@@ -356,7 +358,7 @@ fn scaled_int_range(
     let mut max_value = i64::MIN;
 
     for row in 0..dataset.num_rows() {
-        let value = match dataset.value_at(row, column) {
+        let value = match dataset.value_at(row, column).expect("row/column should be valid") {
             DataValue::F32(v) => v as f64,
             DataValue::F64(v) => v,
             _ => {

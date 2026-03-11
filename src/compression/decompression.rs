@@ -48,29 +48,14 @@ pub(crate) fn decompress_samples_batch(
             }
         };
 
-        let mut chunk = bitvec![usize, Msb0; 0; chunk_size];
-        let mut base_id = 0usize;
-        for i in 0..sample.id.len() {
-            base_id = (base_id << 1) | (sample.id[i] as usize);
-        }
-        if base_id >= compressed.base_table.len() {
-            return Err(EntroGdError::InvalidBaseId {
-                base_id,
-                table_len: compressed.base_table.len(),
-            });
-        }
-        let base_pattern = &compressed.base_table[base_id].0;
-        for bit_pos in 0..chunk_size.min(base_pattern.len()) {
-            chunk.set(bit_pos, base_pattern[bit_pos]);
-        }
-        let mut deviation_bit_idx = 0;
-        for bit_pos in 0..chunk_size {
-            if !base_bit_mask[bit_pos] && deviation_bit_idx < sample.deviation.len() {
-                chunk.set(bit_pos, sample.deviation[deviation_bit_idx]);
-                deviation_bit_idx += 1;
-            }
-        }
-        reconstructed_bits.extend_from_bitslice(&chunk);
+        append_reconstructed_chunk(
+            &mut reconstructed_bits,
+            &base_bit_mask,
+            &compressed.base_table,
+            chunk_size,
+            sample.deviation.as_bitslice(),
+            sample.id.as_bitslice(),
+        )?;
     }
 
     let data = BitData {
@@ -96,9 +81,85 @@ impl Filter for DecompressFileData {
 
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
     let data_info = &compressed.metadata;
-    let original_num_rows = data_info.original_size_bits() / data_info.chunk_size();
-    let indices: Vec<usize> = (0..original_num_rows).collect();
-    decompress_samples_batch(compressed, &indices)
+    let chunk_size = data_info.chunk_size();
+    let original_num_rows = data_info.original_size_bits() / chunk_size;
+    let base_bit_mask = build_base_bit_mask(chunk_size, &compressed.base_bit_positions);
+    let mut reconstructed_bits = BitVec::<usize, Msb0>::with_capacity(chunk_size * original_num_rows);
+    let mut decoded_rows = 0usize;
+
+    compressed.encoded_data.for_each_sample(|sample| {
+        if decoded_rows >= original_num_rows {
+            return Ok(());
+        }
+
+        append_reconstructed_chunk(
+            &mut reconstructed_bits,
+            &base_bit_mask,
+            &compressed.base_table,
+            chunk_size,
+            sample.deviation,
+            sample.id,
+        )?;
+        decoded_rows += 1;
+        Ok(())
+    })?;
+
+    if decoded_rows != original_num_rows {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "decoded row count mismatch: expected {}, got {}",
+                original_num_rows, decoded_rows
+            ),
+        });
+    }
+
+    let data = BitData {
+        data: reconstructed_bits,
+        chunk_size,
+        num_rows: original_num_rows,
+    };
+    let info = data_info.with_original_size_bits(chunk_size * original_num_rows);
+    Ok(BitDataSet { data, info })
+}
+
+fn append_reconstructed_chunk(
+    out: &mut BitVec<usize, Msb0>,
+    base_bit_mask: &BitVec<usize, Msb0>,
+    base_table: &[(BitVec<usize, Msb0>, usize)],
+    chunk_size: usize,
+    deviation_bits: &BitSlice<usize, Msb0>,
+    id_bits: &BitSlice<usize, Msb0>,
+) -> Result<(), EntroGdError> {
+    let mut chunk = bitvec![usize, Msb0; 0; chunk_size];
+    let base_id = decode_base_id(id_bits);
+    if base_id >= base_table.len() {
+        return Err(EntroGdError::InvalidBaseId {
+            base_id,
+            table_len: base_table.len(),
+        });
+    }
+
+    let base_pattern = &base_table[base_id].0;
+    for bit_pos in 0..chunk_size.min(base_pattern.len()) {
+        chunk.set(bit_pos, base_pattern[bit_pos]);
+    }
+
+    let mut deviation_bit_idx = 0;
+    for bit_pos in 0..chunk_size {
+        if !base_bit_mask[bit_pos] && deviation_bit_idx < deviation_bits.len() {
+            chunk.set(bit_pos, deviation_bits[deviation_bit_idx]);
+            deviation_bit_idx += 1;
+        }
+    }
+
+    out.extend_from_bitslice(&chunk);
+    Ok(())
+}
+
+fn decode_base_id(id_bits: &BitSlice<usize, Msb0>) -> usize {
+    id_bits
+        .iter()
+        .fold(0usize, |base_id, bit| (base_id << 1) | usize::from(*bit))
 }
 
 pub struct DecompressAnalytics {}

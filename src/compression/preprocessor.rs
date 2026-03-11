@@ -387,7 +387,9 @@ impl BitDataSet {
         }
 
         for (idx, spec) in features.iter().enumerate() {
-            let col_type = dataset.column_type(idx);
+            let col_type = dataset.column_type(idx).ok_or_else(|| EntroGdError::InvalidFeatureSpec {
+                message: format!("dataset column {} is missing", idx),
+            })?;
             debug!(
                 feature_idx = idx,
                 expected_column_type = ?col_type,
@@ -421,7 +423,14 @@ impl BitDataSet {
         for row_idx in 0..num_rows {
             for col_idx in 0..num_features {
                 let spec = info.feature_spec(col_idx);
-                let value = dataset.value_at(row_idx, col_idx);
+                let value = dataset.value_at(row_idx, col_idx).ok_or_else(|| {
+                    EntroGdError::InvalidFeatureSpec {
+                        message: format!(
+                            "dataset value missing at row {}, column {}",
+                            row_idx, col_idx
+                        ),
+                    }
+                })?;
                 let bits = value_to_bits(value, spec);
                 if row_idx < 2 {
                     trace!(

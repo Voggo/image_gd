@@ -5,19 +5,12 @@ use crate::compression::tabular_preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
+use crate::utils::bits_needed_nonzero;
 
 pub(crate) fn calculate_compressed_size<B: BaseBit>(
     bit_data: &BitDataSet,
     base_bit_groups: &B,
 ) -> usize {
-    fn min_bit_length(value: usize) -> usize {
-        match value {
-            0 => 0,
-            1 => 1,
-            _ => (usize::BITS as usize) - ((value - 1).leading_zeros() as usize),
-        }
-    }
-
     let n = bit_data.num_rows();
     let d = bit_data.num_features();
     let n_b = base_bit_groups.get_num_bases();
@@ -26,8 +19,12 @@ pub(crate) fn calculate_compressed_size<B: BaseBit>(
     let len_b = base_bit_groups.get_num_bits_per_base().min(chunk_size);
     let len_d = chunk_size - len_b;
 
-    let len_bc = min_bit_length(n);
-    let len_id = min_bit_length(n_b);
+    let len_bc = if n == 0 { 0 } else { bits_needed_nonzero(n) };
+    let len_id = if n_b == 0 {
+        0
+    } else {
+        bits_needed_nonzero(n_b)
+    };
 
     let size_bases = n_b * len_b;
     let size_base_counts = n_b * len_bc;
@@ -67,6 +64,10 @@ fn select_base_bits(
     let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    tracing::debug!(
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
+    );
     let zero_entropy_bits: Vec<usize> = entropy
         .iter()
         .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
@@ -79,6 +80,12 @@ fn select_base_bits(
     let mut trial_base_bit_groups = base_bit_groups.clone();
 
     for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
+        if best_base_bit_groups.get_num_bits_per_base()
+            >= (bit_data.chunk_size() as f64 * 0.5) as usize
+        {
+            break;
+        }
+
         trial_base_bit_groups.add_bit_position(bit_data, bit_position);
         let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
 
@@ -206,6 +213,10 @@ fn select_base_bits_optimized(
     let mut non_improving_count = 0usize;
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    tracing::debug!(
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
+    );
     let zero_entropy_bits: Vec<usize> = entropy
         .iter()
         .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
@@ -278,8 +289,8 @@ fn select_base_bits_threshold_optimized(
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
     tracing::debug!(
-        "Sorted entropies (bit position, entropy value): {:?}",
-        entropy
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
     );
 
     let threshold_bits: Vec<usize> = entropy
