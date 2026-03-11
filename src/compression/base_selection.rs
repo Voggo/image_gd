@@ -20,7 +20,11 @@ pub(crate) fn calculate_compressed_size<B: BaseBit>(
     let len_d = chunk_size - len_b;
 
     let len_bc = if n == 0 { 0 } else { bits_needed_nonzero(n) };
-    let len_id = if n_b == 0 { 0 } else { bits_needed_nonzero(n_b) };
+    let len_id = if n_b == 0 {
+        0
+    } else {
+        bits_needed_nonzero(n_b)
+    };
 
     let size_bases = n_b * len_b;
     let size_base_counts = n_b * len_bc;
@@ -60,6 +64,10 @@ fn select_base_bits(
     let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    tracing::debug!(
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
+    );
     let zero_entropy_bits: Vec<usize> = entropy
         .iter()
         .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
@@ -72,6 +80,12 @@ fn select_base_bits(
     let mut trial_base_bit_groups = base_bit_groups.clone();
 
     for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
+        if best_base_bit_groups.get_num_bits_per_base()
+            >= (bit_data.chunk_size() as f64 * 0.5) as usize
+        {
+            break;
+        }
+
         trial_base_bit_groups.add_bit_position(bit_data, bit_position);
         let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
 
@@ -199,6 +213,10 @@ fn select_base_bits_optimized(
     let mut non_improving_count = 0usize;
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    tracing::debug!(
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
+    );
     let zero_entropy_bits: Vec<usize> = entropy
         .iter()
         .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
@@ -271,8 +289,8 @@ fn select_base_bits_threshold_optimized(
 
     entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
     tracing::debug!(
-        "Sorted entropies (bit position, entropy value): {:?}",
-        entropy
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
     );
 
     let threshold_bits: Vec<usize> = entropy

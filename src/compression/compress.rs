@@ -76,7 +76,7 @@ pub fn build_image_compression_pipeline(
         .then(EntropyOptimized {})
         .then(GenCondensedSamples { m_max })
         .then(SelectBases { patience })
-        .then(EncodeDataHuffman {})
+        .then(EncodeDataRLE {})
 }
 
 pub(crate) fn huffman_row_layout(

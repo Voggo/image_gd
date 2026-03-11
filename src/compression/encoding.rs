@@ -15,7 +15,6 @@ use std::collections::BinaryHeap;
 
 const RLE_MAX_CONTROL_VALUE: usize = 134;
 const RLE_MAX_RUN_LEN: usize = RLE_MAX_CONTROL_VALUE + 1;
-const HUFFMAN_MAX_CODE_LENGTH: usize = 24;
 
 pub struct EncodeData {}
 
@@ -105,6 +104,10 @@ impl Filter for EncodeDataHuffman {
             .info
             .m_condensed_sample_weights()
             .map(|weights| weights.to_vec());
+
+        // debug_save_id_deviation_data(&bit_data, &(*base_bit_groups), "debug_output.csv")?;
+
+
         Ok(compressed)
     }
 }
@@ -315,7 +318,8 @@ fn encode_data_rle<B: BaseBit + ?Sized>(
 
             let mut lookahead_run = 1usize;
             while i + lookahead_run < num_rows && lookahead_run < RLE_MAX_RUN_LEN {
-                let lookahead_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i + lookahead_run);
+                let lookahead_symbol =
+                    symbol_slice(&raw_symbol_stream, symbol_width, i + lookahead_run);
                 if lookahead_symbol == this_symbol {
                     lookahead_run += 1;
                 } else {
@@ -356,8 +360,7 @@ fn encode_data_huffman<B: BaseBit + ?Sized>(
 ) -> Result<HuffmanDeviationData, EntroGdError> {
     let context = prepare_encoding_context(bit_data, base_bit_groups);
     let frequencies = build_symbol_frequencies(bit_data, &context)?;
-    let (canonical_symbols, canonical_code_lengths) =
-        build_canonical_huffman_table(&frequencies)?;
+    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
     let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
@@ -386,11 +389,13 @@ fn encode_data_huffman<B: BaseBit + ?Sized>(
 
     for sample_idx in original_num_samples..bit_data.num_rows() {
         let symbol = symbol_for_row(bit_data, &context, sample_idx)?;
-        let (code, code_len) = codes_by_symbol.get(&symbol).copied().ok_or_else(|| {
-            EntroGdError::InvalidMetadata {
-                message: format!("missing Huffman code for symbol {}", symbol),
-            }
-        })?;
+        let (code, code_len) =
+            codes_by_symbol
+                .get(&symbol)
+                .copied()
+                .ok_or_else(|| EntroGdError::InvalidMetadata {
+                    message: format!("missing Huffman code for symbol {}", symbol),
+                })?;
         append_code_bits(&mut pixel_bit_stream, code, code_len);
     }
 
@@ -417,6 +422,10 @@ fn build_symbol_frequencies(
         let symbol = symbol_for_row(bit_data, context, row)?;
         *frequencies.entry(symbol).or_insert(0) += 1;
     }
+    // Print sorted frequencies for debugging
+    let mut freq_vec: Vec<(u64, usize)> = frequencies.iter().map(|(&symbol, &freq)| (symbol, freq)).collect();
+    freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    tracing::debug!(frequencies = ?freq_vec, "Built symbol frequencies for Huffman encoding");
 
     Ok(frequencies)
 }
@@ -454,10 +463,10 @@ fn build_canonical_huffman_table(
     if frequencies.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-    if frequencies.len() > u16::MAX as usize {
+    if frequencies.len() > u32::MAX as usize {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
-                "Huffman symbol table has {} entries, exceeding u16::MAX",
+                "Huffman symbol table has {} entries, exceeding u32::MAX",
                 frequencies.len()
             ),
         });
@@ -467,21 +476,21 @@ fn build_canonical_huffman_table(
         .iter()
         .map(|(&symbol, &frequency)| SymbolFrequency { symbol, frequency })
         .collect();
-    symbols.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+    // using unstable as it does not matter how we break ties, and it is faster than stable
+    symbols.sort_unstable_by(|a, b| a.symbol.cmp(&b.symbol));
 
     if symbols.len() == 1 {
         return Ok((vec![symbols[0].symbol], vec![1]));
     }
 
     let raw_lengths = build_huffman_code_lengths(&symbols)?;
-    let limited_lengths = limit_code_lengths(&symbols, &raw_lengths, HUFFMAN_MAX_CODE_LENGTH)?;
 
     let mut canonical_entries: Vec<(u64, u8)> = symbols
         .iter()
-        .zip(limited_lengths.iter())
-        .map(|(symbol, &len)| (symbol.symbol, len))
+        .zip(raw_lengths.iter())
+        .map(|(symbol, &len)| (symbol.symbol, len as u8))
         .collect();
-    canonical_entries.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+    canonical_entries.sort_unstable_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
 
     let (canonical_symbols, canonical_lengths): (Vec<u64>, Vec<u8>) =
         canonical_entries.into_iter().unzip();
@@ -497,6 +506,7 @@ fn build_huffman_code_lengths(symbols: &[SymbolFrequency]) -> Result<Vec<usize>,
             parent: None,
         })
         .collect();
+    // The heap is a MasHeap by default therefore we wrap all elements is a Reverse that flips all comparisons
     let mut heap = BinaryHeap::<Reverse<(usize, u64, usize)>>::new();
 
     for (idx, node) in nodes.iter().enumerate() {
@@ -519,11 +529,11 @@ fn build_huffman_code_lengths(symbols: &[SymbolFrequency]) -> Result<Vec<usize>,
             parent: None,
         });
         heap.push(Reverse((
-            left_weight.checked_add(right_weight).ok_or_else(|| {
-                EntroGdError::InvalidMetadata {
+            left_weight
+                .checked_add(right_weight)
+                .ok_or_else(|| EntroGdError::InvalidMetadata {
                     message: "Huffman frequency sum overflow".to_string(),
-                }
-            })?,
+                })?,
             left_min_symbol.min(right_min_symbol),
             parent_idx,
         )));
@@ -541,90 +551,6 @@ fn build_huffman_code_lengths(symbols: &[SymbolFrequency]) -> Result<Vec<usize>,
     }
 
     Ok(lengths)
-}
-
-fn limit_code_lengths(
-    symbols: &[SymbolFrequency],
-    raw_lengths: &[usize],
-    max_len: usize,
-) -> Result<Vec<u8>, EntroGdError> {
-    let max_observed_len = raw_lengths.iter().copied().max().unwrap_or(0);
-    if max_observed_len <= max_len {
-        return Ok(raw_lengths.iter().map(|&len| len as u8).collect());
-    }
-
-    let mut bl_count = vec![0usize; max_observed_len.max(max_len) + 1];
-    let mut overflow = 0usize;
-    for &len in raw_lengths {
-        if len > max_len {
-            bl_count[max_len] += 1;
-            overflow += 1;
-        } else {
-            bl_count[len] += 1;
-        }
-    }
-
-    while overflow > 0 {
-        let mut bits = max_len - 1;
-        while bits > 0 && bl_count[bits] == 0 {
-            bits -= 1;
-        }
-        if bits == 0 {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "failed to length-limit Huffman codes".to_string(),
-            });
-        }
-
-        bl_count[bits] -= 1;
-        bl_count[bits + 1] += 2;
-        bl_count[max_len] -= 1;
-        overflow = overflow.saturating_sub(2);
-    }
-
-    let total_symbols: usize = bl_count.iter().sum();
-    if total_symbols != symbols.len() {
-        return Err(EntroGdError::InvalidMetadata {
-            message: format!(
-                "length-limited Huffman table has {} symbols, expected {}",
-                total_symbols,
-                symbols.len()
-            ),
-        });
-    }
-
-    let mut assigned_lengths = Vec::with_capacity(symbols.len());
-    for (len, &count) in bl_count.iter().enumerate().skip(1).take(max_len) {
-        for _ in 0..count {
-            assigned_lengths.push(len as u8);
-        }
-    }
-
-    let mut ranked_symbols = symbols.to_vec();
-    ranked_symbols.sort_by(|a, b| {
-        b.frequency
-            .cmp(&a.frequency)
-            .then(a.symbol.cmp(&b.symbol))
-    });
-
-    let mut length_by_symbol = FxHashMap::default();
-    for (symbol, len) in ranked_symbols.iter().zip(assigned_lengths.iter()) {
-        length_by_symbol.insert(symbol.symbol, *len);
-    }
-
-    symbols
-        .iter()
-        .map(|symbol| {
-            length_by_symbol
-                .get(&symbol.symbol)
-                .copied()
-                .ok_or_else(|| EntroGdError::InvalidMetadata {
-                    message: format!(
-                        "missing length-limited code length for symbol {}",
-                        symbol.symbol
-                    ),
-                })
-        })
-        .collect()
 }
 
 fn append_code_bits(out: &mut BitVec<usize, Msb0>, code: u32, code_len: u8) {
@@ -653,6 +579,51 @@ fn symbol_slice(
 ) -> &BitSlice<usize, Msb0> {
     let start = row * symbol_width;
     &symbol_stream[start..start + symbol_width]
+}
+
+/// Debug function to save ID and deviation data to a CSV file
+pub fn debug_save_id_deviation_data<B: BaseBit + ?Sized>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+    output_path: &str,
+) -> Result<(), EntroGdError> {
+    use std::fs::File;
+    use std::io::Write;
+
+    let context = prepare_encoding_context(bit_data, base_bit_groups);
+    let mut file = File::create(output_path).map_err(|e| EntroGdError::InvalidMetadata {
+        message: format!("Failed to create CSV file: {}", e),
+    })?;
+
+    // Write header
+    writeln!(file, "row,id_decimal,deviation_decimal").map_err(|e| {
+        EntroGdError::InvalidMetadata {
+            message: format!("Failed to write CSV header: {}", e),
+        }
+    })?;
+
+    // Extract and write data for each row
+    for row in 0..bit_data.num_rows() {
+        let chunk = bit_data.get_chunk(row);
+        let id = context.row_to_group_id[row] as u64;
+
+        // Extract deviation bits
+        let mut deviation = 0u64;
+        for &(start, end) in &context.deviation_ranges {
+            for bit in &chunk[start..end] {
+                deviation = (deviation << 1) | (*bit as u64);
+            }
+        }
+
+        writeln!(file, "{},{},{}", row, id, deviation).map_err(|e| {
+            EntroGdError::InvalidMetadata {
+                message: format!("Failed to write CSV row: {}", e),
+            }
+        })?;
+    }
+
+    tracing::info!("Saved ID and deviation data to {}", output_path);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -686,24 +657,21 @@ mod tests {
         let info = BitDataInfo::new(features, num_rows * chunk_size)
             .expect("Failed to create BitDataInfo");
 
-        BitDataSet { data: bit_data, info }
+        BitDataSet {
+            data: bit_data,
+            info,
+        }
     }
 
     /// Helper function to create a BitDataSet with specific bit patterns
-    fn create_test_bit_data_set_with_pattern(
-        rows_and_bits: Vec<Vec<bool>>,
-    ) -> BitDataSet {
+    fn create_test_bit_data_set_with_pattern(rows_and_bits: Vec<Vec<bool>>) -> BitDataSet {
         assert!(!rows_and_bits.is_empty(), "Must have at least one row");
         let chunk_size = rows_and_bits[0].len();
         let num_rows = rows_and_bits.len();
 
         let mut data = BitVec::<usize, Msb0>::with_capacity(num_rows * chunk_size);
         for row in &rows_and_bits {
-            assert_eq!(
-                row.len(),
-                chunk_size,
-                "All rows must have the same size"
-            );
+            assert_eq!(row.len(), chunk_size, "All rows must have the same size");
             for &bit in row {
                 data.push(bit);
             }
@@ -724,7 +692,10 @@ mod tests {
         let info = BitDataInfo::new(features, num_rows * chunk_size)
             .expect("Failed to create BitDataInfo");
 
-        BitDataSet { data: bit_data, info }
+        BitDataSet {
+            data: bit_data,
+            info,
+        }
     }
 
     /// Helper function to create a simple BaseBitGroups instance for testing
@@ -734,11 +705,7 @@ mod tests {
     }
 
     /// Helper function to add bit positions to a BaseBitGroups instance
-    fn add_base_bits(
-        groups: &mut BaseBitGroups,
-        bit_data: &BitDataSet,
-        bit_positions: &[usize],
-    ) {
+    fn add_base_bits(groups: &mut BaseBitGroups, bit_data: &BitDataSet, bit_positions: &[usize]) {
         for &pos in bit_positions {
             groups.add_bit_position(bit_data, pos);
         }

@@ -176,9 +176,9 @@ impl EgdFile {
             }
             EncodedData::Huffman(huffman) => {
                 writer.write_u8(ENCODING_TAG_HUFFMAN_CANONICAL);
-                writer.write_u16(u16::try_from(huffman.canonical_symbols().len()).map_err(
+                writer.write_u32(u32::try_from(huffman.canonical_symbols().len()).map_err(
                     |_| EntroGdError::InvalidMetadata {
-                        message: "Huffman symbol count does not fit into u16".to_string(),
+                        message: "Huffman symbol count does not fit into u32".to_string(),
                     },
                 )?);
                 writer.write_u8(u8::try_from(huffman.get_num_id_bits()).map_err(|_| {
@@ -470,7 +470,11 @@ impl EgdFile {
                 EncodedData::Normal(rle.to_deviation_data()?)
             }
             ENCODING_TAG_HUFFMAN_CANONICAL => {
-                let symbol_count = usize::from(reader.read_u16()?);
+                let symbol_count = usize::try_from(reader.read_u32()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman symbol count does not fit into usize".to_string(),
+                    }
+                })?;
                 let huffman_num_id_bits = usize::from(reader.read_u8()?);
                 let huffman_num_deviation_bits = usize::from(reader.read_u8()?);
                 let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
