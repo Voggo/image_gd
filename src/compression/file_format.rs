@@ -662,7 +662,7 @@ pub fn load_compressed_from_egd<P: AsRef<Path>>(
 }
 
 pub const IMAGE_MAGIC_BYTES: [u8; 3] = *b"IGD";
-pub const IMAGE_FORMAT_VERSION: u8 = 1;
+pub const IMAGE_FORMAT_VERSION: u8 = 2;
 
 /// In-memory IGD file contents (image + compressed payload) that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -688,13 +688,14 @@ impl IgdFile {
                 message: "IGD payload length does not fit into u64".to_string(),
             })?;
 
-        let mut bytes = Vec::with_capacity(22 + payload.len());
+        let mut bytes = Vec::with_capacity(26 + payload.len());
         bytes.extend_from_slice(&IMAGE_MAGIC_BYTES);
         bytes.push(IMAGE_FORMAT_VERSION);
         bytes.extend_from_slice(&image_info.width.to_be_bytes());
         bytes.extend_from_slice(&image_info.height.to_be_bytes());
         bytes.push(image_info.channels);
         bytes.push(image_info.colorspace);
+        bytes.extend_from_slice(&image_info.pixel_grouping.to_be_bytes());
         bytes.extend_from_slice(&payload_len.to_be_bytes());
         bytes.extend_from_slice(payload);
 
@@ -711,7 +712,7 @@ impl IgdFile {
     }
 
     pub fn to_compressed_data(&self) -> Result<CompressedData, EntroGdError> {
-        const HEADER_LEN: usize = 22;
+        const HEADER_LEN: usize = 26;
         if self.bytes.len() < HEADER_LEN {
             return Err(EntroGdError::InvalidMetadata {
                 message: "IGD file too short".to_string(),
@@ -744,15 +745,27 @@ impl IgdFile {
             });
         }
 
-        let payload_len = u64::from_be_bytes([
+        let pixel_grouping = u32::from_be_bytes([
             self.bytes[14],
             self.bytes[15],
             self.bytes[16],
             self.bytes[17],
+        ]);
+        if pixel_grouping == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "IGD pixel_grouping must be > 0".to_string(),
+            });
+        }
+
+        let payload_len = u64::from_be_bytes([
             self.bytes[18],
             self.bytes[19],
             self.bytes[20],
             self.bytes[21],
+            self.bytes[22],
+            self.bytes[23],
+            self.bytes[24],
+            self.bytes[25],
         ]) as usize;
 
         let payload_start = HEADER_LEN;
@@ -783,6 +796,7 @@ impl IgdFile {
                 width,
                 height,
                 channels,
+                pixel_grouping,
                 colorspace,
             });
 
@@ -1188,6 +1202,7 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                pixel_grouping: 1,
                 colorspace: 0,
             }),
         )
@@ -1207,6 +1222,7 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                pixel_grouping: 1,
                 colorspace: 0
             })
         ));
@@ -1290,6 +1306,7 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                pixel_grouping: 1,
                 colorspace: 0,
             }),
         )
@@ -1307,6 +1324,7 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                pixel_grouping: 1,
                 colorspace: 0
             })
         ));

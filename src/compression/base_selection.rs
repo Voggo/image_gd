@@ -81,7 +81,7 @@ fn select_base_bits(
 
     for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
         if best_base_bit_groups.get_num_bits_per_base()
-            >= (bit_data.chunk_size() as f64 * 0.5) as usize
+            >= (bit_data.chunk_size() as f64 * 1.0) as usize
         {
             break;
         }

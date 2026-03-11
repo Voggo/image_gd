@@ -25,13 +25,6 @@ pub use crate::compression::decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRowsData,
 };
 
-#[cfg(test)]
-use crate::compression::base_bits::BaseBitGroups;
-#[cfg(test)]
-use crate::compression::base_selection::calculate_compressed_size;
-#[cfg(test)]
-use crate::compression::decompression::decompress_samples_batch;
-
 pub fn build_compression_pipeline(
     m_max: usize,
     patience: usize,
@@ -69,10 +62,14 @@ pub fn build_compression_pipeline_with_preprocessing(
 
 pub fn build_image_compression_pipeline(
     colorspace: ImageColorSpace,
+    pixel_grouping: u32,
     m_max: usize,
     patience: usize,
 ) -> impl Filter<Input = PathBuf, Output = CompressedData> {
-    BuildImageBitDataSet { colorspace }
+    BuildImageBitDataSet {
+        colorspace,
+        pixel_grouping,
+    }
         .then(EntropyOptimized {})
         .then(GenCondensedSamples { m_max })
         .then(SelectBases { patience })
@@ -93,27 +90,34 @@ pub(crate) fn huffman_row_layout(
     match metadata.reconstruction {
         BitDataReconstructionInfo::Image(info) => {
             let row_count = info.height as usize;
-            let row_width = info.width as usize;
+            let pixel_grouping = info.pixel_grouping as usize;
+            if pixel_grouping == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "image pixel_grouping must be > 0".to_string(),
+                });
+            }
+            let row_width = (info.width as usize).div_ceil(pixel_grouping);
             if row_count == 0 && original_num_samples == 0 {
                 return Ok((0, 0, 0));
             }
             if row_count == 0 || row_width == 0 {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
-                        "invalid image row layout width={} height={}",
-                        info.width, info.height
+                        "invalid image row layout width={} height={} pixel_grouping={}",
+                        info.width, info.height, info.pixel_grouping
                     ),
                 });
             }
-            let expected_samples = row_count.checked_mul(row_width).ok_or_else(|| {
-                EntroGdError::InvalidMetadata {
-                    message: "image row layout overflows sample count".to_string(),
-                }
-            })?;
+            let expected_samples =
+                row_count
+                    .checked_mul(row_width)
+                    .ok_or_else(|| EntroGdError::InvalidMetadata {
+                        message: "image row layout overflows sample count".to_string(),
+                    })?;
             if expected_samples != original_num_samples {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
-                        "image row layout mismatch: width * height = {}, original samples = {}",
+                        "image row layout mismatch: height * ceil(width / pixel_grouping) = {}, original samples = {}",
                         expected_samples, original_num_samples
                     ),
                 });
@@ -788,7 +792,9 @@ impl HuffmanDeviationData {
 
     pub fn get_encoded_size(&self) -> usize {
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
-        16 + 8 + 8 + 32
+        16 + 8
+            + 8
+            + 32
             + self.row_offsets.len() * 32
             + self.canonical_symbols.len() * (symbol_width + HUFFMAN_CODE_LENGTH_BITS)
             + self.pixel_bit_stream.len()
@@ -1082,7 +1088,10 @@ fn calculate_original_size(bit_data: &BitDataSet) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compression::base_bits::BaseBitGroups;
+    use crate::compression::base_selection::calculate_compressed_size;
     use crate::compression::compress::build_compression_pipeline;
+    use crate::compression::decompression::decompress_samples_batch;
     use crate::compression::decompression::{decompress_analytics, decompress_file};
     use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;

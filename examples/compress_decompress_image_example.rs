@@ -1,8 +1,9 @@
+use bitvec::prelude::*;
 use entro_gd::BitDataReconstructionInfo;
 use entro_gd::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::fs;
 
 fn main() -> Result<(), EntroGdError> {
@@ -52,7 +53,7 @@ fn main() -> Result<(), EntroGdError> {
     fs::create_dir_all(&decompressed_folder)?;
 
     let compression_pipeline =
-        build_image_compression_pipeline(ImageColorSpace::SrgbWithLinearAlpha, 50, 10);
+        build_image_compression_pipeline(ImageColorSpace::SrgbWithLinearAlpha, 6, 50, 10);
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());
@@ -103,6 +104,7 @@ fn write_bitdata_to_image(bit_data: &BitDataSet, output_path: &Path) -> Result<(
     };
 
     let channels = image_info.channels as usize;
+    let pixel_grouping = image_info.pixel_grouping as usize;
     if bit_data.num_features() != channels {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
@@ -113,21 +115,27 @@ fn write_bitdata_to_image(bit_data: &BitDataSet, output_path: &Path) -> Result<(
         });
     }
 
-    let mut raw = Vec::with_capacity(bit_data.num_rows() * channels);
+    let grouped_width = (image_info.width as usize).div_ceil(pixel_grouping);
+    let expected_rows = grouped_width * image_info.height as usize;
+    if bit_data.num_rows() != expected_rows {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "grouped image row count {} does not match expected {}",
+                bit_data.num_rows(),
+                expected_rows
+            ),
+        });
+    }
+
+    let mut raw = Vec::with_capacity(image_info.width as usize * image_info.height as usize * channels);
     for row in 0..bit_data.num_rows() {
+        let group_x = row % grouped_width;
         for feature in 0..channels {
             let feature_bits = bit_data.get_feature(row, feature);
-            let spec = bit_data.info.feature_spec(feature);
-            let value = decode_value_from_bits(feature_bits, spec);
-            match value {
-                DataValue::Unsigned(v) if v <= u8::MAX as u64 => raw.push(v as u8),
-                _ => {
-                    return Err(EntroGdError::InvalidMetadata {
-                        message: format!(
-                            "invalid decoded value for image channel at row {}, feature {}",
-                            row, feature
-                        ),
-                    });
+            for (offset, byte_bits) in feature_bits.chunks(8).enumerate() {
+                let pixel_x = group_x * pixel_grouping + offset;
+                if pixel_x < image_info.width as usize {
+                    raw.push(byte_from_bits(byte_bits)?);
                 }
             }
         }
@@ -140,6 +148,16 @@ fn write_bitdata_to_image(bit_data: &BitDataSet, output_path: &Path) -> Result<(
         image_info.channels,
         raw,
     )
+}
+
+fn byte_from_bits(bits: &BitSlice<usize, Msb0>) -> Result<u8, EntroGdError> {
+    if bits.len() != 8 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!("expected 8 bits for image byte, got {}", bits.len()),
+        });
+    }
+
+    Ok(bits.iter().fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit)))
 }
 
 fn save_raw_image(

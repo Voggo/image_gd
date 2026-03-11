@@ -77,6 +77,7 @@ pub struct ImageReconstructionInfo {
     pub width: u32,
     pub height: u32,
     pub channels: u8,
+    pub pixel_grouping: u32,
     /// 0 = sRGB + linear alpha, 1 = all linear
     pub colorspace: u8,
 }

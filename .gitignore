@@ -4,3 +4,4 @@
 /data/*.idg
 /data/*.edg
 /data/*decompressed*
+/data/compressed*
