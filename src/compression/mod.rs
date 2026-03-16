@@ -18,6 +18,9 @@ pub use compress::{
     CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
     RleDeviationData, build_compression_pipeline, build_compression_pipeline_optimized,
     build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
+    build_image_compression_pipeline_with_model,
+    build_image_compression_pipeline_with_transform,
+    build_image_compression_pipeline_with_transform_and_model,
 };
 pub use condensed_samples::GenCondensedSamples;
 pub use decompression::{
@@ -33,7 +36,8 @@ pub use file_format::{
 pub use image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo, PreprocessOptions,
+    FeatureSpec, FeatureTransform, FloatScalingMode, ImageColorModel, ImageGroupingTransform,
+    ImageReconstructionInfo, PreprocessOptions,
     decode_value_from_bits,
 };
 pub use tabular_preprocessor::{

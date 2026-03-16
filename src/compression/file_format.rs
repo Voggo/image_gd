@@ -7,7 +7,8 @@ use crate::compression::compress::{
     RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
 use crate::compression::tabular_preprocessor::{
-    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageReconstructionInfo,
+    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform,
+    ImageColorModel, ImageGroupingTransform, ImageReconstructionInfo,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -662,7 +663,7 @@ pub fn load_compressed_from_egd<P: AsRef<Path>>(
 }
 
 pub const IMAGE_MAGIC_BYTES: [u8; 3] = *b"IGD";
-pub const IMAGE_FORMAT_VERSION: u8 = 2;
+pub const IMAGE_FORMAT_VERSION: u8 = 3;
 
 /// In-memory IGD file contents (image + compressed payload) that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -688,13 +689,15 @@ impl IgdFile {
                 message: "IGD payload length does not fit into u64".to_string(),
             })?;
 
-        let mut bytes = Vec::with_capacity(26 + payload.len());
+        let mut bytes = Vec::with_capacity(28 + payload.len());
         bytes.extend_from_slice(&IMAGE_MAGIC_BYTES);
         bytes.push(IMAGE_FORMAT_VERSION);
         bytes.extend_from_slice(&image_info.width.to_be_bytes());
         bytes.extend_from_slice(&image_info.height.to_be_bytes());
         bytes.push(image_info.channels);
         bytes.push(image_info.colorspace);
+        bytes.push(image_info.color_model.as_u8());
+        bytes.push(image_info.grouping_transform.as_u8());
         bytes.extend_from_slice(&image_info.pixel_grouping.to_be_bytes());
         bytes.extend_from_slice(&payload_len.to_be_bytes());
         bytes.extend_from_slice(payload);
@@ -712,7 +715,7 @@ impl IgdFile {
     }
 
     pub fn to_compressed_data(&self) -> Result<CompressedData, EntroGdError> {
-        const HEADER_LEN: usize = 26;
+        const HEADER_LEN: usize = 28;
         if self.bytes.len() < HEADER_LEN {
             return Err(EntroGdError::InvalidMetadata {
                 message: "IGD file too short".to_string(),
@@ -739,17 +742,20 @@ impl IgdFile {
             u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]]);
         let channels = self.bytes[12];
         let colorspace = self.bytes[13];
+        let color_model = ImageColorModel::from_u8(self.bytes[14])?;
         if !matches!(channels, 3 | 4) {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!("unsupported channel count {} in IGD metadata", channels),
             });
         }
 
+        let grouping_transform = ImageGroupingTransform::from_u8(self.bytes[15])?;
+
         let pixel_grouping = u32::from_be_bytes([
-            self.bytes[14],
-            self.bytes[15],
             self.bytes[16],
             self.bytes[17],
+            self.bytes[18],
+            self.bytes[19],
         ]);
         if pixel_grouping == 0 {
             return Err(EntroGdError::InvalidMetadata {
@@ -758,14 +764,14 @@ impl IgdFile {
         }
 
         let payload_len = u64::from_be_bytes([
-            self.bytes[18],
-            self.bytes[19],
             self.bytes[20],
             self.bytes[21],
             self.bytes[22],
             self.bytes[23],
             self.bytes[24],
             self.bytes[25],
+            self.bytes[26],
+            self.bytes[27],
         ]) as usize;
 
         let payload_start = HEADER_LEN;
@@ -796,7 +802,9 @@ impl IgdFile {
                 width,
                 height,
                 channels,
+                color_model,
                 pixel_grouping,
+                grouping_transform,
                 colorspace,
             });
 
@@ -1090,7 +1098,7 @@ mod tests {
     use crate::compression::decompression::decompress_file;
     use crate::compression::tabular_preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
-        ImageReconstructionInfo,
+        ImageColorModel, ImageReconstructionInfo,
     };
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
@@ -1202,7 +1210,9 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                color_model: ImageColorModel::Rgb,
                 pixel_grouping: 1,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0,
             }),
         )
@@ -1222,7 +1232,52 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                color_model: ImageColorModel::Rgb,
                 pixel_grouping: 1,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
+                colorspace: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn test_roundtrip_igd_to_compressed_data_with_for_min_metadata() {
+        let data = BitData {
+            data: bitvec![usize, Msb0; 0; 111],
+            num_rows: 1,
+            chunk_size: 111,
+        };
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 37); 3];
+        let info = BitDataInfo::new_with_reconstruction_info(
+            features,
+            111,
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width: 4,
+                height: 1,
+                channels: 3,
+                color_model: ImageColorModel::Rgb,
+                pixel_grouping: 4,
+                grouping_transform: ImageGroupingTransform::ForMin,
+                colorspace: 0,
+            }),
+        )
+        .unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_compression_pipeline().process(bit_data).unwrap();
+
+        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let loaded = igd.to_compressed_data().unwrap();
+
+        assert!(matches!(
+            loaded.metadata.reconstruction,
+            BitDataReconstructionInfo::Image(ImageReconstructionInfo {
+                width: 4,
+                height: 1,
+                channels: 3,
+                color_model: ImageColorModel::Rgb,
+                pixel_grouping: 4,
+                grouping_transform: ImageGroupingTransform::ForMin,
                 colorspace: 0
             })
         ));
@@ -1306,7 +1361,9 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                color_model: ImageColorModel::Rgb,
                 pixel_grouping: 1,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0,
             }),
         )
@@ -1324,7 +1381,9 @@ mod tests {
                 width: 2,
                 height: 2,
                 channels: 3,
+                color_model: ImageColorModel::Rgb,
                 pixel_grouping: 1,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0
             })
         ));

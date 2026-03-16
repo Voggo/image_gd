@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::Path;
 
 fn main() -> Result<(), EntroGdError> {
-    init_logging();
+    let _log_handle = init_logging();
 
     let _timer = ScopedTimer::info("Total compression-decompression process");
 
@@ -15,7 +15,7 @@ fn main() -> Result<(), EntroGdError> {
     if args.len() < 2 {
         tracing::info!("Usage: {} <input_csv_file>", args[0]);
         tracing::info!("Example: {} data/data-10000-4-8bit-sparse.csv", args[0]);
-        std::process::exit(1);
+        return Ok(());
     }
 
     let input_path = &args[1];

@@ -73,11 +73,73 @@ pub struct BitDataCompressionInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageGroupingTransform {
+    /// Store grouped channel bytes directly.
+    Raw = 0,
+    /// Store the first byte, then biased residuals relative to it.
+    ForFirstPixel = 1,
+    /// Store the minimum byte, then biased residuals relative to it.
+    ForMin = 2,
+}
+
+impl ImageGroupingTransform {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(value: u8) -> Result<Self, EntroGdError> {
+        match value {
+            0 => Ok(Self::Raw),
+            1 => Ok(Self::ForFirstPixel),
+            2 => Ok(Self::ForMin),
+            _ => Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "unsupported image grouping transform {} (expected 0, 1, or 2)",
+                    value
+                ),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageColorModel {
+    /// Store channels as RGB(A).
+    Rgb = 0,
+    /// Store channels as YCoCg(A), where Co/Cg are biased into byte range.
+    YCoCg = 1,
+    /// Store channels as reversible YCoCg-R(A), where Co/Cg are wrapped to 8-bit and biased.
+    YCoCgR = 2,
+}
+
+impl ImageColorModel {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(value: u8) -> Result<Self, EntroGdError> {
+        match value {
+            0 => Ok(Self::Rgb),
+            1 => Ok(Self::YCoCg),
+            2 => Ok(Self::YCoCgR),
+            _ => Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "unsupported image color model {} (expected 0, 1, or 2)",
+                    value
+                ),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageReconstructionInfo {
     pub width: u32,
     pub height: u32,
     pub channels: u8,
+    pub color_model: ImageColorModel,
     pub pixel_grouping: u32,
+    pub grouping_transform: ImageGroupingTransform,
     /// 0 = sRGB + linear alpha, 1 = all linear
     pub colorspace: u8,
 }

@@ -12,11 +12,15 @@ pub use compression::{
     EncodeDataHuffman, EncodeDataRLE, EncodedData, EntropyNaive, EntropyOptimized,
     FORMAT_VERSION, FeatureSpec,
     FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
-    IMAGE_MAGIC_BYTES, IgdFile, ImageColorSpace, ImageReconstructionInfo, InferFeatureSpecs,
+    IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
+    ImageReconstructionInfo, InferFeatureSpecs,
     LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, RleDeviationData, SaveEgdFile,
     SaveIgdFile, SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2,
     SelectBasesOptimizedv3, build_compression_pipeline, build_compression_pipeline_optimized,
     build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
+    build_image_compression_pipeline_with_model,
+    build_image_compression_pipeline_with_transform,
+    build_image_compression_pipeline_with_transform_and_model,
     calculate_entropy, decode_value_from_bits,
 };
 pub use data_loader::{
@@ -32,24 +36,35 @@ pub mod prelude {
         BitDataSet, CsvDataLoader, DataLoader, DataValue, DecompressAnalytics, DecompressFileData,
         EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE, EncodedData,
         EntroGdError, EntropyNaive, EntropyOptimized, FeatureDataType, Filter, FilterExt,
-        FloatScalingMode, FloatStorage, GenCondensedSamples, ImageColorSpace,
+        FloatScalingMode, FloatStorage, GenCondensedSamples, ImageColorModel, ImageColorSpace,
+        ImageGroupingTransform,
         InferFeatureSpecs, LoadEgdFile, LoadIgdFile, MissingValuePolicy, PreprocessOptions,
         SaveEgdFile, SaveIgdFile, ScopedTimer, SelectBases,
         SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
         build_compression_pipeline, build_compression_pipeline_optimized,
         build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
+        build_image_compression_pipeline_with_model,
+        build_image_compression_pipeline_with_transform,
+        build_image_compression_pipeline_with_transform_and_model,
         calculate_entropy, decode_value_from_bits, init_logging,
     };
 }
 
-use std::sync::{Once, OnceLock};
+use std::sync::Once;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 
 static LOGGING_INIT: Once = Once::new();
-static LOG_FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
+
+/// RAII handle for the async logging worker.
+///
+/// Keep this value alive for as long as you want logging to remain active.
+/// Dropping it flushes pending log events.
+pub struct LogHandle {
+    _guard: WorkerGuard,
+}
 
 /// Initialize logging to a file.
 ///
@@ -58,10 +73,12 @@ static LOG_FILE_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 /// - `ENTRO_GD_LOG_DIR` (default: `logs`)
 /// - `ENTRO_GD_LOG_TO_STDERR` (`1`/`true` to mirror `warn+` to stderr)
 ///
-/// Log filename: `entro_gd.log`.
+/// Log filename: `entro_gd_YYYYMMDD_HHMMSS.log`.
 ///
-/// Safe to call multiple times.
-pub fn init_logging() {
+/// Safe to call multiple times. Only the first successful call initializes
+/// the global subscriber and returns a [`LogHandle`].
+pub fn init_logging() -> Option<LogHandle> {
+    let mut log_handle = None;
     LOGGING_INIT.call_once(|| {
         let level_spec = std::env::var("LOG")
             .or_else(|_| std::env::var("RUST_LOG"))
@@ -82,7 +99,6 @@ pub fn init_logging() {
         );
         let file_appender = tracing_appender::rolling::never(&log_dir, file_name);
         let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
-        let _ = LOG_FILE_GUARD.set(guard);
 
         let init_result = if mirror_stderr {
             let env_filter =
@@ -114,6 +130,8 @@ pub fn init_logging() {
             return;
         }
 
+        log_handle = Some(LogHandle { _guard: guard });
+
         tracing::info!(
             log_dir = %log_dir,
             level = %level_spec,
@@ -121,4 +139,5 @@ pub fn init_logging() {
             "logging initialized"
         );
     });
+    log_handle
 }

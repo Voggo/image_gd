@@ -1,6 +1,7 @@
 pub use crate::compression::preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo, PreprocessOptions,
+    FeatureSpec, FeatureTransform, FloatScalingMode, ImageColorModel, ImageGroupingTransform,
+    ImageReconstructionInfo, PreprocessOptions,
     decode_value_from_bits, FeatureDataType,
 };
 

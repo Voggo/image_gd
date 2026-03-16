@@ -1,7 +1,7 @@
 use entro_gd::prelude::*;
 
 fn main() -> Result<(), EntroGdError> {
-    init_logging();
+    let _log_handle = init_logging();
 
     // Load the CSV file with headers
     let loader = CsvDataLoader::new(true);

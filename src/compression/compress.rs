@@ -7,6 +7,8 @@ pub use crate::compression::encoding::{
 };
 use crate::compression::entropy::EntropyOptimized;
 use crate::compression::image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
+use crate::compression::preprocessor::ImageColorModel;
+use crate::compression::preprocessor::ImageGroupingTransform;
 use crate::compression::tabular_preprocessor::{
     BitDataInfo, BitDataReconstructionInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs,
     PreprocessOptions,
@@ -66,14 +68,68 @@ pub fn build_image_compression_pipeline(
     m_max: usize,
     patience: usize,
 ) -> impl Filter<Input = PathBuf, Output = CompressedData> {
+    build_image_compression_pipeline_with_transform_and_model(
+        colorspace,
+        ImageColorModel::YCoCgR,
+        pixel_grouping,
+        ImageGroupingTransform::ForMin,
+        m_max,
+        patience,
+    )
+}
+
+pub fn build_image_compression_pipeline_with_model(
+    colorspace: ImageColorSpace,
+    color_model: ImageColorModel,
+    pixel_grouping: u32,
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = PathBuf, Output = CompressedData> {
+    build_image_compression_pipeline_with_transform_and_model(
+        colorspace,
+        color_model,
+        pixel_grouping,
+        ImageGroupingTransform::Raw,
+        m_max,
+        patience,
+    )
+}
+
+pub fn build_image_compression_pipeline_with_transform(
+    colorspace: ImageColorSpace,
+    pixel_grouping: u32,
+    grouping_transform: ImageGroupingTransform,
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = PathBuf, Output = CompressedData> {
+    build_image_compression_pipeline_with_transform_and_model(
+        colorspace,
+        ImageColorModel::Rgb,
+        pixel_grouping,
+        grouping_transform,
+        m_max,
+        patience,
+    )
+}
+
+pub fn build_image_compression_pipeline_with_transform_and_model(
+    colorspace: ImageColorSpace,
+    color_model: ImageColorModel,
+    pixel_grouping: u32,
+    grouping_transform: ImageGroupingTransform,
+    m_max: usize,
+    patience: usize,
+) -> impl Filter<Input = PathBuf, Output = CompressedData> {
     BuildImageBitDataSet {
         colorspace,
+        color_model,
         pixel_grouping,
+        grouping_transform,
     }
         .then(EntropyOptimized {})
         .then(GenCondensedSamples { m_max })
         .then(SelectBases { patience })
-        .then(EncodeDataRLE {})
+        .then(EncodeDataOptimized {})
 }
 
 pub(crate) fn huffman_row_layout(
