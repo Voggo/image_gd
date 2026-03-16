@@ -84,7 +84,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let chunk_size = data_info.chunk_size();
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let base_bit_mask = build_base_bit_mask(chunk_size, &compressed.base_bit_positions);
-    let mut reconstructed_bits = BitVec::<usize, Msb0>::with_capacity(chunk_size * original_num_rows);
+    let mut reconstructed_bits =
+        BitVec::<usize, Msb0>::with_capacity(chunk_size * original_num_rows);
     let mut decoded_rows = 0usize;
 
     compressed.encoded_data.for_each_sample(|sample| {
@@ -194,7 +195,9 @@ pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamp
 mod tests {
     use super::*;
     use crate::compression::compress::{DeviationData, DeviationSample, EncodedData};
-    use crate::compression::preprocessor::{BitDataInfo, FeatureSpec, FeatureDataType, FeatureTransform};
+    use crate::compression::preprocessor::{
+        BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
+    };
 
     // ============================================================================
     // HELPER FUNCTIONS FOR CONSTRUCTING TEST DATA
@@ -222,13 +225,11 @@ mod tests {
 
     /// Creates a BitDataInfo for testing with a single feature
     fn create_test_bit_data_info(chunk_size: usize, num_rows: usize) -> BitDataInfo {
-        let features = vec![
-            FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits: chunk_size,
-                transform: FeatureTransform::None,
-            }
-        ];
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UnsignedInt,
+            bits: chunk_size,
+            transform: FeatureTransform::None,
+        }];
         BitDataInfo::new(features, chunk_size * num_rows).unwrap()
     }
 
@@ -251,10 +252,7 @@ mod tests {
     }
 
     /// Creates a deviation sample with specified ID and deviation bits
-    fn create_deviation_sample(
-        id_bits: Vec<bool>,
-        deviation_bits: Vec<bool>,
-    ) -> DeviationSample {
+    fn create_deviation_sample(id_bits: Vec<bool>, deviation_bits: Vec<bool>) -> DeviationSample {
         let mut id = BitVec::<usize, Msb0>::with_capacity(id_bits.len());
         for bit in id_bits {
             id.push(bit);
@@ -267,9 +265,7 @@ mod tests {
     }
 
     /// Creates normal (non-RLE) encoded data with specified samples
-    fn create_normal_encoded_data(
-        samples: Vec<DeviationSample>,
-    ) -> EncodedData {
+    fn create_normal_encoded_data(samples: Vec<DeviationSample>) -> EncodedData {
         let num_samples = samples.len();
         let num_id_bits = if num_samples > 0 {
             samples[0].id.len()
@@ -297,10 +293,7 @@ mod tests {
     }
 
     /// Creates a base table for testing
-    fn create_base_table(
-        num_bases: usize,
-        chunk_size: usize,
-    ) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn create_base_table(num_bases: usize, chunk_size: usize) -> Vec<(BitVec<usize, Msb0>, usize)> {
         (0..num_bases)
             .map(|i| {
                 let pattern = create_bit_pattern(chunk_size, i % 2 == 0);
@@ -329,10 +322,7 @@ mod tests {
         let samples: Vec<DeviationSample> = (0..num_rows)
             .map(|i| {
                 let num_deviation_bits = chunk_size.saturating_sub(num_base_bits);
-                create_deviation_sample(
-                    vec![i % 2 == 0],
-                    vec![false; num_deviation_bits],
-                )
+                create_deviation_sample(vec![i % 2 == 0], vec![false; num_deviation_bits])
             })
             .collect();
         let encoded_data = create_normal_encoded_data(samples);
@@ -354,12 +344,8 @@ mod tests {
         num_base_bits: usize,
         _num_condensed: usize,
     ) -> CompressedData {
-        let mut compressed = create_minimal_compressed_data(
-            chunk_size,
-            num_rows,
-            num_bases,
-            num_base_bits,
-        );
+        let mut compressed =
+            create_minimal_compressed_data(chunk_size, num_rows, num_bases, num_base_bits);
 
         // Add weights for condensed samples
         compressed.condensed_sample_weights = Some((0..num_bases).map(|i| i * 10).collect());

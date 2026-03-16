@@ -1,5 +1,9 @@
-use entro_gd::compression::compress::build_compression_pipeline_optimized;
+use entro_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FloatStorage};
 use entro_gd::prelude::*;
+use entro_gd::{
+    BitDataSet, DecompressAnalytics, DecompressFileData, EntroGdError, LoadEgdFile, SaveEgdFile,
+    ScopedTimer, decode_value_from_bits, init_logging,
+};
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -67,7 +71,10 @@ fn main() -> Result<(), EntroGdError> {
         ScopedTimer::info("Compression process whithout loading .csv file and parsing");
     // Compress the data with filters (pipe-and-filter style)
     tracing::info!("\nCompressing data...");
-    let compression_pipeline = build_compression_pipeline_optimized(50, 10);
+    let compression_pipeline = EntropyOptimized {}
+        .then(GenCondensedSamples { m_max: 50 })
+        .then(SelectBasesOptimizedv1 { patience: 10 })
+        .then(EncodeDataOptimized {});
     let compressed = compression_pipeline.process(bit_data)?;
 
     let compressed_path = SaveEgdFile {

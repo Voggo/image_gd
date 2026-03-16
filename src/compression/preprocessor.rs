@@ -450,9 +450,12 @@ impl BitDataSet {
         }
 
         for (idx, spec) in features.iter().enumerate() {
-            let col_type = dataset.column_type(idx).ok_or_else(|| EntroGdError::InvalidFeatureSpec {
-                message: format!("dataset column {} is missing", idx),
-            })?;
+            let col_type =
+                dataset
+                    .column_type(idx)
+                    .ok_or_else(|| EntroGdError::InvalidFeatureSpec {
+                        message: format!("dataset column {} is missing", idx),
+                    })?;
             debug!(
                 feature_idx = idx,
                 expected_column_type = ?col_type,
@@ -750,5 +753,3 @@ fn push_bits(stream: &mut BitVec<usize, Msb0>, mut value: u64, bits: usize) {
         stream.push(((value >> shift) & 1) == 1);
     }
 }
-
-

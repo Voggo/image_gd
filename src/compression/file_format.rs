@@ -3,12 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::compression::compress::{
-    CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX,
-    RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
+    CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX,
+    RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
 use crate::compression::tabular_preprocessor::{
-    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform,
-    ImageColorModel, ImageGroupingTransform, ImageReconstructionInfo,
+    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageColorModel,
+    ImageGroupingTransform, ImageReconstructionInfo,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -1090,21 +1090,24 @@ impl BitWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::compress::{
-        EncodeDataHuffman, EncodeDataRLE, EncodedData, GenCondensedSamples, SelectBases,
-        build_compression_pipeline,
-    };
-    use crate::compression::entropy::EntropyOptimized;
+    use crate::compression::base_selection::SelectBases;
+    use crate::compression::compress::EncodedData;
+    use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
+    use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
+    use crate::compression::entropy::EntropyOptimized;
     use crate::compression::tabular_preprocessor::{
-        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
-        ImageColorModel, ImageReconstructionInfo,
+        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
+        ImageReconstructionInfo,
     };
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        build_compression_pipeline(100, 5)
+        EntropyOptimized {}
+            .then(GenCondensedSamples { m_max: 50 })
+            .then(SelectBases { patience: 10 })
+            .then(EncodeData {})
     }
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
@@ -1114,8 +1117,8 @@ mod tests {
             .then(EncodeDataRLE {})
     }
 
-    fn get_huffman_compression_pipeline(
-    ) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
+    fn get_huffman_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData>
+    {
         EntropyOptimized {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
@@ -1329,7 +1332,9 @@ mod tests {
         let info = BitDataInfo::new(features, 32).unwrap();
         let bit_data = BitDataSet { data, info };
 
-        let compressed = get_huffman_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_huffman_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
         let egd = EgdFile::from_compressed_data(&compressed).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
@@ -1370,7 +1375,9 @@ mod tests {
         .unwrap();
         let bit_data = BitDataSet { data, info };
 
-        let compressed = get_huffman_compression_pipeline().process(bit_data.clone()).unwrap();
+        let compressed = get_huffman_compression_pipeline()
+            .process(bit_data.clone())
+            .unwrap();
         let igd = IgdFile::from_compressed_data(&compressed).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 

@@ -226,8 +226,8 @@ mod tests {
                 })
                 .collect();
 
-            let info = BitDataInfo::new(features, total_bits)
-                .expect("failed to create BitDataInfo");
+            let info =
+                BitDataInfo::new(features, total_bits).expect("failed to create BitDataInfo");
 
             let data_struct = crate::compression::preprocessor::BitData {
                 data,
@@ -269,8 +269,8 @@ mod tests {
                 })
                 .collect();
 
-            let info = BitDataInfo::new(features, total_bits)
-                .expect("failed to create BitDataInfo");
+            let info =
+                BitDataInfo::new(features, total_bits).expect("failed to create BitDataInfo");
 
             let data_struct = crate::compression::preprocessor::BitData {
                 data,

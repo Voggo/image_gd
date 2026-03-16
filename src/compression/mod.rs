@@ -15,12 +15,7 @@ pub use base_selection::{
     SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
 };
 pub use compress::{
-    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
-    RleDeviationData, build_compression_pipeline, build_compression_pipeline_optimized,
-    build_compression_pipeline_with_preprocessing, build_image_compression_pipeline,
-    build_image_compression_pipeline_with_model,
-    build_image_compression_pipeline_with_transform,
-    build_image_compression_pipeline_with_transform_and_model,
+    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,
 };
 pub use condensed_samples::GenCondensedSamples;
 pub use decompression::{
@@ -33,13 +28,12 @@ pub use file_format::{
     EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,
     LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile,
 };
-pub use image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
+pub use image_preprocessor::{
+    BuildImageBitDataSet, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
+};
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    FeatureSpec, FeatureTransform, FloatScalingMode, ImageColorModel, ImageGroupingTransform,
-    ImageReconstructionInfo, PreprocessOptions,
+    FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo, PreprocessOptions,
     decode_value_from_bits,
 };
-pub use tabular_preprocessor::{
-    BuildBitDataSet, InferFeatureSpecs,
-};
+pub use tabular_preprocessor::{BuildBitDataSet, InferFeatureSpecs};

@@ -8,11 +8,9 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use std::hint::black_box;
 
-use entro_gd::CompressedData;
-use entro_gd::compression::compress::{
-    DecompressRowsData, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
-};
+use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
+use entro_gd::{BitDataSet, CompressedData, DecompressRowsData, EntroGdError};
 
 type DynBaseBit = Box<dyn entro_gd::compression::base_bits::BaseBit>;
 

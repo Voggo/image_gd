@@ -162,9 +162,9 @@ mod tests {
         assert_eq!(entropies.len(), chunk_size);
         assert_eq!(
             entropies
-            .iter()
-            .map(|(i, e)| (*i, (e * 100_000.0).round() / 100_000.0))
-            .collect::<Vec<_>>(),
+                .iter()
+                .map(|(i, e)| (*i, (e * 100_000.0).round() / 100_000.0))
+                .collect::<Vec<_>>(),
             exprected_entropies
         );
     }

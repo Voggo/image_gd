@@ -1,8 +1,7 @@
 pub use crate::compression::preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    FeatureSpec, FeatureTransform, FloatScalingMode, ImageColorModel, ImageGroupingTransform,
-    ImageReconstructionInfo, PreprocessOptions,
-    decode_value_from_bits, FeatureDataType,
+    FeatureDataType, FeatureSpec, FeatureTransform, FloatScalingMode, ImageColorModel,
+    ImageGroupingTransform, ImageReconstructionInfo, PreprocessOptions, decode_value_from_bits,
 };
 
 use std::path::Path;
@@ -215,7 +214,10 @@ fn infer_integer_feature_spec(
             let mut max_value = i64::MIN;
 
             for row in 0..dataset.num_rows() {
-                let value = match dataset.value_at(row, column).expect("row/column should be valid") {
+                let value = match dataset
+                    .value_at(row, column)
+                    .expect("row/column should be valid")
+                {
                     DataValue::Signed(v) => v,
                     _ => unreachable!("signed column type mismatch while inferring schema"),
                 };
@@ -260,7 +262,10 @@ fn infer_integer_feature_spec(
             let mut max_value = u64::MIN;
 
             for row in 0..dataset.num_rows() {
-                let value = match dataset.value_at(row, column).expect("row/column should be valid") {
+                let value = match dataset
+                    .value_at(row, column)
+                    .expect("row/column should be valid")
+                {
                     DataValue::Unsigned(v) => v,
                     _ => unreachable!("unsigned column type mismatch while inferring schema"),
                 };
@@ -359,7 +364,10 @@ fn scaled_int_range(
     let mut max_value = i64::MIN;
 
     for row in 0..dataset.num_rows() {
-        let value = match dataset.value_at(row, column).expect("row/column should be valid") {
+        let value = match dataset
+            .value_at(row, column)
+            .expect("row/column should be valid")
+        {
             DataValue::F32(v) => v as f64,
             DataValue::F64(v) => v,
             _ => {

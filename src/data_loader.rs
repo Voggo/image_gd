@@ -190,10 +190,7 @@ impl CsvDataLoader {
             FeatureDataType::F64 => FloatStorage::F64,
             FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
                 return Err(EntroGdError::InvalidCsvConfiguration {
-                    message: format!(
-                        "float storage must be F32 or F64, got {:?}",
-                        float_type
-                    ),
+                    message: format!("float storage must be F32 or F64, got {:?}", float_type),
                 });
             }
         };
@@ -414,8 +411,12 @@ fn infer_column_type(value: &str) -> InferredColumnType {
 
 fn merge_column_types(lhs: InferredColumnType, rhs: InferredColumnType) -> InferredColumnType {
     match (lhs, rhs) {
-        (InferredColumnType::Float, _) | (_, InferredColumnType::Float) => InferredColumnType::Float,
-        (InferredColumnType::Signed, _) | (_, InferredColumnType::Signed) => InferredColumnType::Signed,
+        (InferredColumnType::Float, _) | (_, InferredColumnType::Float) => {
+            InferredColumnType::Float
+        }
+        (InferredColumnType::Signed, _) | (_, InferredColumnType::Signed) => {
+            InferredColumnType::Signed
+        }
         _ => InferredColumnType::Unsigned,
     }
 }
@@ -508,7 +509,10 @@ mod tests {
         std::fs::write(&path, "a,b\n1,\n").unwrap();
 
         let err = CsvDataLoader::new(true).load(&path).unwrap_err();
-        assert!(matches!(err, EntroGdError::MissingCsvValue { row: 0, column: 1 }));
+        assert!(matches!(
+            err,
+            EntroGdError::MissingCsvValue { row: 0, column: 1 }
+        ));
 
         let _ = std::fs::remove_file(path);
     }

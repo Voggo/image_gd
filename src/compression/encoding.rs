@@ -107,7 +107,6 @@ impl Filter for EncodeDataHuffman {
 
         // debug_save_id_deviation_data(&bit_data, &(*base_bit_groups), "debug_output.csv")?;
 
-
         Ok(compressed)
     }
 }
@@ -423,7 +422,10 @@ fn build_symbol_frequencies(
         *frequencies.entry(symbol).or_insert(0) += 1;
     }
     // Print sorted frequencies for debugging
-    let mut freq_vec: Vec<(u64, usize)> = frequencies.iter().map(|(&symbol, &freq)| (symbol, freq)).collect();
+    let mut freq_vec: Vec<(u64, usize)> = frequencies
+        .iter()
+        .map(|(&symbol, &freq)| (symbol, freq))
+        .collect();
     freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
     tracing::debug!(frequencies = ?freq_vec, "Built symbol frequencies for Huffman encoding");
 

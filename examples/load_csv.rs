@@ -1,4 +1,5 @@
-use entro_gd::prelude::*;
+use entro_gd::data_loader::{CsvDataLoader, DataLoader};
+use entro_gd::{BitDataSet, EntroGdError, calculate_entropy, init_logging};
 
 fn main() -> Result<(), EntroGdError> {
     let _log_handle = init_logging();

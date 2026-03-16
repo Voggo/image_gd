@@ -3,6 +3,7 @@ use entro_gd::BitDataReconstructionInfo;
 use entro_gd::ImageColorModel;
 use entro_gd::ScopedTimer;
 use entro_gd::prelude::*;
+use entro_gd::{BitDataSet, EntroGdError, init_logging};
 use image::{RgbImage, RgbaImage};
 use std::env;
 use std::fs;
@@ -55,8 +56,16 @@ fn main() -> Result<(), EntroGdError> {
     fs::create_dir_all(&compressed_folder)?;
     fs::create_dir_all(&decompressed_folder)?;
 
-    let compression_pipeline =
-        build_image_compression_pipeline(ImageColorSpace::SrgbWithLinearAlpha, 10, 50, 10);
+    let compression_pipeline = BuildImageBitDataSet {
+        colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+        color_model: ImageColorModel::YCoCgR,
+        pixel_grouping: 1,
+        grouping_transform: ImageGroupingTransform::Raw,
+    }
+    .then(EntropyOptimized {})
+    .then(GenCondensedSamples { m_max: 0 })
+    .then(SelectBases { patience: 10 })
+    .then(EncodeDataOptimized {});
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());

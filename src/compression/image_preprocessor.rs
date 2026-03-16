@@ -2,9 +2,11 @@ use bitvec::prelude::*;
 use image::DynamicImage;
 use std::path::PathBuf;
 
+pub use crate::compression::tabular_preprocessor::{ImageColorModel, ImageGroupingTransform};
+
 use crate::compression::tabular_preprocessor::{
-    BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
-    ImageGroupingTransform, ImageReconstructionInfo,
+    BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
+    ImageReconstructionInfo,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;

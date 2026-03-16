@@ -8,10 +8,9 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use std::hint::black_box;
 
-use entro_gd::CompressedData;
-use entro_gd::Dataset;
-use entro_gd::compression::compress::DecompressRowsData;
+use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
+use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRowsData};
 
 #[derive(Clone, Copy)]
 enum CompressionVariant {

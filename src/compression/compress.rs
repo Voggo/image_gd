@@ -1,136 +1,10 @@
-pub use crate::compression::base_selection::{
-    SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
-};
-pub use crate::compression::condensed_samples::GenCondensedSamples;
-pub use crate::compression::encoding::{
-    EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE,
-};
-use crate::compression::entropy::EntropyOptimized;
-use crate::compression::image_preprocessor::{BuildImageBitDataSet, ImageColorSpace};
-use crate::compression::preprocessor::ImageColorModel;
-use crate::compression::preprocessor::ImageGroupingTransform;
-use crate::compression::tabular_preprocessor::{
-    BitDataInfo, BitDataReconstructionInfo, BitDataSet, BuildBitDataSet, InferFeatureSpecs,
-    PreprocessOptions,
-};
-use crate::data_loader::Dataset;
+use crate::compression::tabular_preprocessor::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
-use crate::filter_pipeline::{Filter, FilterExt};
 use bitvec::prelude::*;
 use fxhash::FxHashMap;
-use std::path::PathBuf;
 
 const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
 const HUFFMAN_MAX_CODE_LENGTH: u8 = 24;
-
-pub use crate::compression::decompression::{
-    DecompressAnalytics, DecompressFileData, DecompressRowsData,
-};
-
-pub fn build_compression_pipeline(
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-    EntropyOptimized {}
-        .then(GenCondensedSamples { m_max })
-        .then(SelectBases { patience })
-        .then(EncodeData {})
-}
-
-pub fn build_compression_pipeline_optimized(
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-    EntropyOptimized {}
-        .then(GenCondensedSamples { m_max })
-        .then(SelectBasesOptimizedv1 { patience })
-        .then(EncodeDataOptimized {})
-}
-
-pub fn build_compression_pipeline_with_preprocessing(
-    preprocess_options: PreprocessOptions,
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = Dataset, Output = CompressedData> {
-    InferFeatureSpecs {
-        options: preprocess_options,
-    }
-    .then(BuildBitDataSet)
-    .then(EntropyOptimized {})
-    .then(GenCondensedSamples { m_max })
-    .then(SelectBases { patience })
-    .then(EncodeDataOptimized {})
-}
-
-pub fn build_image_compression_pipeline(
-    colorspace: ImageColorSpace,
-    pixel_grouping: u32,
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = PathBuf, Output = CompressedData> {
-    build_image_compression_pipeline_with_transform_and_model(
-        colorspace,
-        ImageColorModel::YCoCgR,
-        pixel_grouping,
-        ImageGroupingTransform::ForMin,
-        m_max,
-        patience,
-    )
-}
-
-pub fn build_image_compression_pipeline_with_model(
-    colorspace: ImageColorSpace,
-    color_model: ImageColorModel,
-    pixel_grouping: u32,
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = PathBuf, Output = CompressedData> {
-    build_image_compression_pipeline_with_transform_and_model(
-        colorspace,
-        color_model,
-        pixel_grouping,
-        ImageGroupingTransform::Raw,
-        m_max,
-        patience,
-    )
-}
-
-pub fn build_image_compression_pipeline_with_transform(
-    colorspace: ImageColorSpace,
-    pixel_grouping: u32,
-    grouping_transform: ImageGroupingTransform,
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = PathBuf, Output = CompressedData> {
-    build_image_compression_pipeline_with_transform_and_model(
-        colorspace,
-        ImageColorModel::Rgb,
-        pixel_grouping,
-        grouping_transform,
-        m_max,
-        patience,
-    )
-}
-
-pub fn build_image_compression_pipeline_with_transform_and_model(
-    colorspace: ImageColorSpace,
-    color_model: ImageColorModel,
-    pixel_grouping: u32,
-    grouping_transform: ImageGroupingTransform,
-    m_max: usize,
-    patience: usize,
-) -> impl Filter<Input = PathBuf, Output = CompressedData> {
-    BuildImageBitDataSet {
-        colorspace,
-        color_model,
-        pixel_grouping,
-        grouping_transform,
-    }
-        .then(EntropyOptimized {})
-        .then(GenCondensedSamples { m_max })
-        .then(SelectBases { patience })
-        .then(EncodeDataOptimized {})
-}
 
 pub(crate) fn huffman_row_layout(
     metadata: &BitDataInfo,
@@ -1135,28 +1009,35 @@ impl EncodedData {
     }
 }
 
-/// Calculate the original uncompressed size in bits
-#[cfg(test)]
-fn calculate_original_size(bit_data: &BitDataSet) -> usize {
-    bit_data.data.num_rows * bit_data.data.chunk_size
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::compression::base_bits::BaseBitGroups;
+    use crate::compression::base_selection::SelectBases;
     use crate::compression::base_selection::calculate_compressed_size;
-    use crate::compression::compress::build_compression_pipeline;
+    use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_samples_batch;
-    use crate::compression::decompression::{decompress_analytics, decompress_file};
+    use crate::compression::decompression::{
+        DecompressRowsData, decompress_analytics, decompress_file,
+    };
+    use crate::compression::encoding::{EncodeData, EncodeDataRLE};
+    use crate::compression::entropy::EntropyOptimized;
     use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
-    use crate::filter_pipeline::Filter;
+    use crate::filter_pipeline::{Filter, FilterExt};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 
+    /// Calculate the original uncompressed size in bits
+    fn calculate_original_size(bit_data: &BitDataSet) -> usize {
+        bit_data.data.num_rows * bit_data.data.chunk_size
+    }
+
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        build_compression_pipeline(100, 5)
+        EntropyOptimized {}
+            .then(GenCondensedSamples { m_max: 50 })
+            .then(SelectBases { patience: 10 })
+            .then(EncodeData {})
     }
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
