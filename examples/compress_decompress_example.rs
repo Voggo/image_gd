@@ -2,11 +2,9 @@ use entro_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{
     BitDataSet, DecompressAnalytics, DecompressFileData, EntroGdError, LoadEgdFile, SaveEgdFile,
-    ScopedTimer, decode_value_from_bits, init_logging,
+    ScopedTimer, decode_value_from_bits, init_logging, write_bitdata_as_csv,
 };
 use std::env;
-use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 fn main() -> Result<(), EntroGdError> {
@@ -185,41 +183,8 @@ fn main() -> Result<(), EntroGdError> {
 
     // Convert decompressed BitData back to CSV
     tracing::info!("\nWriting decompressed data to: {}", output_path);
-    write_bitdata_to_csv(&decompressed, &output_path, metadata.headers.as_deref())?;
+    write_bitdata_as_csv(&decompressed, &output_path, metadata.headers.as_deref())?;
     tracing::info!("Done!");
-
-    Ok(())
-}
-
-/// Convert BitData back to a CSV file
-fn write_bitdata_to_csv(
-    bit_data: &BitDataSet,
-    path: &str,
-    headers: Option<&[String]>,
-) -> Result<(), EntroGdError> {
-    let mut file = File::create(path)?;
-
-    // Write headers if available
-    if let Some(headers) = headers {
-        writeln!(file, "{}", headers.join(","))?;
-    }
-
-    // Write each row
-    for row in 0..bit_data.data.num_rows {
-        let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
-        for feature in 0..bit_data.info.num_features() {
-            let feature_bits = bit_data.get_feature(row, feature);
-            let spec = bit_data.info.feature_spec(feature);
-            let formatted = match decode_value_from_bits(feature_bits, spec) {
-                DataValue::Unsigned(v) => v.to_string(),
-                DataValue::Signed(v) => v.to_string(),
-                DataValue::F32(v) => v.to_string(),
-                DataValue::F64(v) => v.to_string(),
-            };
-            values.push(formatted);
-        }
-        writeln!(file, "{}", values.join(","))?;
-    }
 
     Ok(())
 }

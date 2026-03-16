@@ -398,7 +398,7 @@ fn encode_data_huffman<B: BaseBit + ?Sized>(
         append_code_bits(&mut pixel_bit_stream, code, code_len);
     }
 
-    Ok(HuffmanDeviationData::new(
+    HuffmanDeviationData::new(
         pixel_bit_stream,
         canonical_symbols,
         canonical_code_lengths,
@@ -408,7 +408,7 @@ fn encode_data_huffman<B: BaseBit + ?Sized>(
         context.num_deviation_bits,
         context.l_id,
         row_width,
-    )?)
+    )
 }
 
 fn build_symbol_frequencies(

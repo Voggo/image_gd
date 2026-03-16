@@ -6,9 +6,12 @@ use crate::compression::compress::{
     CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX,
     RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
+use crate::compression::decompression::{
+    decompress_file, write_bitdata_as_csv, write_bitdata_as_image,
+};
 use crate::compression::tabular_preprocessor::{
-    BitDataInfo, BitDataReconstructionInfo, FeatureSpec, FeatureTransform, ImageColorModel,
-    ImageGroupingTransform, ImageReconstructionInfo,
+    BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, FeatureTransform,
+    ImageColorModel, ImageGroupingTransform, ImageReconstructionInfo,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -662,6 +665,24 @@ pub fn load_compressed_from_egd<P: AsRef<Path>>(
     EgdFile::load(input_path)?.to_compressed_data()
 }
 
+/// Load an `.egd` file and fully decompress its payload into bit data.
+pub fn load_and_decompress_egd<P: AsRef<Path>>(input_path: P) -> Result<BitDataSet, EntroGdError> {
+    let compressed = load_compressed_from_egd(input_path)?;
+    decompress_file(&compressed)
+}
+
+/// Load an `.egd` file, decompress it, and write a CSV file.
+pub fn decompress_egd_to_csv<P: AsRef<Path>, Q: AsRef<Path>>(
+    input_path: P,
+    output_path: Q,
+    headers: Option<&[String]>,
+) -> Result<PathBuf, EntroGdError> {
+    let bit_data = load_and_decompress_egd(input_path)?;
+    let target = ensure_csv_extension(output_path.as_ref());
+    write_bitdata_as_csv(&bit_data, &target, headers)?;
+    Ok(target)
+}
+
 pub const IMAGE_MAGIC_BYTES: [u8; 3] = *b"IGD";
 pub const IMAGE_FORMAT_VERSION: u8 = 3;
 
@@ -860,6 +881,23 @@ pub fn load_compressed_from_igd<P: AsRef<Path>>(
     IgdFile::load(input_path)?.to_compressed_data()
 }
 
+/// Load an `.igd` file and fully decompress its payload into bit data.
+pub fn load_and_decompress_igd<P: AsRef<Path>>(input_path: P) -> Result<BitDataSet, EntroGdError> {
+    let compressed = load_compressed_from_igd(input_path)?;
+    decompress_file(&compressed)
+}
+
+/// Load an `.igd` file, decompress it, and regenerate the image file.
+pub fn decompress_igd_to_image<P: AsRef<Path>, Q: AsRef<Path>>(
+    input_path: P,
+    output_path: Q,
+) -> Result<PathBuf, EntroGdError> {
+    let bit_data = load_and_decompress_igd(input_path)?;
+    let target = output_path.as_ref().to_path_buf();
+    write_bitdata_as_image(&bit_data, &target)?;
+    Ok(target)
+}
+
 fn ensure_egd_extension(path: &Path) -> PathBuf {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("egd") => path.to_path_buf(),
@@ -877,6 +915,17 @@ fn ensure_igd_extension(path: &Path) -> PathBuf {
         _ => {
             let mut out = path.to_path_buf();
             out.set_extension("igd");
+            out
+        }
+    }
+}
+
+fn ensure_csv_extension(path: &Path) -> PathBuf {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("csv") => path.to_path_buf(),
+        _ => {
+            let mut out = path.to_path_buf();
+            out.set_extension("csv");
             out
         }
     }

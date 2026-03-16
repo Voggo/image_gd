@@ -15,7 +15,9 @@ pub use compression::{
     ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo, InferFeatureSpecs,
     LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, RleDeviationData, SaveEgdFile,
     SaveIgdFile, SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2,
-    SelectBasesOptimizedv3, calculate_entropy, decode_value_from_bits,
+    SelectBasesOptimizedv3, calculate_entropy, decode_value_from_bits, decompress_egd_to_csv,
+    decompress_igd_to_image, load_and_decompress_egd, load_and_decompress_igd,
+    write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
 pub use data_loader::{
     ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,

@@ -1,9 +1,17 @@
 use crate::compression::compress::{CompressedData, CondensedSamples, build_base_bit_mask};
+use crate::compression::preprocessor::{
+    BitDataReconstructionInfo, ImageColorModel, ImageGroupingTransform, decode_value_from_bits,
+};
 use crate::compression::tabular_preprocessor::{BitData, BitDataSet};
+use crate::data_loader::DataValue;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
+use image::{RgbImage, RgbaImage};
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct DecompressRowsData;
@@ -189,6 +197,339 @@ pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamp
     } else {
         None
     }
+}
+
+/// Write decompressed bit data back to a CSV file.
+pub fn write_bitdata_as_csv<P: AsRef<Path>>(
+    bit_data: &BitDataSet,
+    output_path: P,
+    headers: Option<&[String]>,
+) -> Result<(), EntroGdError> {
+    let mut file = File::create(output_path)?;
+
+    if let Some(headers) = headers {
+        writeln!(file, "{}", headers.join(","))?;
+    }
+
+    for row in 0..bit_data.data.num_rows {
+        let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
+        for feature in 0..bit_data.info.num_features() {
+            let feature_bits = bit_data.get_feature(row, feature);
+            let spec = bit_data.info.feature_spec(feature);
+            let formatted = match decode_value_from_bits(feature_bits, spec) {
+                DataValue::Unsigned(v) => v.to_string(),
+                DataValue::Signed(v) => v.to_string(),
+                DataValue::F32(v) => v.to_string(),
+                DataValue::F64(v) => v.to_string(),
+            };
+            values.push(formatted);
+        }
+        writeln!(file, "{}", values.join(","))?;
+    }
+
+    Ok(())
+}
+
+/// Write decompressed image bit data back to an image file.
+pub fn write_bitdata_as_image<P: AsRef<Path>>(
+    bit_data: &BitDataSet,
+    output_path: P,
+) -> Result<(), EntroGdError> {
+    let image_info = match &bit_data.info.reconstruction {
+        BitDataReconstructionInfo::Image(info) => *info,
+        BitDataReconstructionInfo::Tabular => {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "cannot write image from tabular reconstruction metadata".to_string(),
+            });
+        }
+    };
+
+    let channels = image_info.channels as usize;
+    let pixel_grouping = image_info.pixel_grouping as usize;
+    if bit_data.num_features() != channels {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "feature count {} does not match image channel count {}",
+                bit_data.num_features(),
+                channels
+            ),
+        });
+    }
+
+    let grouped_width = (image_info.width as usize).div_ceil(pixel_grouping);
+    let expected_rows = grouped_width * image_info.height as usize;
+    if bit_data.num_rows() != expected_rows {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "grouped image row count {} does not match expected {}",
+                bit_data.num_rows(),
+                expected_rows
+            ),
+        });
+    }
+
+    let mut raw =
+        Vec::with_capacity(image_info.width as usize * image_info.height as usize * channels);
+    for row in 0..bit_data.num_rows() {
+        let group_x = row % grouped_width;
+        let mut decoded_channels = Vec::with_capacity(channels);
+        for feature in 0..channels {
+            let feature_bits = bit_data.get_feature(row, feature);
+            decoded_channels.push(decode_grouped_feature(
+                feature_bits,
+                pixel_grouping,
+                image_info.grouping_transform,
+            )?);
+        }
+
+        for offset in 0..pixel_grouping {
+            let pixel_x = group_x * pixel_grouping + offset;
+            if pixel_x < image_info.width as usize {
+                for channel_values in &decoded_channels {
+                    raw.push(channel_values[offset]);
+                }
+            }
+        }
+    }
+
+    let output_raw = match image_info.color_model {
+        ImageColorModel::Rgb => raw,
+        ImageColorModel::YCoCg => convert_ycocg_to_rgb_channels(&raw, channels),
+        ImageColorModel::YCoCgR => convert_ycocg_r_to_rgb_channels(&raw, channels),
+    };
+
+    save_raw_image(
+        output_path.as_ref(),
+        image_info.width,
+        image_info.height,
+        image_info.channels,
+        output_raw,
+    )
+}
+
+/// Write decompressed data to a format-appropriate output file.
+///
+/// - `Tabular` reconstruction metadata writes CSV.
+/// - `Image` reconstruction metadata writes an image file.
+pub fn write_bitdata_to_output<P: AsRef<Path>>(
+    bit_data: &BitDataSet,
+    output_path: P,
+    headers: Option<&[String]>,
+) -> Result<(), EntroGdError> {
+    match bit_data.info.reconstruction {
+        BitDataReconstructionInfo::Tabular => write_bitdata_as_csv(bit_data, output_path, headers),
+        BitDataReconstructionInfo::Image(_) => write_bitdata_as_image(bit_data, output_path),
+    }
+}
+
+fn byte_from_bits(bits: &BitSlice<usize, Msb0>) -> Result<u8, EntroGdError> {
+    if bits.len() != 8 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!("expected 8 bits for image byte, got {}", bits.len()),
+        });
+    }
+
+    Ok(bits
+        .iter()
+        .fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit)))
+}
+
+fn bits_to_u16(bits: &BitSlice<usize, Msb0>) -> Result<u16, EntroGdError> {
+    if bits.len() > 16 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!("expected at most 16 bits, got {}", bits.len()),
+        });
+    }
+
+    Ok(bits
+        .iter()
+        .fold(0u16, |acc, bit| (acc << 1) | u16::from(*bit)))
+}
+
+fn decode_grouped_feature(
+    bits: &BitSlice<usize, Msb0>,
+    pixel_grouping: usize,
+    grouping_transform: ImageGroupingTransform,
+) -> Result<Vec<u8>, EntroGdError> {
+    match grouping_transform {
+        ImageGroupingTransform::Raw => bits.chunks(8).map(byte_from_bits).collect(),
+        ImageGroupingTransform::ForFirstPixel => {
+            if pixel_grouping == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "pixel_grouping must be > 0".to_string(),
+                });
+            }
+
+            let expected_bits = 8 + pixel_grouping.saturating_sub(1) * 9;
+            if bits.len() != expected_bits {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "invalid FOR(first pixel) feature width: expected {}, got {}",
+                        expected_bits,
+                        bits.len()
+                    ),
+                });
+            }
+
+            let anchor = byte_from_bits(&bits[0..8])? as i16;
+            let mut values = Vec::with_capacity(pixel_grouping);
+            values.push(anchor as u8);
+
+            for offset in 0..pixel_grouping.saturating_sub(1) {
+                let start = 8 + offset * 9;
+                let end = start + 9;
+                let biased = bits_to_u16(&bits[start..end])? as i16;
+                let value = anchor + biased - 255;
+                if !(0..=255).contains(&value) {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!("decoded grouped image byte out of range: {}", value),
+                    });
+                }
+                values.push(value as u8);
+            }
+
+            Ok(values)
+        }
+        ImageGroupingTransform::ForMin => {
+            if pixel_grouping == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "pixel_grouping must be > 0".to_string(),
+                });
+            }
+
+            let position_bits = min_position_bits(pixel_grouping);
+            let expected_bits = 8 + position_bits + pixel_grouping.saturating_sub(1) * 9;
+            if bits.len() != expected_bits {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "invalid FOR(min) feature width: expected {}, got {}",
+                        expected_bits,
+                        bits.len()
+                    ),
+                });
+            }
+
+            let anchor = byte_from_bits(&bits[0..8])? as u16;
+            let min_position = if position_bits == 0 {
+                0
+            } else {
+                bits_to_u16(&bits[8..8 + position_bits])? as usize
+            };
+            if min_position >= pixel_grouping {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!("FOR(min) min position {} out of bounds", min_position),
+                });
+            }
+
+            let mut values = Vec::with_capacity(pixel_grouping);
+            let mut residual_cursor = 8 + position_bits;
+            for idx in 0..pixel_grouping {
+                if idx == min_position {
+                    values.push(anchor as u8);
+                    continue;
+                }
+
+                let biased = bits_to_u16(&bits[residual_cursor..residual_cursor + 9])? as i16;
+                let value = anchor as i16 + biased - 255;
+                if !(0..=255).contains(&value) {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!("decoded grouped image byte out of range: {}", value),
+                    });
+                }
+                values.push(value as u8);
+                residual_cursor += 9;
+            }
+
+            Ok(values)
+        }
+    }
+}
+
+fn min_position_bits(pixels_per_group: usize) -> usize {
+    if pixels_per_group <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (pixels_per_group - 1).leading_zeros() as usize
+    }
+}
+
+fn convert_ycocg_to_rgb_channels(raw: &[u8], channels: usize) -> Vec<u8> {
+    let mut out = raw.to_vec();
+    for pixel in out.chunks_exact_mut(channels) {
+        let y = i16::from(pixel[0]);
+        let co = i16::from(pixel[1]) - 128;
+        let cg = i16::from(pixel[2]) - 128;
+
+        let r = y + co - cg;
+        let g = y + cg;
+        let b = y - co - cg;
+
+        pixel[0] = clamp_to_u8(r);
+        pixel[1] = clamp_to_u8(g);
+        pixel[2] = clamp_to_u8(b);
+    }
+    out
+}
+
+fn convert_ycocg_r_to_rgb_channels(raw: &[u8], channels: usize) -> Vec<u8> {
+    let mut out = raw.to_vec();
+    for pixel in out.chunks_exact_mut(channels) {
+        let y = pixel[0];
+        let co = pixel[1].wrapping_sub(128);
+        let cg = pixel[2].wrapping_sub(128);
+
+        let t = y.wrapping_sub(signed_half_wrapped(cg));
+        let g = cg.wrapping_add(t);
+        let b = t.wrapping_sub(signed_half_wrapped(co));
+        let r = b.wrapping_add(co);
+
+        pixel[0] = r;
+        pixel[1] = g;
+        pixel[2] = b;
+    }
+    out
+}
+
+fn signed_half_wrapped(value: u8) -> u8 {
+    ((value as i8) >> 1) as u8
+}
+
+fn clamp_to_u8(value: i16) -> u8 {
+    value.clamp(0, 255) as u8
+}
+
+fn save_raw_image(
+    output_path: &Path,
+    width: u32,
+    height: u32,
+    channels: u8,
+    raw: Vec<u8>,
+) -> Result<(), EntroGdError> {
+    match channels {
+        3 => {
+            let image = RgbImage::from_raw(width, height, raw).ok_or_else(|| {
+                EntroGdError::InvalidMetadata {
+                    message: "raw RGB buffer size does not match width*height*3".to_string(),
+                }
+            })?;
+            image.save(output_path)?;
+        }
+        4 => {
+            let image = RgbaImage::from_raw(width, height, raw).ok_or_else(|| {
+                EntroGdError::InvalidMetadata {
+                    message: "raw RGBA buffer size does not match width*height*4".to_string(),
+                }
+            })?;
+            image.save(output_path)?;
+        }
+        _ => {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!("unsupported channel count {}", channels),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
