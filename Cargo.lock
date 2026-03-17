@@ -463,6 +463,8 @@ dependencies = [
  "image",
  "once_cell",
  "pretty_assertions",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

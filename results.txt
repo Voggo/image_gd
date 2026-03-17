@@ -1,0 +1,670 @@
+Rows: 504
+By input kind:
+  Image: 504
+
+Files: 7
+
+=== data/images/dice.png (72 runs) ===
+Best (time): img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized | Optimized | total_ms=127.79 | size=1.92 MB (15361014 bits) | ratio=1.0001
+Best (size): img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle | Rle | total_ms=221.02 | size=505.80 KB (4046376 bits) | ratio=0.2634
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized      127.79      1.92 MB       15361014   1.0001
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized      133.35      1.92 MB       15360822   1.0001
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle            135.06    678.54 KB        5428354   0.3534
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle            137.71    663.50 KB        5308026   0.3456
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized      156.91      1.92 MB       15360250   1.0000
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle            221.02    505.80 KB        4046376   0.2634
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle            245.85    505.80 KB        4046376   0.2634
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle            244.01    505.80 KB        4046376   0.2634
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle            229.18    505.80 KB        4046376   0.2634
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle            230.06    505.80 KB        4046376   0.2634
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized      212.74      1.92 MB       15360156   1.0000
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle            221.02    505.80 KB        4046376   0.2634
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized      216.31      1.92 MB       15360156   1.0000
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle            245.85    505.80 KB        4046376   0.2634
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized      228.63      1.92 MB       15360156   1.0000
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle            244.01    505.80 KB        4046376   0.2634
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized      166.94      1.92 MB       15360250   1.0000
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle            176.14    566.54 KB        4532302   0.2951
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized      339.35    959.05 KB        7672410   0.4701
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle            335.08    626.03 KB        5008206   0.3069
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized      230.67      2.16 MB       17280274   1.0000
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle            248.91    636.46 KB        5091702   0.2947
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized      336.51    749.31 KB        5994471   0.3903
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle            341.95    599.78 KB        4798258   0.3124
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized      388.35    798.06 KB        6384447   0.3800
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle            394.12    648.53 KB        5188234   0.3088
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized      461.89    830.55 KB        6644431   0.3741
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle            461.78    681.03 KB        5448218   0.3068
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized      183.29      2.02 MB       16121580   1.0444
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle            191.47    799.04 KB        6392350   0.4141
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized      418.79    774.96 KB        6199691   0.3637
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle            422.19    676.56 KB        5412476   0.3175
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized      259.31      2.40 MB       19165477   1.0642
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle            266.86    945.27 KB        7562172   0.4199
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized      341.42    706.61 KB        5652884   0.3680
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle            339.73    634.50 KB        5075967   0.3305
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized      437.53    771.33 KB        6170632   0.3621
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle            426.48    699.21 KB        5593715   0.3283
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized      486.91    799.07 KB        6392524   0.3599
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle            501.15    726.95 KB        5815607   0.3275
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized      169.40      2.00 MB       15961664   1.0392
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle            168.87    804.12 KB        6432979   0.4188
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized      450.40    767.23 KB        6137800   0.3592
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle            450.52    714.26 KB        5714090   0.3344
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized      489.63    797.84 KB        6382744   0.3575
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle            504.76    744.88 KB        5959034   0.3337
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized      213.34      1.92 MB       15360156   1.0000
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle            229.18    505.80 KB        4046376   0.2634
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized      222.53      1.92 MB       15360156   1.0000
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle            230.06    505.80 KB        4046376   0.2634
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized      210.39      1.92 MB       15360156   1.0000
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle            238.20    505.80 KB        4046376   0.2634
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized      156.91      1.92 MB       15360250   1.0000
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle            169.86    566.54 KB        4532302   0.2951
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized      331.98    959.05 KB        7672410   0.4701
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle            327.90    626.03 KB        5008206   0.3069
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized      218.70      2.16 MB       17280274   1.0000
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle            233.79    636.46 KB        5091702   0.2947
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized      313.05    749.31 KB        5994471   0.3903
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle            320.07    599.78 KB        4798258   0.3124
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized      388.43    798.06 KB        6384447   0.3800
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle            391.27    648.53 KB        5188234   0.3088
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized      227.06      2.22 MB       17760500   1.0000
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle            235.53    715.22 KB        5721728   0.3222
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized      328.33    716.39 KB        5731113   0.3713
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle            328.81    620.82 KB        4966560   0.3217
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized      413.67    774.99 KB        6199913   0.3637
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle            418.17    679.42 KB        5435360   0.3189
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized      465.62    810.15 KB        6481193   0.3599
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle            472.57    714.58 KB        5716640   0.3174
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized      133.35      1.92 MB       15360822   1.0001
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle            137.71    663.50 KB        5308026   0.3456
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized      427.24    771.33 KB        6170632   0.3621
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle            430.73    699.21 KB        5593715   0.3283
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized      220.79      2.22 MB       17760942   1.0001
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle            230.69    766.92 KB        6135386   0.3455
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized      127.79      1.92 MB       15361014   1.0001
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle            135.06    678.54 KB        5428354   0.3534
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized      447.82    767.23 KB        6137800   0.3592
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle            446.87    714.26 KB        5714090   0.3344
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized      495.20    797.84 KB        6382744   0.3575
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle            494.91    744.88 KB        5959034   0.3337
+
+=== data/images/edgecase.png (72 runs) ===
+Best (time): img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized | Optimized | total_ms=2.90 | size=2.86 KB (22894 bits) | ratio=0.0582
+Best (size): img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle | Rle | total_ms=3.41 | size=876.50 B (7012 bits) | ratio=0.0178
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized        2.90      2.86 KB          22894   0.0582
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized        2.96      3.02 KB          24168   0.0610
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized        2.97      3.04 KB          24319   0.0614
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle              2.97     891.25 B           7130   0.0181
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized        2.98      2.86 KB          22894   0.0582
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle              3.41     876.50 B           7012   0.0178
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle              3.34     876.50 B           7012   0.0178
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle              5.28     880.62 B           7045   0.0169
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle              5.10     880.62 B           7045   0.0169
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle              5.05     884.75 B           7078   0.0160
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized        3.76      4.13 KB          33002   0.0839
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle              4.15      1.15 KB           9228   0.0235
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized        3.81      4.13 KB          33002   0.0839
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle              4.29      1.15 KB           9228   0.0235
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized        3.81      4.13 KB          33002   0.0839
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle              4.33      1.15 KB           9228   0.0235
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized        3.24      3.15 KB          25161   0.0640
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle              3.41     876.50 B           7012   0.0178
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized        5.13      3.15 KB          25194   0.0603
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle              5.28     880.62 B           7045   0.0169
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized        5.00      3.15 KB          25227   0.0570
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle              5.05     884.75 B           7078   0.0160
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized        2.90      2.86 KB          22894   0.0582
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle              2.97     891.25 B           7130   0.0181
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized        5.79      2.89 KB          23110   0.0537
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle              5.78     918.25 B           7346   0.0171
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized        5.61      2.91 KB          23254   0.0511
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle              5.69     936.25 B           7490   0.0165
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized        2.96      3.02 KB          24168   0.0610
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle              3.13      1.43 KB          11424   0.0288
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized        6.27      3.12 KB          24948   0.0570
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle              6.08      1.53 KB          12204   0.0279
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized        5.71      3.18 KB          25416   0.0550
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle              5.78      1.58 KB          12672   0.0274
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized        2.99      4.49 KB          35891   0.0913
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle              2.98      3.12 KB          24991   0.0636
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized        6.58      4.78 KB          38222   0.0876
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle              6.59      3.42 KB          27322   0.0626
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized        6.06      4.90 KB          39221   0.0863
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle              6.08      3.54 KB          28321   0.0623
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized        3.37      6.05 KB          48366   0.1211
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle              3.43      4.79 KB          38350   0.0960
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized        7.08     12.78 KB         102222   0.2301
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle              7.06      4.64 KB          37144   0.0836
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized        6.64      7.06 KB          56454   0.1216
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle              6.56      3.51 KB          28084   0.0605
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized        3.67      4.13 KB          33002   0.0839
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle              4.28      1.15 KB           9228   0.0235
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized        3.84      4.13 KB          33002   0.0839
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle              4.21      1.15 KB           9228   0.0235
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized        3.96      4.13 KB          33002   0.0839
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle              4.40      1.15 KB           9228   0.0235
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized        3.30      3.15 KB          25161   0.0640
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle              3.34     876.50 B           7012   0.0178
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized        4.99      3.15 KB          25194   0.0603
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle              5.10     880.62 B           7045   0.0169
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized        4.80      3.15 KB          25227   0.0570
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle              5.11     884.75 B           7078   0.0160
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized        2.98      2.86 KB          22894   0.0582
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle              3.20     891.25 B           7130   0.0181
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized        6.02      2.89 KB          23110   0.0537
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle              5.98     918.25 B           7346   0.0171
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized        5.69      2.91 KB          23254   0.0511
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle              5.65     936.25 B           7490   0.0165
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized        2.97      3.04 KB          24319   0.0614
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle              2.98      1.60 KB          12777   0.0322
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized        6.11      3.14 KB          25114   0.0574
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle              6.09      1.70 KB          13572   0.0310
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized        6.06      3.20 KB          25591   0.0554
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle              6.18      1.76 KB          14049   0.0304
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized        3.04      4.49 KB          35891   0.0913
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle              3.05      3.12 KB          24991   0.0636
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized        6.65      4.78 KB          38222   0.0876
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle              6.48      3.42 KB          27322   0.0626
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized        6.29      4.90 KB          39221   0.0863
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle              6.32      3.54 KB          28321   0.0623
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized        3.24      6.08 KB          48613   0.1217
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle              3.24      4.99 KB          39925   0.1000
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized        6.86      6.60 KB          52822   0.1189
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle              6.99      5.52 KB          44134   0.0993
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized        6.81      6.82 KB          54586   0.1176
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle              6.84      5.74 KB          45898   0.0989
+
+=== data/images/kodim10.png (72 runs) ===
+Best (time): img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized | Optimized | total_ms=144.68 | size=1.09 MB (8748488 bits) | ratio=0.9270
+Best (size): img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle | Rle | total_ms=227.03 | size=775.47 KB (6203770 bits) | ratio=0.6574
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized      144.68      1.09 MB        8748488   0.9270
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle            145.65      1.09 MB        8703753   0.9223
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized      150.76      1.23 MB        9872944   0.9430
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized      151.28      1.17 MB        9391981   0.9799
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle            152.07      1.23 MB        9817948   0.9378
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle            227.03    775.47 KB        6203770   0.6574
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle            231.12    775.47 KB        6203770   0.6574
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle            229.63    775.47 KB        6203770   0.6574
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle            214.72    775.47 KB        6203770   0.6574
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle            217.23    775.47 KB        6203770   0.6574
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized      207.70    809.42 KB        6475392   0.6862
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle            227.03    775.47 KB        6203770   0.6574
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized      208.75    809.42 KB        6475392   0.6862
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle            231.12    775.47 KB        6203770   0.6574
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized      212.54    809.42 KB        6475392   0.6862
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle            229.63    775.47 KB        6203770   0.6574
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized      235.94      1.02 MB        8136470   0.8622
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle            246.45      1.01 MB        8060748   0.8541
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized      218.80    953.09 KB        7624702   0.7604
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle            227.63    944.61 KB        7556849   0.7536
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized      213.00    941.94 KB        7535542   0.7098
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle            222.08    933.13 KB        7465066   0.7031
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized      197.23      1.07 MB        8536968   0.9046
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle            203.23      1.06 MB        8488710   0.8995
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized      209.38      1.01 MB        8057741   0.7806
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle            218.41      1.00 MB        8017143   0.7767
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized      187.74      1.05 MB        8380471   0.7680
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle            201.00      1.04 MB        8335277   0.7639
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized      171.06      1.12 MB        8964433   0.9425
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle            187.63      1.11 MB        8916033   0.9375
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized      218.89      1.36 MB       10917967   1.0396
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle            225.66      1.36 MB       10878027   1.0358
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized      182.29      1.13 MB        9025189   0.8134
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle            194.79      1.12 MB        8981019   0.8094
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized      182.91      1.22 MB        9797047   1.0381
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle            188.07      1.22 MB        9751981   1.0334
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized      160.41      1.40 MB       11204074   1.0702
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle            165.00      1.39 MB       11148085   1.0648
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized      180.55      1.20 MB        9563058   0.8764
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle            186.24      1.19 MB        9519647   0.8724
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized      184.57      1.34 MB       10730138   1.1195
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle            188.72      1.34 MB       10686018   1.1149
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized      155.44      1.48 MB       11832151   1.1097
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle            163.83      1.47 MB       11772431   1.1041
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized      186.01      1.26 MB       10048842   0.9019
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle            191.23      1.25 MB       10004462   0.8979
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized      196.94    809.42 KB        6475392   0.6862
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle            214.72    775.47 KB        6203770   0.6574
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized      197.59    809.42 KB        6475392   0.6862
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle            217.23    775.47 KB        6203770   0.6574
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized      203.33    809.42 KB        6475392   0.6862
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle            216.81    775.47 KB        6203770   0.6574
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized      213.73    883.79 KB        7070329   0.7492
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle            225.38    876.29 KB        7010345   0.7428
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized      212.09    903.46 KB        7227676   0.7208
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle            218.81    895.96 KB        7167692   0.7148
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized      216.89    911.63 KB        7293023   0.6869
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle            225.91    903.80 KB        7230416   0.6810
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized      176.18    939.94 KB        7519524   0.7968
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle            184.41    934.48 KB        7475862   0.7922
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized      189.52      1.06 MB        8464974   0.8201
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle            193.92      1.05 MB        8421312   0.8159
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized      193.15      1.01 MB        8115696   0.7438
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle            200.08      1.01 MB        8075098   0.7400
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized      179.41      1.05 MB        8363313   0.8793
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle            181.66      1.04 MB        8323373   0.8751
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized      172.76      1.17 MB        9397301   0.8948
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle            177.53      1.17 MB        9346081   0.8900
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized      189.24      1.16 MB        9296380   0.8378
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle            192.89      1.16 MB        9254560   0.8340
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized      144.68      1.09 MB        8748488   0.9270
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle            145.65      1.09 MB        8703753   0.9223
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized      150.76      1.23 MB        9872944   0.9430
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle            152.07      1.23 MB        9817948   0.9378
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized      185.90      1.24 MB        9885334   0.9059
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle            185.36      1.23 MB        9842916   0.9020
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized      151.28      1.17 MB        9391981   0.9799
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle            154.89      1.17 MB        9347341   0.9752
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized      158.47      1.38 MB       11077736   1.0389
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle            162.84      1.38 MB       11022436   1.0337
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized      188.04      1.39 MB       11127720   0.9987
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle            189.61      1.39 MB       11085680   0.9949
+
+=== data/images/rustacean.png (72 runs) ===
+Best (time): img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized | Optimized | total_ms=59.71 | size=162.36 KB (1298914 bits) | ratio=0.2874
+Best (size): img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle | Rle | total_ms=65.76 | size=55.02 KB (440133 bits) | ratio=0.0974
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized       59.71    162.36 KB        1298914   0.2874
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle             61.06     73.74 KB         589882   0.1305
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized       61.57    247.91 KB        1983307   0.4389
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized       62.15    247.91 KB        1983307   0.4389
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized       62.79    247.91 KB        1983307   0.4389
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle             65.76     55.02 KB         440133   0.0974
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle             68.85     55.02 KB         440133   0.0974
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle             67.30     55.02 KB         440133   0.0974
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle             70.65     55.02 KB         440133   0.0974
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle             71.56     55.02 KB         440133   0.0974
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized       62.15    247.91 KB        1983307   0.4389
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle             65.76     55.02 KB         440133   0.0974
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized       61.57    247.91 KB        1983307   0.4389
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle             68.85     55.02 KB         440133   0.0974
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized       62.79    247.91 KB        1983307   0.4389
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle             67.30     55.02 KB         440133   0.0974
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized       59.71    162.36 KB        1298914   0.2874
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle             61.06     73.74 KB         589882   0.1305
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized       75.58    165.28 KB        1322226   0.2754
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle             78.18     76.65 KB         613194   0.1277
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized       78.25    168.19 KB        1345538   0.2647
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle             80.73     79.56 KB         636506   0.1252
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized       65.78    135.84 KB        1086682   0.2405
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle             66.90     97.56 KB         780495   0.1727
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized       85.91    143.12 KB        1144930   0.2316
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle             90.80    104.84 KB         838743   0.1697
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized       91.89    147.97 KB        1183762   0.2266
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle             92.44    109.70 KB         877575   0.1680
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized       71.83    141.43 KB        1131430   0.2493
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle             71.95    119.46 KB         955663   0.2106
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized       90.63    152.09 KB        1216690   0.2428
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle             92.57    130.12 KB        1040923   0.2077
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized       96.64    158.48 KB        1267846   0.2394
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle             99.06    136.51 KB        1092079   0.2062
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized       76.51    155.49 KB        1243905   0.2729
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle             78.26    142.51 KB        1140101   0.2501
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized       94.29    190.56 KB        1524470   0.3015
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle             95.19    149.45 KB        1195584   0.2364
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized      105.68    195.14 KB        1561152   0.2962
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle            103.94    155.31 KB        1242497   0.2357
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized       81.40    173.15 KB        1385183   0.3065
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle             82.59    164.44 KB        1315519   0.2911
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized       97.68    193.20 KB        1545611   0.3074
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle             98.83    164.87 KB        1318955   0.2624
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized      107.13    205.13 KB        1641015   0.3124
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle            106.26    175.01 KB        1400087   0.2665
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized       65.79    247.91 KB        1983307   0.4389
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle             70.65     55.02 KB         440133   0.0974
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized       65.82    247.91 KB        1983307   0.4389
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle             71.56     55.02 KB         440133   0.0974
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized       67.92    247.91 KB        1983307   0.4389
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle             71.22     55.02 KB         440133   0.0974
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized       65.12    162.36 KB        1298914   0.2874
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle             66.95     73.74 KB         589882   0.1305
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized       81.89    165.28 KB        1322226   0.2754
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle             83.82     76.65 KB         613194   0.1277
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized       85.10    168.19 KB        1345538   0.2647
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle             88.40     79.56 KB         636506   0.1252
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized       73.35    135.84 KB        1086682   0.2405
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle             75.99     97.56 KB         780495   0.1727
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized       92.57    143.12 KB        1144930   0.2316
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle             93.68    104.84 KB         838743   0.1697
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized       98.13    147.97 KB        1183762   0.2266
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle            101.15    109.70 KB         877575   0.1680
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized       82.35    141.45 KB        1131631   0.2493
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle             83.01    120.78 KB         966270   0.2129
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized       97.27    152.11 KB        1216911   0.2428
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle            101.74    131.44 KB        1051550   0.2098
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized      105.88    158.51 KB        1268079   0.2395
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle            106.43    137.84 KB        1102718   0.2083
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized       92.25    155.52 KB        1244170   0.2729
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle             92.61    143.72 KB        1149730   0.2522
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized      101.98    207.59 KB        1660696   0.3284
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle            103.21    162.09 KB        1296728   0.2564
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized      114.71    175.55 KB        1404370   0.2665
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle            114.89    163.74 KB        1309930   0.2485
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized       98.40    173.15 KB        1385183   0.3065
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle            101.01    164.44 KB        1315519   0.2911
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized      106.86    209.71 KB        1677674   0.3337
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle            106.43    175.13 KB        1401066   0.2787
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized      119.34    197.74 KB        1581951   0.3011
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle            121.51    189.04 KB        1512287   0.2879
+
+=== data/images/testcard.png (72 runs) ===
+Best (time): img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized | Optimized | total_ms=27.19 | size=37.33 KB (298604 bits) | ratio=0.1424
+Best (size): img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle | Rle | total_ms=34.26 | size=26.04 KB (208310 bits) | ratio=0.0993
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized       27.19     37.33 KB         298604   0.1424
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized       27.46     43.07 KB         344566   0.1643
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized       27.96     58.32 KB         466593   0.2225
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle             28.01     35.26 KB         282078   0.1345
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle             28.10     34.24 KB         273895   0.1306
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle             34.26     26.04 KB         208310   0.0993
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle             34.49     26.04 KB         208310   0.0993
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle             34.74     26.04 KB         208310   0.0993
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle             32.48     26.04 KB         208310   0.0993
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle             31.81     26.04 KB         208310   0.0993
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized       34.84     95.91 KB         767247   0.3659
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle             34.26     26.04 KB         208310   0.0993
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized       31.65     95.91 KB         767247   0.3659
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle             34.49     26.04 KB         208310   0.0993
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized       33.17     95.91 KB         767247   0.3659
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle             34.74     26.04 KB         208310   0.0993
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized       29.00     58.32 KB         466593   0.2225
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle             31.06     29.66 KB         237245   0.1131
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized       33.43     59.13 KB         473073   0.2123
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle             35.53     30.47 KB         243725   0.1094
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized       34.70     59.94 KB         479553   0.2033
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle             35.83     31.28 KB         250205   0.1061
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized       29.36     43.07 KB         344566   0.1643
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle             30.89     34.24 KB         273895   0.1306
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized       34.22     44.98 KB         359818   0.1569
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle             36.36     36.14 KB         289147   0.1261
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized       38.22     46.25 KB         369986   0.1526
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle             39.02     37.41 KB         299315   0.1234
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized       31.82     41.72 KB         333735   0.1579
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle             33.07     39.18 KB         313410   0.1483
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized       37.42     44.46 KB         355715   0.1524
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle             38.64     41.92 KB         335390   0.1437
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized       40.83     46.11 KB         368903   0.1496
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle             41.20     43.57 KB         348578   0.1414
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized       30.97     37.33 KB         298604   0.1424
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle             31.17     35.26 KB         282078   0.1345
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized       34.16     40.27 KB         322180   0.1385
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle             35.48     38.21 KB         305654   0.1314
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized       39.77     41.54 KB         332284   0.1370
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle             40.84     39.47 KB         315758   0.1302
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized       34.70     44.18 KB         353448   0.1659
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle             35.75     43.53 KB         348244   0.1635
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized       40.39     48.20 KB         385560   0.1627
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle             41.94     47.54 KB         380356   0.1605
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized       30.64    233.29 KB        1866339   0.7538
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle             32.07    204.36 KB        1634875   0.6603
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized       29.56     95.91 KB         767247   0.3659
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle             32.48     26.04 KB         208310   0.0993
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized       29.65     95.91 KB         767247   0.3659
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle             31.81     26.04 KB         208310   0.0993
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized       31.82     95.91 KB         767247   0.3659
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle             33.04     26.04 KB         208310   0.0993
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized       27.96     58.32 KB         466593   0.2225
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle             28.94     29.66 KB         237245   0.1131
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized       33.45     59.13 KB         473073   0.2123
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle             34.63     30.47 KB         243725   0.1094
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized       34.26     59.94 KB         479553   0.2033
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle             34.43     31.28 KB         250205   0.1061
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized       27.46     43.07 KB         344566   0.1643
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle             28.10     34.24 KB         273895   0.1306
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized       35.06     44.98 KB         359818   0.1569
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle             36.50     36.14 KB         289147   0.1261
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized       38.35     46.25 KB         369986   0.1526
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle             38.63     37.41 KB         299315   0.1234
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized       28.46     41.72 KB         333735   0.1579
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle             29.13     39.18 KB         313410   0.1483
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized       38.13     44.46 KB         355715   0.1524
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle             39.67     41.92 KB         335390   0.1437
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized       40.85     46.11 KB         368903   0.1496
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle             41.53     43.57 KB         348578   0.1414
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized       27.19     37.33 KB         298604   0.1424
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle             28.01     35.26 KB         282078   0.1345
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized       36.33     40.27 KB         322180   0.1385
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle             37.04     38.21 KB         305654   0.1314
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized       40.43     41.54 KB         332284   0.1370
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle             40.10     39.47 KB         315758   0.1302
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized       29.52     44.18 KB         353448   0.1659
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle             29.82     43.53 KB         348244   0.1635
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized       39.67     48.20 KB         385560   0.1627
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle             41.83     47.54 KB         380356   0.1605
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized       43.90     49.98 KB         399832   0.1615
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle             43.88     49.33 KB         394628   0.1594
+
+=== data/images/testcard_rgba.png (72 runs) ===
+Best (time): img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized | Optimized | total_ms=28.62 | size=61.80 KB (494398 bits) | ratio=0.2357
+Best (size): img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle | Rle | total_ms=36.61 | size=26.53 KB (212271 bits) | ratio=0.1012
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized       28.62     61.80 KB         494398   0.2357
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized       30.85     97.14 KB         777134   0.3706
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized       30.98     49.02 KB         392159   0.1870
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle             31.15     32.05 KB         256366   0.1222
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized       31.66     49.46 KB         395680   0.1887
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle             36.61     26.53 KB         212271   0.1012
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle             35.98     26.53 KB         212271   0.1012
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle             37.48     26.53 KB         212271   0.1012
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle             33.10     26.53 KB         212271   0.1012
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle             32.87     26.53 KB         212271   0.1012
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized       35.37     97.14 KB         777134   0.3706
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle             36.61     26.53 KB         212271   0.1012
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized       34.93     97.14 KB         777134   0.3706
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle             35.98     26.53 KB         212271   0.1012
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized       34.48     97.14 KB         777134   0.3706
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle             37.48     26.53 KB         212271   0.1012
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized       32.17     61.80 KB         494398   0.2357
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle             33.42     32.05 KB         256366   0.1222
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized       37.76     62.82 KB         502570   0.2255
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle             39.42     33.07 KB         264538   0.1187
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized       38.92     63.84 KB         510742   0.2165
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle             39.73     34.09 KB         272710   0.1156
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized       33.87     49.02 KB         392159   0.1870
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle             35.05     38.51 KB         308070   0.1469
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized       39.74     51.48 KB         411815   0.1795
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle             39.86     40.97 KB         327726   0.1429
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized       42.77     53.11 KB         424919   0.1752
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle             43.75     42.60 KB         340830   0.1406
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized       36.41     50.45 KB         403602   0.1910
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle             36.57     46.32 KB         370531   0.1753
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized       42.79     54.10 KB         432802   0.1855
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle             43.09     49.97 KB         399731   0.1713
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized       45.95     56.29 KB         450322   0.1826
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle             47.11     52.16 KB         417251   0.1692
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized       36.29     49.46 KB         395680   0.1887
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle             37.11     45.71 KB         365679   0.1744
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized       42.21     53.61 KB         428916   0.1844
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle             43.85     49.86 KB         398915   0.1715
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized       48.40     55.40 KB         443160   0.1828
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle             48.70     51.64 KB         413159   0.1704
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized       40.48     57.98 KB         463878   0.2178
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle             41.36     56.44 KB         451530   0.2120
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized       47.85     63.45 KB         507618   0.2142
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle             47.95     61.91 KB         495270   0.2090
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized       52.24     65.88 KB         527058   0.2129
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle             52.50     64.34 KB         514710   0.2079
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized       33.64     97.14 KB         777134   0.3706
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle             33.10     26.53 KB         212271   0.1012
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized       30.85     97.14 KB         777134   0.3706
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle             32.87     26.53 KB         212271   0.1012
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized       31.90     97.14 KB         777134   0.3706
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle             34.95     26.53 KB         212271   0.1012
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized       28.62     61.80 KB         494398   0.2357
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle             31.15     32.05 KB         256366   0.1222
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized       36.78     62.82 KB         502570   0.2255
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle             36.82     33.07 KB         264538   0.1187
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized       37.33     63.84 KB         510742   0.2165
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle             38.80     34.09 KB         272710   0.1156
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized       30.98     49.02 KB         392159   0.1870
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle             31.71     38.51 KB         308070   0.1469
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized       39.67     51.48 KB         411815   0.1795
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle             40.43     40.97 KB         327726   0.1429
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized       43.82     53.11 KB         424919   0.1752
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle             43.94     42.60 KB         340830   0.1406
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized       32.32     50.45 KB         403602   0.1910
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle             32.91     46.32 KB         370531   0.1753
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized       42.71     54.10 KB         432802   0.1855
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle             44.03     49.97 KB         399731   0.1713
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized       45.87     56.29 KB         450322   0.1826
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle             47.76     52.16 KB         417251   0.1692
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized       31.66     49.46 KB         395680   0.1887
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle             32.47     45.71 KB         365679   0.1744
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized       43.69     53.61 KB         428916   0.1844
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle             43.95     49.86 KB         398915   0.1715
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized       47.24     55.40 KB         443160   0.1828
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle             48.20     51.64 KB         413159   0.1704
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized       35.67     57.98 KB         463878   0.2178
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle             35.69     56.44 KB         451530   0.2120
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized       48.21     63.45 KB         507618   0.2142
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle             47.91     61.91 KB         495270   0.2090
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized       51.55     65.88 KB         527058   0.2129
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle             51.09     64.34 KB         514710   0.2079
+
+=== data/images/wikipedia_008.png (72 runs) ===
+Best (time): img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized | Optimized | total_ms=272.84 | size=2.97 MB (23722617 bits) | ratio=1.0000
+Best (size): img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized | Optimized | total_ms=512.53 | size=2.12 MB (16956447 bits) | ratio=0.7148
+Top by time:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized      272.84      2.97 MB       23722617   1.0000
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized      276.18      2.97 MB       23722617   1.0000
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle            276.87      2.97 MB       23733697   1.0005
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized      280.46      2.99 MB       23887497   1.0000
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle            287.15      2.97 MB       23733697   1.0005
+Top by size:
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized      512.53      2.12 MB       16956447   0.7148
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle            539.58      2.12 MB       16988452   0.7161
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized      500.61      2.19 MB       17557747   0.6966
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle            522.91      2.20 MB       17588285   0.6978
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized      510.13      2.21 MB       17714985   0.7468
+Direct compare (preset -> time/size):
+  preset                                                                   enc          time(ms)         size           bits    ratio
+  ------------------------------------------------------------------------ ---------- ---------- ------------ -------------- --------
+  img_compression__000_cmRgb_pg1_gtRaw_selNaive_encOptimized               Optimized      554.22      2.28 MB       18203069   0.7674
+  img_compression__001_cmRgb_pg1_gtRaw_selNaive_encRle                     Rle            587.68      2.24 MB       17915069   0.7552
+  img_compression__002_cmRgb_pg1_gtForFirstPixel_selNaive_encOptimized     Optimized      552.12      2.28 MB       18203069   0.7674
+  img_compression__003_cmRgb_pg1_gtForFirstPixel_selNaive_encRle           Rle            585.61      2.24 MB       17915069   0.7552
+  img_compression__004_cmRgb_pg1_gtForMin_selNaive_encOptimized            Optimized      541.63      2.28 MB       18203069   0.7674
+  img_compression__005_cmRgb_pg1_gtForMin_selNaive_encRle                  Rle            585.68      2.24 MB       17915069   0.7552
+  img_compression__006_cmRgb_pg2_gtRaw_selNaive_encOptimized               Optimized      510.13      2.21 MB       17714985   0.7468
+  img_compression__007_cmRgb_pg2_gtRaw_selNaive_encRle                     Rle            544.45      2.22 MB       17746012   0.7481
+  img_compression__008_cmRgb_pg2_gtForFirstPixel_selNaive_encOptimized     Optimized      608.89      2.33 MB       18650569   0.7400
+  img_compression__009_cmRgb_pg2_gtForFirstPixel_selNaive_encRle           Rle            633.98      2.34 MB       18682574   0.7412
+  img_compression__010_cmRgb_pg2_gtForMin_selNaive_encOptimized            Optimized      592.78      2.47 MB       19729461   0.7393
+  img_compression__011_cmRgb_pg2_gtForMin_selNaive_encRle                  Rle            607.43      2.47 MB       19760488   0.7404
+  img_compression__012_cmRgb_pg4_gtRaw_selNaive_encOptimized               Optimized      567.51      2.57 MB       20591840   0.8680
+  img_compression__013_cmRgb_pg4_gtRaw_selNaive_encRle                     Rle            571.35      2.58 MB       20613937   0.8690
+  img_compression__014_cmRgb_pg4_gtForFirstPixel_selNaive_encOptimized     Optimized      729.23      2.77 MB       22150857   0.8537
+  img_compression__015_cmRgb_pg4_gtForFirstPixel_selNaive_encRle           Rle            666.89      2.77 MB       22172951   0.8546
+  img_compression__016_cmRgb_pg4_gtForMin_selNaive_encOptimized            Optimized      526.91      2.77 MB       22144963   0.8074
+  img_compression__017_cmRgb_pg4_gtForMin_selNaive_encRle                  Rle            551.07      2.77 MB       22167046   0.8082
+  img_compression__018_cmRgb_pg6_gtRaw_selNaive_encOptimized               Optimized      289.27      2.97 MB       23722475   1.0000
+  img_compression__019_cmRgb_pg6_gtRaw_selNaive_encRle                     Rle            308.82      2.97 MB       23737243   1.0006
+  img_compression__020_cmRgb_pg6_gtForFirstPixel_selNaive_encOptimized     Optimized      527.35      3.43 MB       27476025   1.0490
+  img_compression__021_cmRgb_pg6_gtForFirstPixel_selNaive_encRle           Rle            541.28      3.44 MB       27490793   1.0495
+  img_compression__022_cmRgb_pg6_gtForMin_selNaive_encOptimized            Optimized      515.31      3.31 MB       26441864   0.9554
+  img_compression__023_cmRgb_pg6_gtForMin_selNaive_encRle                  Rle            532.50      3.31 MB       26456632   0.9560
+  img_compression__024_cmRgb_pg8_gtRaw_selNaive_encOptimized               Optimized      272.84      2.97 MB       23722617   1.0000
+  img_compression__025_cmRgb_pg8_gtRaw_selNaive_encRle                     Rle            276.87      2.97 MB       23733697   1.0005
+  img_compression__026_cmRgb_pg8_gtForFirstPixel_selNaive_encOptimized     Optimized      427.74      3.78 MB       30237832   1.1490
+  img_compression__027_cmRgb_pg8_gtForFirstPixel_selNaive_encRle           Rle            447.45      3.78 MB       30248912   1.1494
+  img_compression__028_cmRgb_pg8_gtForMin_selNaive_encOptimized            Optimized      531.13      3.65 MB       29189980   1.0642
+  img_compression__029_cmRgb_pg8_gtForMin_selNaive_encRle                  Rle            549.97      3.65 MB       29201060   1.0646
+  img_compression__030_cmRgb_pg10_gtRaw_selNaive_encOptimized              Optimized      280.46      2.99 MB       23887497   1.0000
+  img_compression__031_cmRgb_pg10_gtRaw_selNaive_encRle                    Rle            291.70      2.99 MB       23896421   1.0004
+  img_compression__032_cmRgb_pg10_gtForFirstPixel_selNaive_encOptimized    Optimized      372.32      3.78 MB       30245432   1.1382
+  img_compression__033_cmRgb_pg10_gtForFirstPixel_selNaive_encRle          Rle            388.46      3.78 MB       30254356   1.1385
+  img_compression__034_cmRgb_pg10_gtForMin_selNaive_encOptimized           Optimized      429.25      3.88 MB       31038357   1.1178
+  img_compression__035_cmRgb_pg10_gtForMin_selNaive_encRle                 Rle            441.76      3.88 MB       31047281   1.1181
+  img_compression__036_cmYCoCgR_pg1_gtRaw_selNaive_encOptimized            Optimized      529.71      2.27 MB       18177087   0.7663
+  img_compression__037_cmYCoCgR_pg1_gtRaw_selNaive_encRle                  Rle            579.76      2.24 MB       17889087   0.7541
+  img_compression__038_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encOptimized  Optimized      521.05      2.27 MB       18177087   0.7663
+  img_compression__039_cmYCoCgR_pg1_gtForFirstPixel_selNaive_encRle        Rle            571.47      2.24 MB       17889087   0.7541
+  img_compression__040_cmYCoCgR_pg1_gtForMin_selNaive_encOptimized         Optimized      535.18      2.27 MB       18177087   0.7663
+  img_compression__041_cmYCoCgR_pg1_gtForMin_selNaive_encRle               Rle            585.15      2.24 MB       17889087   0.7541
+  img_compression__042_cmYCoCgR_pg2_gtRaw_selNaive_encOptimized            Optimized      512.53      2.12 MB       16956447   0.7148
+  img_compression__043_cmYCoCgR_pg2_gtRaw_selNaive_encRle                  Rle            539.58      2.12 MB       16988452   0.7161
+  img_compression__044_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encOptimized  Optimized      500.61      2.19 MB       17557747   0.6966
+  img_compression__045_cmYCoCgR_pg2_gtForFirstPixel_selNaive_encRle        Rle            522.91      2.20 MB       17588285   0.6978
+  img_compression__046_cmYCoCgR_pg2_gtForMin_selNaive_encOptimized         Optimized      510.89      2.27 MB       18179201   0.6812
+  img_compression__047_cmYCoCgR_pg2_gtForMin_selNaive_encRle               Rle            541.04      2.28 MB       18209250   0.6823
+  img_compression__048_cmYCoCgR_pg4_gtRaw_selNaive_encOptimized            Optimized      315.10      2.97 MB       23722331   1.0000
+  img_compression__049_cmYCoCgR_pg4_gtRaw_selNaive_encRle                  Rle            325.84      2.97 MB       23744383   1.0009
+  img_compression__050_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encOptimized  Optimized      426.83      2.56 MB       20445166   0.7880
+  img_compression__051_cmYCoCgR_pg4_gtForFirstPixel_selNaive_encRle        Rle            448.90      2.56 MB       20467238   0.7888
+  img_compression__052_cmYCoCgR_pg4_gtForMin_selNaive_encOptimized         Optimized      518.85      2.55 MB       20404233   0.7439
+  img_compression__053_cmYCoCgR_pg4_gtForMin_selNaive_encRle               Rle            535.00      2.55 MB       20426323   0.7447
+  img_compression__054_cmYCoCgR_pg6_gtRaw_selNaive_encOptimized            Optimized      292.65      2.97 MB       23722475   1.0000
+  img_compression__055_cmYCoCgR_pg6_gtRaw_selNaive_encRle                  Rle            307.52      2.97 MB       23737243   1.0006
+  img_compression__056_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encOptimized  Optimized      456.42      3.03 MB       24276271   0.9268
+  img_compression__057_cmYCoCgR_pg6_gtForFirstPixel_selNaive_encRle        Rle            462.77      3.04 MB       24291039   0.9274
+  img_compression__058_cmYCoCgR_pg6_gtForMin_selNaive_encOptimized         Optimized      480.83      2.86 MB       22895741   0.8273
+  img_compression__059_cmYCoCgR_pg6_gtForMin_selNaive_encRle               Rle            488.44      2.86 MB       22910509   0.8278
+  img_compression__060_cmYCoCgR_pg8_gtRaw_selNaive_encOptimized            Optimized      276.18      2.97 MB       23722617   1.0000
+  img_compression__061_cmYCoCgR_pg8_gtRaw_selNaive_encRle                  Rle            287.15      2.97 MB       23733697   1.0005
+  img_compression__062_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encOptimized  Optimized      424.53      3.35 MB       26820801   1.0192
+  img_compression__063_cmYCoCgR_pg8_gtForFirstPixel_selNaive_encRle        Rle            436.57      3.35 MB       26831881   1.0196
+  img_compression__064_cmYCoCgR_pg8_gtForMin_selNaive_encOptimized         Optimized      433.09      3.07 MB       24536848   0.8946
+  img_compression__065_cmYCoCgR_pg8_gtForMin_selNaive_encRle               Rle            448.35      3.07 MB       24547928   0.8950
+  img_compression__066_cmYCoCgR_pg10_gtRaw_selNaive_encOptimized           Optimized      289.18      2.99 MB       23887497   1.0000
+  img_compression__067_cmYCoCgR_pg10_gtRaw_selNaive_encRle                 Rle            297.62      2.99 MB       23896421   1.0004
+  img_compression__068_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encOptimized Optimized      374.08      3.31 MB       26466559   0.9960
+  img_compression__069_cmYCoCgR_pg10_gtForFirstPixel_selNaive_encRle       Rle            384.59      3.31 MB       26475483   0.9963
+  img_compression__070_cmYCoCgR_pg10_gtForMin_selNaive_encOptimized        Optimized      413.31      3.34 MB       26746099   0.9632
+  img_compression__071_cmYCoCgR_pg10_gtForMin_selNaive_encRle              Rle            440.65      3.34 MB       26755023   0.9635

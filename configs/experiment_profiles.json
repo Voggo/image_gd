@@ -1,0 +1,35 @@
+{
+  "input_path": "data/images",
+  "recursive": true,
+  "csv_profile_groups": [
+    {
+      "name": "csv_compression",
+      "float_storage": ["f32"],
+      "has_headers": [true],
+      "select_impl": ["optimized_v1", "optimized_v3"],
+      "encode_impl": ["optimized", "rle"],
+      "m_max": { "range": { "start": 0, "end": 60, "step": 30 } },
+      "patience": { "values": [10] },
+      "preprocess": {
+        "float_scaling": ["scaled_offset_signed_int"],
+        "max_decimal_scale": { "values": [9] },
+        "integer_zero_normalization": [true]
+      }
+    }
+  ],
+  "image_profile_groups": [
+    {
+      "name": "img_compression",
+      "build": {
+        "colorspace": ["srgb_with_linear_alpha"],
+        "color_model": ["rgb", "y_co_cg_r"],
+        "pixel_grouping": { "values": [1, 2, 4, 6, 8, 10] },
+        "grouping_transform": ["raw", "for_first_pixel", "for_min"]
+      },
+      "m_max": { "values": [0] },
+      "patience": { "values": [10] },
+      "select_impl": ["naive"],
+      "encode_impl": ["optimized", "rle"]
+    }
+  ]
+}
