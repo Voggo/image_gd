@@ -843,12 +843,12 @@ fn rebuild_huffman_codes(
         }
 
         if let Some((prev_len, prev_symbol_value)) = previous_symbol
-            && (len < prev_len || (len == prev_len && symbol <= prev_symbol_value)) {
-                return Err(EntroGdError::InvalidMetadata {
-                    message: "Huffman canonical table is not sorted by (length, symbol)"
-                        .to_string(),
-                });
-            }
+            && (len < prev_len || (len == prev_len && symbol <= prev_symbol_value))
+        {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "Huffman canonical table is not sorted by (length, symbol)".to_string(),
+            });
+        }
 
         next_code <<= (len - previous_len) as u32;
         if (next_code as u64) >= (1u64 << len) {

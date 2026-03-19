@@ -9,7 +9,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectBasesImpl {
-    Naive, 
+    Naive,
     OptimizedV1,
     OptimizedV2,
     OptimizedV3,
@@ -330,7 +330,9 @@ impl PipelineProfileSet {
         }
     }
 
-    pub fn from_config_file(path: &Path) -> Result<(Self, ExperimentRunnerConfigFile), EntroGdError> {
+    pub fn from_config_file(
+        path: &Path,
+    ) -> Result<(Self, ExperimentRunnerConfigFile), EntroGdError> {
         let raw = fs::read_to_string(path)?;
         let config: ExperimentRunnerConfigFile = match path
             .extension()
@@ -338,9 +340,11 @@ impl PipelineProfileSet {
             .map(|ext| ext.to_ascii_lowercase())
             .as_deref()
         {
-            Some("json") => serde_json::from_str(&raw).map_err(|err| EntroGdError::InvalidMetadata {
-                message: format!("failed to parse JSON config '{}': {}", path.display(), err),
-            })?,
+            Some("json") => {
+                serde_json::from_str(&raw).map_err(|err| EntroGdError::InvalidMetadata {
+                    message: format!("failed to parse JSON config '{}': {}", path.display(), err),
+                })?
+            }
             _ => {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
@@ -402,7 +406,9 @@ impl PipelineProfileSet {
     }
 }
 
-fn expand_csv_group(group: &CsvProfileGroupConfig) -> Result<Vec<CsvPipelineProfile>, EntroGdError> {
+fn expand_csv_group(
+    group: &CsvProfileGroupConfig,
+) -> Result<Vec<CsvPipelineProfile>, EntroGdError> {
     let has_headers = group.has_headers.clone().unwrap_or_else(|| vec![true]);
     let float_storage = group
         .float_storage
@@ -435,11 +441,14 @@ fn expand_csv_group(group: &CsvProfileGroupConfig) -> Result<Vec<CsvPipelineProf
         });
     }
 
-    let preprocess = group.preprocess.clone().unwrap_or(CsvPreprocessSweepConfig {
-        float_scaling: None,
-        max_decimal_scale: None,
-        integer_zero_normalization: None,
-    });
+    let preprocess = group
+        .preprocess
+        .clone()
+        .unwrap_or(CsvPreprocessSweepConfig {
+            float_scaling: None,
+            max_decimal_scale: None,
+            integer_zero_normalization: None,
+        });
     let float_scaling = preprocess
         .float_scaling
         .unwrap_or_else(|| vec![ConfigFloatScalingMode::ScaledOffsetSignedInt]);
@@ -709,7 +718,13 @@ impl_expand_numeric_sweep!(
     expand_u32_sweep,
     expand_u32_range
 );
-impl_expand_numeric_sweep!(IntegerSweepU8, IntegerRangeU8, u8, expand_u8_sweep, expand_u8_range);
+impl_expand_numeric_sweep!(
+    IntegerSweepU8,
+    IntegerRangeU8,
+    u8,
+    expand_u8_sweep,
+    expand_u8_range
+);
 
 macro_rules! impl_from_enum {
     ($src:ty => $dst:ty { $($src_variant:ident => $dst_variant:ident),+ $(,)? }) => {
@@ -799,7 +814,10 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
         Ok(Self {
             name: value.name,
             has_headers: value.has_headers.unwrap_or(true),
-            float_storage: value.float_storage.unwrap_or(ConfigFloatStorage::F32).into(),
+            float_storage: value
+                .float_storage
+                .unwrap_or(ConfigFloatStorage::F32)
+                .into(),
             missing_value_policy: value
                 .missing_value_policy
                 .unwrap_or(ConfigMissingValuePolicy::Error)

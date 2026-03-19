@@ -1,3 +1,4 @@
+use crate::BitDataSet;
 use crate::compression::base_bits::BaseBit;
 use crate::compression::compress::{CompressedData, EncodedData};
 use crate::compression::image_preprocessor::BuildImageBitDataSet;
@@ -5,7 +6,6 @@ use crate::compression::tabular_preprocessor::{BuildBitDataSet, InferFeatureSpec
 use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
-use crate::BitDataSet;
 use crate::pipeline_profiles::{
     CsvPipelineProfile, EncodeImpl, ImagePipelineProfile, PipelineProfileSet, SelectBasesImpl,
 };
@@ -224,7 +224,10 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     Ok(())
 }
 
-fn run_csv_profile(file: &Path, profile: &CsvPipelineProfile) -> Result<ExperimentRecord, EntroGdError> {
+fn run_csv_profile(
+    file: &Path,
+    profile: &CsvPipelineProfile,
+) -> Result<ExperimentRecord, EntroGdError> {
     let total_t0 = Instant::now();
 
     let load_t0 = Instant::now();
@@ -247,7 +250,10 @@ fn run_csv_profile(file: &Path, profile: &CsvPipelineProfile) -> Result<Experime
     let entropy_ms = entropy_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let condensed_t0 = Instant::now();
-    let condensed_out = GenCondensedSamples { m_max: profile.m_max }.process(entropy_out)?;
+    let condensed_out = GenCondensedSamples {
+        m_max: profile.m_max,
+    }
+    .process(entropy_out)?;
     let condensed_ms = condensed_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let select_t0 = Instant::now();
@@ -303,7 +309,10 @@ fn run_image_profile(
     let entropy_ms = entropy_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let condensed_t0 = Instant::now();
-    let condensed_out = GenCondensedSamples { m_max: profile.m_max }.process(entropy_out)?;
+    let condensed_out = GenCondensedSamples {
+        m_max: profile.m_max,
+    }
+    .process(entropy_out)?;
     let condensed_ms = condensed_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let select_t0 = Instant::now();
@@ -471,4 +480,3 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
         estimated_total,
     }
 }
-
