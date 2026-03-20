@@ -5,3 +5,4 @@
 /data/**/*.egd
 /data/**/decompressed*
 /data/**/compressed*
+/.vscode
