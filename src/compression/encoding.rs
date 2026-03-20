@@ -111,6 +111,33 @@ impl Filter for EncodeDataHuffman {
     }
 }
 
+pub struct EncodeDataHuffmanBaseIdOnly {}
+
+impl Filter for EncodeDataHuffmanBaseIdOnly {
+    type Input = (BitDataSet, Box<dyn BaseBit>);
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format (Huffman base-id only)");
+        let (bit_data, base_bit_groups) = input;
+        let mut compressed = CompressedData::new(
+            EncodedData::Huffman(encode_data_huffman_base_id_only(
+                &bit_data,
+                base_bit_groups.as_ref(),
+            )?),
+            bit_data.info.clone(),
+        );
+        compressed.base_table = base_bit_groups.get_bases(&bit_data);
+        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        compressed.condensed_sample_weights = bit_data
+            .info
+            .m_condensed_sample_weights()
+            .map(|weights| weights.to_vec());
+
+        Ok(compressed)
+    }
+}
+
 struct EncodingContext {
     l_id: usize,
     num_deviation_bits: usize,
@@ -411,6 +438,81 @@ fn encode_data_huffman<B: BaseBit + ?Sized>(
     )
 }
 
+fn encode_data_huffman_base_id_only<B: BaseBit + ?Sized>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+) -> Result<HuffmanDeviationData, EntroGdError> {
+    // This variant intentionally Huffman-encodes only base IDs.
+    // Deviation bits are not encoded in the Huffman payload and are represented as zero-length
+    // (`num_deviation_bits = 0`) in the resulting stream metadata.
+    let context = prepare_encoding_context(bit_data, base_bit_groups);
+    let frequencies = build_base_id_frequencies(&context);
+    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
+    let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
+
+    let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
+
+    let mut pixel_bit_stream = BitVec::<usize, Msb0>::new();
+    let mut raw_deviation_bit_stream = BitVec::<usize, Msb0>::with_capacity(
+        bit_data.num_rows() * context.num_deviation_bits,
+    );
+    let mut row_offsets = Vec::with_capacity(row_count);
+
+    for row_idx in 0..row_count {
+        row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
+            EntroGdError::InvalidMetadata {
+                message: "Huffman row offset does not fit into u32".to_string(),
+            }
+        })?);
+
+        let row_start = row_idx * row_width;
+        for sample_idx in row_start..row_start + row_width {
+            let chunk = bit_data.get_chunk(sample_idx);
+            for &(start, end) in &context.deviation_ranges {
+                raw_deviation_bit_stream.extend_from_bitslice(&chunk[start..end]);
+            }
+
+            let symbol = context.row_to_group_id[sample_idx] as u64;
+            let (code, code_len) = codes_by_symbol.get(&symbol).copied().ok_or_else(|| {
+                EntroGdError::InvalidMetadata {
+                    message: format!("missing Huffman code for base-id symbol {}", symbol),
+                }
+            })?;
+            append_code_bits(&mut pixel_bit_stream, code, code_len);
+        }
+    }
+
+    for sample_idx in original_num_samples..bit_data.num_rows() {
+        let chunk = bit_data.get_chunk(sample_idx);
+        for &(start, end) in &context.deviation_ranges {
+            raw_deviation_bit_stream.extend_from_bitslice(&chunk[start..end]);
+        }
+
+        let symbol = context.row_to_group_id[sample_idx] as u64;
+        let (code, code_len) =
+            codes_by_symbol
+                .get(&symbol)
+                .copied()
+                .ok_or_else(|| EntroGdError::InvalidMetadata {
+                    message: format!("missing Huffman code for base-id symbol {}", symbol),
+                })?;
+        append_code_bits(&mut pixel_bit_stream, code, code_len);
+    }
+
+    HuffmanDeviationData::new_base_id_only(
+        pixel_bit_stream,
+        raw_deviation_bit_stream,
+        canonical_symbols,
+        canonical_code_lengths,
+        row_offsets,
+        bit_data.num_rows(),
+        original_num_samples,
+        context.num_deviation_bits,
+        context.l_id,
+        row_width,
+    )
+}
+
 fn build_symbol_frequencies(
     bit_data: &BitDataSet,
     context: &EncodingContext,
@@ -430,6 +532,22 @@ fn build_symbol_frequencies(
     tracing::debug!(frequencies = ?freq_vec, "Built symbol frequencies for Huffman encoding");
 
     Ok(frequencies)
+}
+
+fn build_base_id_frequencies(context: &EncodingContext) -> FxHashMap<u64, usize> {
+    let mut frequencies = FxHashMap::default();
+    for &base_id in &context.row_to_group_id {
+        *frequencies.entry(base_id as u64).or_insert(0) += 1;
+    }
+
+    let mut freq_vec: Vec<(u64, usize)> = frequencies
+        .iter()
+        .map(|(&symbol, &freq)| (symbol, freq))
+        .collect();
+    freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    tracing::debug!(frequencies = ?freq_vec, "Built base-id symbol frequencies for Huffman encoding");
+
+    frequencies
 }
 
 fn symbol_for_row(
@@ -787,6 +905,27 @@ mod tests {
 
         assert_eq!(
             huffman.to_deviation_data().unwrap().encoded_bit_stream(),
+            raw.encoded_bit_stream()
+        );
+    }
+
+    #[test]
+    fn test_encode_data_huffman_base_id_only_basic() {
+        let bit_data = create_test_bit_data_set(4, 8);
+        let mut base_groups = create_test_base_bit_groups(4, 8);
+
+        add_base_bits(&mut base_groups, &bit_data, &[0, 1]);
+
+        let result = encode_data_huffman_base_id_only(&bit_data, &base_groups).unwrap();
+
+        assert_eq!(result.get_num_deviation_bits(), 6);
+        assert_eq!(result.get_num_id_bits(), 1);
+        assert_eq!(result.get_num_samples(), 4);
+        assert_eq!(result.row_offsets().len(), 4);
+
+        let raw = encode_data_optimized(&bit_data, &base_groups);
+        assert_eq!(
+            result.to_deviation_data().unwrap().encoded_bit_stream(),
             raw.encoded_bit_stream()
         );
     }

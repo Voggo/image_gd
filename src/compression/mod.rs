@@ -22,7 +22,10 @@ pub use decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRowsData, decompress_analytics,
     decompress_file, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
-pub use encoding::{EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE};
+pub use encoding::{
+    EncodeData, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized,
+    EncodeDataRLE,
+};
 pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
 pub use file_format::{
     EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,

@@ -13,15 +13,16 @@ pub use compression::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
     BuildBitDataSet, BuildImageBitDataSet, CompressedData, CondensedSamples, DecompressAnalytics,
     DecompressFileData, DecompressRowsData, DeviationData, DeviationSample, EgdFile, EncodeData,
-    EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE, EncodedData, EntropyNaive,
-    EntropyOptimized, FORMAT_VERSION, FeatureSpec, FeatureTransform, FloatScalingMode,
-    GenCondensedSamples, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel,
-    ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo, InferFeatureSpecs,
-    LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, RleDeviationData, SaveEgdFile,
-    SaveIgdFile, SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2,
-    SelectBasesOptimizedv3, calculate_entropy, decode_value_from_bits, decompress_egd_to_csv,
-    decompress_igd_to_image, load_and_decompress_egd, load_and_decompress_igd,
-    write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
+    EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized, EncodeDataRLE,
+    EncodedData, EntropyNaive, EntropyOptimized, FORMAT_VERSION, FeatureSpec, FeatureTransform,
+    FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile,
+    ImageColorModel, ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo,
+    InferFeatureSpecs, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions,
+    RleDeviationData, SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesOptimizedv1,
+    SelectBasesOptimizedv2, SelectBasesOptimizedv3, calculate_entropy, decode_value_from_bits,
+    decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
+    load_and_decompress_igd, write_bitdata_as_csv, write_bitdata_as_image,
+    write_bitdata_to_output,
 };
 pub use data_loader::{
     ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
@@ -49,11 +50,12 @@ pub use timing::ScopedTimer;
 pub mod prelude {
     pub use crate::{
         BuildBitDataSet, BuildImageBitDataSet, DecompressAnalytics, DecompressFileData,
-        DecompressRowsData, EncodeData, EncodeDataHuffman, EncodeDataOptimized, EncodeDataRLE,
-        EntropyNaive, EntropyOptimized, Filter, FilterExt, FloatScalingMode, GenCondensedSamples,
-        ImageColorModel, ImageColorSpace, ImageGroupingTransform, InferFeatureSpecs, LoadEgdFile,
-        LoadIgdFile, PreprocessOptions, SaveEgdFile, SaveIgdFile, SelectBases,
-        SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
+        DecompressRowsData, EncodeData, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,
+        EncodeDataOptimized, EncodeDataRLE, EntropyNaive, EntropyOptimized, Filter, FilterExt,
+        FloatScalingMode, GenCondensedSamples, ImageColorModel, ImageColorSpace,
+        ImageGroupingTransform, InferFeatureSpecs, LoadEgdFile, LoadIgdFile, PreprocessOptions,
+        SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2,
+        SelectBasesOptimizedv3,
     };
 }
 

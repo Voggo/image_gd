@@ -125,17 +125,17 @@ def format_bits(bits: int) -> str:
 
 def print_table_header(preset_width: int) -> None:
     print(
-        f"  {'preset':<{preset_width}} {'enc':<10} {'time(ms)':>10} {'size':>12} {'bits':>14} {'ratio':>8}"
+        f"  {'preset':<{preset_width}} {'enc':<20} {'time(ms)':>10} {'size':>12} {'bits':>14} {'ratio':>8}"
     )
     print(
-        f"  {'-' * preset_width} {'-' * 10} {'-' * 10} {'-' * 12} {'-' * 14} {'-' * 8}"
+        f"  {'-' * preset_width} {'-' * 20} {'-' * 10} {'-' * 12} {'-' * 14} {'-' * 8}"
     )
 
 
 def print_table_row(row: dict, preset_width: int) -> None:
     print(
         f"  {row['preset']:<{preset_width}} "
-        f"{row['encode_impl']:<10} "
+        f"{row['encode_impl']:<20} "
         f"{row['total_ms']:>10.2f} "
         f"{format_bits(row['estimated_total_bits']):>12} "
         f"{row['estimated_total_bits']:>14} "
@@ -188,10 +188,10 @@ def print_summary(rows: list[dict], top_n: int) -> None:
         for row in sorted(file_rows, key=lambda r: r["estimated_total_bits"])[:top_n]:
             print_table_row(row, preset_width)
 
-        print("Direct compare (preset -> time/size):")
-        print_table_header(preset_width)
-        for row in sorted(file_rows, key=lambda r: (r["preset"], r["total_ms"])):
-            print_table_row(row, preset_width)
+        # print("Direct compare (preset -> time/size):")
+        # print_table_header(preset_width)
+        # for row in sorted(file_rows, key=lambda r: (r["preset"], r["total_ms"])):
+        #     print_table_row(row, preset_width)
 
 
 def plot(rows: list[dict]) -> None:

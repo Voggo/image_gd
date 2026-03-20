@@ -434,6 +434,7 @@ fn encode_data(
         EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
         EncodeImpl::Rle => EncodeDataRLE {}.process(input),
         EncodeImpl::Huffman => EncodeDataHuffman {}.process(input),
+        EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffmanBaseIdOnly {}.process(input),
     }
 }
 

@@ -21,6 +21,7 @@ pub enum EncodeImpl {
     Optimized,
     Rle,
     Huffman,
+    HuffmanBaseIdOnly,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,6 +40,7 @@ pub enum ConfigEncodeImpl {
     Optimized,
     Rle,
     Huffman,
+    HuffmanBaseIdOnly,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -750,6 +752,7 @@ impl_from_enum!(ConfigEncodeImpl => EncodeImpl {
     Optimized => Optimized,
     Rle => Rle,
     Huffman => Huffman,
+    HuffmanBaseIdOnly => HuffmanBaseIdOnly,
 });
 
 impl_from_enum!(ConfigFloatStorage => FloatStorage {

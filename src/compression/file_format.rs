@@ -24,6 +24,7 @@ pub const FORMAT_VERSION: u8 = 1;
 const ENCODING_TAG_NORMAL: u8 = 0;
 const ENCODING_TAG_RLE_RM_PACKED: u8 = 1;
 const ENCODING_TAG_HUFFMAN_CANONICAL: u8 = 2;
+const ENCODING_TAG_HUFFMAN_BASE_ID_ONLY: u8 = 3;
 const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
 
 /// In-memory EGD file contents that can be saved to disk.
@@ -179,7 +180,13 @@ impl EgdFile {
                 writer.write_bitslice(rle.symbol_bit_stream());
             }
             EncodedData::Huffman(huffman) => {
-                writer.write_u8(ENCODING_TAG_HUFFMAN_CANONICAL);
+                let is_base_id_only = huffman.raw_deviation_bit_stream().is_some();
+                writer.write_u8(if is_base_id_only {
+                    ENCODING_TAG_HUFFMAN_BASE_ID_ONLY
+                } else {
+                    ENCODING_TAG_HUFFMAN_CANONICAL
+                });
+
                 writer.write_u32(u32::try_from(huffman.canonical_symbols().len()).map_err(
                     |_| EntroGdError::InvalidMetadata {
                         message: "Huffman symbol count does not fit into u32".to_string(),
@@ -201,7 +208,11 @@ impl EgdFile {
                     }
                 })?);
 
-                let symbol_width = huffman.get_num_id_bits() + huffman.get_num_deviation_bits();
+                let symbol_width = if is_base_id_only {
+                    huffman.get_num_id_bits()
+                } else {
+                    huffman.get_num_id_bits() + huffman.get_num_deviation_bits()
+                };
                 for (&symbol, &code_len) in huffman
                     .canonical_symbols()
                     .iter()
@@ -212,6 +223,10 @@ impl EgdFile {
                 }
                 for &offset in huffman.row_offsets() {
                     writer.write_u32(offset);
+                }
+
+                if let Some(raw_deviation) = huffman.raw_deviation_bit_stream() {
+                    writer.write_bitslice(raw_deviation);
                 }
                 writer.write_bitslice(huffman.pixel_bit_stream());
             }
@@ -544,6 +559,86 @@ impl EgdFile {
                     row_width,
                 )?)
             }
+            ENCODING_TAG_HUFFMAN_BASE_ID_ONLY => {
+                let symbol_count = usize::try_from(reader.read_u32()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman symbol count does not fit into usize".to_string(),
+                    }
+                })?;
+                let huffman_num_id_bits = usize::from(reader.read_u8()?);
+                let huffman_num_deviation_bits = usize::from(reader.read_u8()?);
+                let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "Huffman row count does not fit into usize".to_string(),
+                    }
+                })?;
+
+                if huffman_num_id_bits != num_id_bits {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "Huffman l_id mismatch: header={}, expected={}",
+                            huffman_num_id_bits, num_id_bits
+                        ),
+                    });
+                }
+                if huffman_num_deviation_bits != num_deviation_bits {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "Huffman l_d mismatch: header={}, expected={}",
+                            huffman_num_deviation_bits, num_deviation_bits
+                        ),
+                    });
+                }
+
+                let symbol_width = huffman_num_id_bits;
+                let mut canonical_symbols = Vec::with_capacity(symbol_count);
+                let mut canonical_code_lengths = Vec::with_capacity(symbol_count);
+                for _ in 0..symbol_count {
+                    canonical_symbols.push(reader.read_u64_bits(symbol_width)?);
+                    canonical_code_lengths
+                        .push(reader.read_usize_bits(HUFFMAN_CODE_LENGTH_BITS)? as u8 + 1);
+                }
+
+                let mut row_offsets = Vec::with_capacity(row_count);
+                for _ in 0..row_count {
+                    row_offsets.push(reader.read_u32()?);
+                }
+
+                let row_width = if row_count == 0 {
+                    0
+                } else {
+                    if !n.is_multiple_of(row_count) {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "original sample count {} is not divisible by Huffman row count {}",
+                                n, row_count
+                            ),
+                        });
+                    }
+                    n / row_count
+                };
+
+                let raw_deviation_len = num_samples
+                    .checked_mul(huffman_num_deviation_bits)
+                    .ok_or_else(|| EntroGdError::InvalidMetadata {
+                        message: "Huffman raw deviation stream expected length overflow"
+                            .to_string(),
+                    })?;
+                let raw_deviation_stream = reader.read_bits(raw_deviation_len)?;
+
+                EncodedData::Huffman(HuffmanDeviationData::new_base_id_only(
+                    reader.read_bits(reader.remaining_bits())?,
+                    raw_deviation_stream,
+                    canonical_symbols,
+                    canonical_code_lengths,
+                    row_offsets,
+                    num_samples,
+                    n,
+                    huffman_num_deviation_bits,
+                    huffman_num_id_bits,
+                    row_width,
+                )?)
+            }
             other => {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!("unsupported encoded-data tag {}", other),
@@ -552,7 +647,9 @@ impl EgdFile {
         };
 
         // Any remaining bits must be zero-padding in the final byte.
-        if encoding_tag != ENCODING_TAG_HUFFMAN_CANONICAL {
+        if encoding_tag != ENCODING_TAG_HUFFMAN_CANONICAL
+            && encoding_tag != ENCODING_TAG_HUFFMAN_BASE_ID_ONLY
+        {
             while reader.remaining_bits() > 0 {
                 if reader.read_bit()? {
                     return Err(EntroGdError::InvalidMetadata {

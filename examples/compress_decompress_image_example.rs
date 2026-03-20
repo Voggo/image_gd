@@ -62,7 +62,7 @@ fn main() -> Result<(), EntroGdError> {
     .then(EntropyOptimized {})
     .then(GenCondensedSamples { m_max: 0 })
     .then(SelectBases { patience: 10 })
-    .then(EncodeDataOptimized {});
+    .then(EncodeDataHuffmanBaseIdOnly {});
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());

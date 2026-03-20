@@ -29,7 +29,7 @@
       "m_max": { "values": [0] },
       "patience": { "values": [10] },
       "select_impl": ["naive"],
-      "encode_impl": ["optimized", "rle"]
+      "encode_impl": ["rle", "huffman_base_id_only"]
     }
   ]
 }
