@@ -1,7 +1,7 @@
 /target
 /logs
 *.pdf
-/data/*.idg
-/data/*.edg
-/data/*decompressed*
-/data/compressed*
+/data/**/*.igd
+/data/**/*.egd
+/data/**/decompressed*
+/data/**/compressed*
