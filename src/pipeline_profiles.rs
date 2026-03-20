@@ -15,6 +15,7 @@ pub enum SelectBasesImpl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaseBitImpl {
+    Naive,
     BatchGroups,
     IncSignatureGroups,
     SignatureGroups,
@@ -40,6 +41,7 @@ pub enum ConfigSelectBasesImpl {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigBaseBitImpl {
+    Naive,
     BatchGroups,
     IncSignatureGroups,
     SignatureGroups,
@@ -785,6 +787,7 @@ impl_from_enum!(ConfigSelectBasesImpl => SelectBasesImpl {
 });
 
 impl_from_enum!(ConfigBaseBitImpl => BaseBitImpl {
+    Naive => Naive,
     BatchGroups => BatchGroups,
     IncSignatureGroups => IncSignatureGroups,
     SignatureGroups => SignatureGroups,

@@ -41,7 +41,8 @@ pub struct SelectBases {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BatchedBaseBitImpl {
+pub enum BaseBitImpl {
+    Naive,
     BatchGroups,
     IncSignatureGroups,
     SignatureGroups,
@@ -132,7 +133,7 @@ fn select_base_bits(
 
 pub struct SelectBasesOptimized {
     pub patience: usize,
-    pub base_bit_impl: BatchedBaseBitImpl,
+    pub base_bit_impl: BaseBitImpl,
 }
 
 impl Filter for SelectBasesOptimized {
@@ -146,21 +147,28 @@ impl Filter for SelectBasesOptimized {
         ));
         let (bit_data, entropy) = input;
         let base_bit_groups = match self.base_bit_impl {
-            BatchedBaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
+            BaseBitImpl::Naive => select_base_bits_threshold_optimized(
+                &bit_data,
+                BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy,
+                0.80,
+                self.patience
+            ),
+            BaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy,
                 0.80,
                 self.patience,
             ),
-            BatchedBaseBitImpl::IncSignatureGroups => select_base_bits_threshold_optimized(
+            BaseBitImpl::IncSignatureGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy,
                 0.80,
                 self.patience,
             ),
-            BatchedBaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
+            BaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy,

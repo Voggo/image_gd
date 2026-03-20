@@ -438,9 +438,16 @@ fn select_bases(
         SelectBasesImpl::Optimized => SelectBasesOptimized {
             patience,
             base_bit_impl: match base_bit_impl {
-                BaseBitImpl::BatchGroups => BatchedBaseBitImpl::BatchGroups,
-                BaseBitImpl::IncSignatureGroups => BatchedBaseBitImpl::IncSignatureGroups,
-                BaseBitImpl::SignatureGroups => BatchedBaseBitImpl::SignatureGroups,
+                BaseBitImpl::Naive => crate::compression::base_selection::BaseBitImpl::Naive,
+                BaseBitImpl::BatchGroups => {
+                    crate::compression::base_selection::BaseBitImpl::BatchGroups
+                }
+                BaseBitImpl::IncSignatureGroups => {
+                    crate::compression::base_selection::BaseBitImpl::IncSignatureGroups
+                }
+                BaseBitImpl::SignatureGroups => {
+                    crate::compression::base_selection::BaseBitImpl::SignatureGroups
+                }
             },
         }
         .process(input),

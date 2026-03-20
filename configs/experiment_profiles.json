@@ -30,7 +30,7 @@
       "m_max": { "values": [0] },
       "patience": { "values": [10] },
       "select_impl": ["naive", "optimized"],
-      "base_bit_impl": ["batch_groups", "inc_signature_groups", "signature_groups"],
+      "base_bit_impl": ["naive","batch_groups", "inc_signature_groups", "signature_groups"],
       "encode_impl": ["optimized"]
     }
   ]

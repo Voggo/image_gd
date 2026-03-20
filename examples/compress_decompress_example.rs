@@ -73,7 +73,7 @@ fn main() -> Result<(), EntroGdError> {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesOptimized {
             patience: 10,
-            base_bit_impl: BatchedBaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::BatchGroups,
         })
         .then(EncodeDataOptimized {});
     let compressed = compression_pipeline.process(bit_data)?;

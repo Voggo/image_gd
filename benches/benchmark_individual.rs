@@ -89,17 +89,17 @@ impl SelectBasesImpl {
             SelectBasesImpl::Naive => SelectBases { patience }.process(input),
             SelectBasesImpl::Optimizedv1 => SelectBasesOptimized {
                 patience,
-                base_bit_impl: BatchedBaseBitImpl::BatchGroups,
+                base_bit_impl: BaseBitImpl::BatchGroups,
             }
             .process(input),
             SelectBasesImpl::Optimizedv2 => SelectBasesOptimized {
                 patience,
-                base_bit_impl: BatchedBaseBitImpl::IncSignatureGroups,
+                base_bit_impl: BaseBitImpl::IncSignatureGroups,
             }
             .process(input),
             SelectBasesImpl::Optimizedv3 => SelectBasesOptimized {
                 patience,
-                base_bit_impl: BatchedBaseBitImpl::SignatureGroups,
+                base_bit_impl: BaseBitImpl::SignatureGroups,
             }
             .process(input),
         }
@@ -296,7 +296,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
         .unwrap();
     let selected_seed = SelectBasesOptimized {
         patience: case.patience,
-        base_bit_impl: BatchedBaseBitImpl::BatchGroups,
+        base_bit_impl: BaseBitImpl::BatchGroups,
     }
     .process(condensed_seed.clone())
     .unwrap();
@@ -411,7 +411,7 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         |case| {
             SelectBasesOptimized {
                 patience: case.patience,
-                base_bit_impl: BatchedBaseBitImpl::BatchGroups,
+                base_bit_impl: BaseBitImpl::BatchGroups,
             }
             .process(case.condensed_seed.clone())
             .unwrap()
