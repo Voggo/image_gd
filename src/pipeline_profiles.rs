@@ -10,9 +10,14 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectBasesImpl {
     Naive,
-    OptimizedV1,
-    OptimizedV2,
-    OptimizedV3,
+    Optimized,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseBitImpl {
+    BatchGroups,
+    IncSignatureGroups,
+    SignatureGroups,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,9 +33,16 @@ pub enum EncodeImpl {
 #[serde(rename_all = "snake_case")]
 pub enum ConfigSelectBasesImpl {
     Naive,
-    OptimizedV1,
-    OptimizedV2,
-    OptimizedV3,
+    #[serde(alias = "optimized_v1", alias = "optimized_v2", alias = "optimized_v3")]
+    Optimized,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigBaseBitImpl {
+    BatchGroups,
+    IncSignatureGroups,
+    SignatureGroups,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -105,6 +117,7 @@ pub struct CsvPipelineProfileConfig {
     pub m_max: usize,
     pub patience: usize,
     pub select_impl: ConfigSelectBasesImpl,
+    pub base_bit_impl: Option<ConfigBaseBitImpl>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -123,6 +136,7 @@ pub struct ImagePipelineProfileConfig {
     pub m_max: usize,
     pub patience: usize,
     pub select_impl: ConfigSelectBasesImpl,
+    pub base_bit_impl: Option<ConfigBaseBitImpl>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -192,6 +206,7 @@ pub struct CsvProfileGroupConfig {
     pub m_max: Option<IntegerSweepUsize>,
     pub patience: Option<IntegerSweepUsize>,
     pub select_impl: Option<Vec<ConfigSelectBasesImpl>>,
+    pub base_bit_impl: Option<Vec<ConfigBaseBitImpl>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -210,6 +225,7 @@ pub struct ImageProfileGroupConfig {
     pub m_max: Option<IntegerSweepUsize>,
     pub patience: Option<IntegerSweepUsize>,
     pub select_impl: Option<Vec<ConfigSelectBasesImpl>>,
+    pub base_bit_impl: Option<Vec<ConfigBaseBitImpl>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -223,6 +239,7 @@ pub struct CsvPipelineProfile {
     pub m_max: usize,
     pub patience: usize,
     pub select_impl: SelectBasesImpl,
+    pub base_bit_impl: BaseBitImpl,
     pub encode_impl: EncodeImpl,
 }
 
@@ -241,6 +258,7 @@ pub struct ImagePipelineProfile {
     pub m_max: usize,
     pub patience: usize,
     pub select_impl: SelectBasesImpl,
+    pub base_bit_impl: BaseBitImpl,
     pub encode_impl: EncodeImpl,
 }
 
@@ -262,7 +280,8 @@ impl PipelineProfileSet {
                     preprocess: PreprocessOptions::default(),
                     m_max: 0,
                     patience: 6,
-                    select_impl: SelectBasesImpl::OptimizedV3,
+                    select_impl: SelectBasesImpl::Optimized,
+                    base_bit_impl: BaseBitImpl::SignatureGroups,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 CsvPipelineProfile {
@@ -273,7 +292,8 @@ impl PipelineProfileSet {
                     preprocess: PreprocessOptions::default(),
                     m_max: 25,
                     patience: 10,
-                    select_impl: SelectBasesImpl::OptimizedV2,
+                    select_impl: SelectBasesImpl::Optimized,
+                    base_bit_impl: BaseBitImpl::IncSignatureGroups,
                     encode_impl: EncodeImpl::Rle,
                 },
                 CsvPipelineProfile {
@@ -284,7 +304,8 @@ impl PipelineProfileSet {
                     preprocess: PreprocessOptions::default(),
                     m_max: 75,
                     patience: 20,
-                    select_impl: SelectBasesImpl::OptimizedV1,
+                    select_impl: SelectBasesImpl::Optimized,
+                    base_bit_impl: BaseBitImpl::BatchGroups,
                     encode_impl: EncodeImpl::Rle,
                 },
             ],
@@ -299,7 +320,8 @@ impl PipelineProfileSet {
                     },
                     m_max: 0,
                     patience: 6,
-                    select_impl: SelectBasesImpl::OptimizedV3,
+                    select_impl: SelectBasesImpl::Optimized,
+                    base_bit_impl: BaseBitImpl::SignatureGroups,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 ImagePipelineProfile {
@@ -312,7 +334,8 @@ impl PipelineProfileSet {
                     },
                     m_max: 25,
                     patience: 10,
-                    select_impl: SelectBasesImpl::OptimizedV2,
+                    select_impl: SelectBasesImpl::Optimized,
+                    base_bit_impl: BaseBitImpl::IncSignatureGroups,
                     encode_impl: EncodeImpl::Rle,
                 },
                 ImagePipelineProfile {
@@ -325,7 +348,8 @@ impl PipelineProfileSet {
                     },
                     m_max: 75,
                     patience: 20,
-                    select_impl: SelectBasesImpl::OptimizedV1,
+                    select_impl: SelectBasesImpl::Optimized,
+                    base_bit_impl: BaseBitImpl::BatchGroups,
                     encode_impl: EncodeImpl::Huffman,
                 },
             ],
@@ -425,7 +449,11 @@ fn expand_csv_group(
     let select_impl = group
         .select_impl
         .clone()
-        .unwrap_or_else(|| vec![ConfigSelectBasesImpl::OptimizedV1]);
+        .unwrap_or_else(|| vec![ConfigSelectBasesImpl::Optimized]);
+    let base_bit_impl = group
+        .base_bit_impl
+        .clone()
+        .unwrap_or_else(|| vec![ConfigBaseBitImpl::BatchGroups]);
     let encode_impl = group
         .encode_impl
         .clone()
@@ -470,6 +498,7 @@ fn expand_csv_group(
         m_max.len(),
         patience.len(),
         select_impl.len(),
+        base_bit_impl.len(),
         encode_impl.len(),
     ];
 
@@ -483,12 +512,13 @@ fn expand_csv_group(
         let m_max_item = m_max[indices[6]];
         let patience_item = patience[indices[7]];
         let select_item = &select_impl[indices[8]];
-        let encode_item = &encode_impl[indices[9]];
+        let base_bit_item = &base_bit_impl[indices[9]];
+        let encode_item = &encode_impl[indices[10]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_m{}_p{}_sel{:?}_enc{:?}",
-            group.name, run_idx, m_max_item, patience_item, select_item, encode_item
+            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_enc{:?}",
+            group.name, run_idx, m_max_item, patience_item, select_item, base_bit_item, encode_item
         );
 
         profiles.push(CsvPipelineProfile {
@@ -504,6 +534,7 @@ fn expand_csv_group(
             m_max: m_max_item,
             patience: patience_item,
             select_impl: select_item.clone().into(),
+            base_bit_impl: base_bit_item.clone().into(),
             encode_impl: encode_item.clone().into(),
         });
 
@@ -545,7 +576,11 @@ fn expand_image_group(
     let select_impl = group
         .select_impl
         .clone()
-        .unwrap_or_else(|| vec![ConfigSelectBasesImpl::OptimizedV1]);
+        .unwrap_or_else(|| vec![ConfigSelectBasesImpl::Optimized]);
+    let base_bit_impl = group
+        .base_bit_impl
+        .clone()
+        .unwrap_or_else(|| vec![ConfigBaseBitImpl::BatchGroups]);
     let encode_impl = group
         .encode_impl
         .clone()
@@ -566,6 +601,7 @@ fn expand_image_group(
         m_max.len(),
         patience.len(),
         select_impl.len(),
+        base_bit_impl.len(),
         encode_impl.len(),
     ];
 
@@ -577,17 +613,19 @@ fn expand_image_group(
         let m_max_item = m_max[indices[4]];
         let patience_item = patience[indices[5]];
         let select_item = &select_impl[indices[6]];
-        let encode_item = &encode_impl[indices[7]];
+        let base_bit_item = &base_bit_impl[indices[7]];
+        let encode_item = &encode_impl[indices[8]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_cm{:?}_pg{}_gt{:?}_sel{:?}_enc{:?}",
+            "{}__{:03}_cm{:?}_pg{}_gt{:?}_sel{:?}_bb{:?}_enc{:?}",
             group.name,
             run_idx,
             color_model_item,
             pixel_grouping_item,
             grouping_transform_item,
             select_item,
+            base_bit_item,
             encode_item
         );
 
@@ -602,6 +640,7 @@ fn expand_image_group(
             m_max: m_max_item,
             patience: patience_item,
             select_impl: select_item.clone().into(),
+            base_bit_impl: base_bit_item.clone().into(),
             encode_impl: encode_item.clone().into(),
         });
 
@@ -742,9 +781,13 @@ macro_rules! impl_from_enum {
 
 impl_from_enum!(ConfigSelectBasesImpl => SelectBasesImpl {
     Naive => Naive,
-    OptimizedV1 => OptimizedV1,
-    OptimizedV2 => OptimizedV2,
-    OptimizedV3 => OptimizedV3,
+    Optimized => Optimized,
+});
+
+impl_from_enum!(ConfigBaseBitImpl => BaseBitImpl {
+    BatchGroups => BatchGroups,
+    IncSignatureGroups => IncSignatureGroups,
+    SignatureGroups => SignatureGroups,
 });
 
 impl_from_enum!(ConfigEncodeImpl => EncodeImpl {
@@ -829,6 +872,10 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
             m_max: value.m_max,
             patience: value.patience,
             select_impl: value.select_impl.into(),
+            base_bit_impl: value
+                .base_bit_impl
+                .unwrap_or(ConfigBaseBitImpl::BatchGroups)
+                .into(),
             encode_impl: value.encode_impl.into(),
         })
     }
@@ -858,6 +905,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
             m_max: value.m_max,
             patience: value.patience,
             select_impl: value.select_impl.into(),
+            base_bit_impl: value
+                .base_bit_impl
+                .unwrap_or(ConfigBaseBitImpl::BatchGroups)
+                .into(),
             encode_impl: value.encode_impl.into(),
         })
     }

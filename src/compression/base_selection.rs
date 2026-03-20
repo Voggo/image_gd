@@ -40,6 +40,13 @@ pub struct SelectBases {
     pub patience: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchedBaseBitImpl {
+    BatchGroups,
+    IncSignatureGroups,
+    SignatureGroups,
+}
+
 impl Filter for SelectBases {
     type Input = (BitDataSet, Vec<(usize, f64)>);
     type Output = (BitDataSet, Box<dyn BaseBit>);
@@ -123,11 +130,12 @@ fn select_base_bits(
     best_base_bit_groups
 }
 
-pub struct SelectBasesOptimizedv1 {
+pub struct SelectBasesOptimized {
     pub patience: usize,
+    pub base_bit_impl: BatchedBaseBitImpl,
 }
 
-impl Filter for SelectBasesOptimizedv1 {
+impl Filter for SelectBasesOptimized {
     type Input = (BitDataSet, Vec<(usize, f64)>);
     type Output = (BitDataSet, Box<dyn BaseBit>);
 
@@ -137,68 +145,29 @@ impl Filter for SelectBasesOptimizedv1 {
             self.patience
         ));
         let (bit_data, entropy) = input;
-        let base_bit_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let base_bit_groups = select_base_bits_threshold_optimized(
-            &bit_data,
-            base_bit_groups,
-            entropy,
-            0.80,
-            self.patience,
-        );
-        Ok((bit_data, base_bit_groups))
-    }
-}
-
-pub struct SelectBasesOptimizedv2 {
-    pub patience: usize,
-}
-
-impl Filter for SelectBasesOptimizedv2 {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Box<dyn BaseBit>);
-
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info(format!(
-            "Selecting base bits in batches with patience {}",
-            self.patience
-        ));
-        let (bit_data, entropy) = input;
-        let base_bit_groups =
-            BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let base_bit_groups = select_base_bits_threshold_optimized(
-            &bit_data,
-            base_bit_groups,
-            entropy,
-            0.80,
-            self.patience,
-        );
-        Ok((bit_data, base_bit_groups))
-    }
-}
-
-pub struct SelectBasesOptimizedv3 {
-    pub patience: usize,
-}
-
-impl Filter for SelectBasesOptimizedv3 {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Box<dyn BaseBit>);
-
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info(format!(
-            "Selecting base bits in batches with patience {}",
-            self.patience
-        ));
-        let (bit_data, entropy) = input;
-        let base_bit_groups =
-            BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let base_bit_groups = select_base_bits_threshold_optimized(
-            &bit_data,
-            base_bit_groups,
-            entropy,
-            0.80,
-            self.patience,
-        );
+        let base_bit_groups = match self.base_bit_impl {
+            BatchedBaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
+                &bit_data,
+                BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy,
+                0.80,
+                self.patience,
+            ),
+            BatchedBaseBitImpl::IncSignatureGroups => select_base_bits_threshold_optimized(
+                &bit_data,
+                BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy,
+                0.80,
+                self.patience,
+            ),
+            BatchedBaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
+                &bit_data,
+                BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy,
+                0.80,
+                self.patience,
+            ),
+        };
         Ok((bit_data, base_bit_groups))
     }
 }

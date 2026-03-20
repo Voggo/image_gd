@@ -7,7 +7,8 @@ use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::pipeline_profiles::{
-    CsvPipelineProfile, EncodeImpl, ImagePipelineProfile, PipelineProfileSet, SelectBasesImpl,
+    BaseBitImpl, CsvPipelineProfile, EncodeImpl, ImagePipelineProfile, PipelineProfileSet,
+    SelectBasesImpl,
 };
 use crate::prelude::*;
 use std::fs;
@@ -70,6 +71,7 @@ pub struct ExperimentRecord {
     pub preset_name: String,
     pub config: ExperimentConfigColumns,
     pub select_impl: SelectBasesImpl,
+    pub base_bit_impl: BaseBitImpl,
     pub encode_impl: EncodeImpl,
     pub m_max: usize,
     pub patience: usize,
@@ -196,17 +198,18 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_table_value_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_table_value_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
     )?;
 
     for record in records {
         writeln!(
             file,
-            "{},{:?},{},{:?},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{:?},{},{:?},{:?},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             record.file_path.display(),
             record.kind,
             record.preset_name,
             record.select_impl,
+            record.base_bit_impl,
             record.encode_impl,
             record.m_max,
             record.patience,
@@ -306,7 +309,12 @@ fn run_csv_profile(
     let condensed_ms = condensed_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let select_t0 = Instant::now();
-    let selected = select_bases(profile.select_impl, condensed_out, profile.patience)?;
+    let selected = select_bases(
+        profile.select_impl,
+        profile.base_bit_impl,
+        condensed_out,
+        profile.patience,
+    )?;
     let select_ms = select_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let encode_t0 = Instant::now();
@@ -329,6 +337,7 @@ fn run_csv_profile(
             ..ExperimentConfigColumns::default()
         },
         select_impl: profile.select_impl,
+        base_bit_impl: profile.base_bit_impl,
         encode_impl: profile.encode_impl,
         m_max: profile.m_max,
         patience: profile.patience,
@@ -374,7 +383,12 @@ fn run_image_profile(
     let condensed_ms = condensed_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let select_t0 = Instant::now();
-    let selected = select_bases(profile.select_impl, condensed_out, profile.patience)?;
+    let selected = select_bases(
+        profile.select_impl,
+        profile.base_bit_impl,
+        condensed_out,
+        profile.patience,
+    )?;
     let select_ms = select_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let encode_t0 = Instant::now();
@@ -395,6 +409,7 @@ fn run_image_profile(
             ..ExperimentConfigColumns::default()
         },
         select_impl: profile.select_impl,
+        base_bit_impl: profile.base_bit_impl,
         encode_impl: profile.encode_impl,
         m_max: profile.m_max,
         patience: profile.patience,
@@ -414,14 +429,21 @@ fn run_image_profile(
 
 fn select_bases(
     implementation: SelectBasesImpl,
+    base_bit_impl: BaseBitImpl,
     input: (BitDataSet, Vec<(usize, f64)>),
     patience: usize,
 ) -> Result<(BitDataSet, Box<dyn BaseBit>), EntroGdError> {
     match implementation {
         SelectBasesImpl::Naive => SelectBases { patience }.process(input),
-        SelectBasesImpl::OptimizedV1 => SelectBasesOptimizedv1 { patience }.process(input),
-        SelectBasesImpl::OptimizedV2 => SelectBasesOptimizedv2 { patience }.process(input),
-        SelectBasesImpl::OptimizedV3 => SelectBasesOptimizedv3 { patience }.process(input),
+        SelectBasesImpl::Optimized => SelectBasesOptimized {
+            patience,
+            base_bit_impl: match base_bit_impl {
+                BaseBitImpl::BatchGroups => BatchedBaseBitImpl::BatchGroups,
+                BaseBitImpl::IncSignatureGroups => BatchedBaseBitImpl::IncSignatureGroups,
+                BaseBitImpl::SignatureGroups => BatchedBaseBitImpl::SignatureGroups,
+            },
+        }
+        .process(input),
     }
 }
 

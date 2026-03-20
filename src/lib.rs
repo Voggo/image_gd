@@ -17,9 +17,9 @@ pub use compression::{
     EncodedData, EntropyNaive, EntropyOptimized, FORMAT_VERSION, FeatureSpec, FeatureTransform,
     FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile,
     ImageColorModel, ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo,
-    InferFeatureSpecs, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions,
-    RleDeviationData, SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesOptimizedv1,
-    SelectBasesOptimizedv2, SelectBasesOptimizedv3, calculate_entropy, decode_value_from_bits,
+    InferFeatureSpecs, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, BatchedBaseBitImpl,
+    PreprocessOptions, RleDeviationData, SaveEgdFile, SaveIgdFile, SelectBases,
+    SelectBasesOptimized, calculate_entropy, decode_value_from_bits,
     decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
     load_and_decompress_igd, write_bitdata_as_csv, write_bitdata_as_image,
     write_bitdata_to_output,
@@ -32,9 +32,10 @@ pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
 #[cfg(feature = "experiment-runner")]
 pub use pipeline_profiles::{
-    ConfigEncodeImpl, ConfigImageColorModel, ConfigImageColorSpace, ConfigImageGroupingTransform,
-    ConfigMissingValuePolicy, ConfigSelectBasesImpl, CsvPipelineProfile, CsvPipelineProfileConfig,
-    CsvProfileGroupConfig, EncodeImpl, ExperimentRunnerConfigFile, ImageBuildConfig,
+    BaseBitImpl, ConfigBaseBitImpl, ConfigEncodeImpl, ConfigImageColorModel,
+    ConfigImageColorSpace, ConfigImageGroupingTransform, ConfigMissingValuePolicy,
+    ConfigSelectBasesImpl, CsvPipelineProfile, CsvPipelineProfileConfig, CsvProfileGroupConfig,
+    EncodeImpl, ExperimentRunnerConfigFile, ImageBuildConfig,
     ImageBuildSweepConfig, ImagePipelineProfile, ImagePipelineProfileConfig,
     ImageProfileGroupConfig, IntegerRangeU8, IntegerRangeU32, IntegerRangeUsize, IntegerSweepU8,
     IntegerSweepU32, IntegerSweepUsize, PipelineProfileSet, SelectBasesImpl,
@@ -53,9 +54,9 @@ pub mod prelude {
         DecompressRowsData, EncodeData, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,
         EncodeDataOptimized, EncodeDataRLE, EntropyNaive, EntropyOptimized, Filter, FilterExt,
         FloatScalingMode, GenCondensedSamples, ImageColorModel, ImageColorSpace,
-        ImageGroupingTransform, InferFeatureSpecs, LoadEgdFile, LoadIgdFile, PreprocessOptions,
-        SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2,
-        SelectBasesOptimizedv3,
+        ImageGroupingTransform, InferFeatureSpecs, LoadEgdFile, LoadIgdFile,
+        BatchedBaseBitImpl, PreprocessOptions, SaveEgdFile, SaveIgdFile, SelectBases,
+        SelectBasesOptimized,
     };
 }
 

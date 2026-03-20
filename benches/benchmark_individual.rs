@@ -87,9 +87,21 @@ impl SelectBasesImpl {
     ) -> Result<(BitDataSet, DynBaseBit), EntroGdError> {
         match self {
             SelectBasesImpl::Naive => SelectBases { patience }.process(input),
-            SelectBasesImpl::Optimizedv1 => SelectBasesOptimizedv1 { patience }.process(input),
-            SelectBasesImpl::Optimizedv2 => SelectBasesOptimizedv2 { patience }.process(input),
-            SelectBasesImpl::Optimizedv3 => SelectBasesOptimizedv3 { patience }.process(input),
+            SelectBasesImpl::Optimizedv1 => SelectBasesOptimized {
+                patience,
+                base_bit_impl: BatchedBaseBitImpl::BatchGroups,
+            }
+            .process(input),
+            SelectBasesImpl::Optimizedv2 => SelectBasesOptimized {
+                patience,
+                base_bit_impl: BatchedBaseBitImpl::IncSignatureGroups,
+            }
+            .process(input),
+            SelectBasesImpl::Optimizedv3 => SelectBasesOptimized {
+                patience,
+                base_bit_impl: BatchedBaseBitImpl::SignatureGroups,
+            }
+            .process(input),
         }
     }
 }
@@ -282,8 +294,9 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     let condensed_seed = GenCondensedSamples { m_max: case.m_max }
         .process(entropy_seed.clone())
         .unwrap();
-    let selected_seed = SelectBasesOptimizedv1 {
+    let selected_seed = SelectBasesOptimized {
         patience: case.patience,
+        base_bit_impl: BatchedBaseBitImpl::BatchGroups,
     }
     .process(condensed_seed.clone())
     .unwrap();
@@ -396,8 +409,9 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         &ENCODE_IMPLS,
         EncodeImpl::label,
         |case| {
-            SelectBasesOptimizedv1 {
+            SelectBasesOptimized {
                 patience: case.patience,
+                base_bit_impl: BatchedBaseBitImpl::BatchGroups,
             }
             .process(case.condensed_seed.clone())
             .unwrap()

@@ -516,35 +516,15 @@ impl BaseBitIncSignatureGroups {
             return self.get_num_bases();
         }
 
-        // Filter out duplicates/already-selected positions while preserving order.
-        let mut effective_positions = Vec::with_capacity(bit_positions.len());
-        for &bit_position in bit_positions {
-            assert!(
-                bit_position < self.base_bit_mask.len(),
-                "bit position {} out of bounds for chunk size {}",
-                bit_position,
-                self.base_bit_mask.len()
-            );
-            if self.base_bit_mask[bit_position] || effective_positions.contains(&bit_position) {
-                continue;
-            }
-            effective_positions.push(bit_position);
-        }
-
-        if effective_positions.is_empty() {
-            return self.get_num_bases();
-        }
-
-        for batch in effective_positions.chunks(64) {
+        for batch in bit_positions.chunks(64) {
             self.refine_signatures_batch(bit_data, batch);
         }
 
-        for &bit_position in &effective_positions {
+        for &bit_position in bit_positions {
             self.base_bit_mask.set(bit_position, true);
         }
-        self.base_bit_positions
-            .extend_from_slice(&effective_positions);
-        self.num_bits_per_base += effective_positions.len();
+        self.base_bit_positions.extend_from_slice(bit_positions);
+        self.num_bits_per_base += bit_positions.len();
 
         // Signatures changed; lazy groups must be rebuilt on demand.
         self.groups_cache.take();

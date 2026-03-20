@@ -71,7 +71,10 @@ fn main() -> Result<(), EntroGdError> {
     tracing::info!("\nCompressing data...");
     let compression_pipeline = EntropyOptimized {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimizedv1 { patience: 10 })
+        .then(SelectBasesOptimized {
+            patience: 10,
+            base_bit_impl: BatchedBaseBitImpl::BatchGroups,
+        })
         .then(EncodeDataOptimized {});
     let compressed = compression_pipeline.process(bit_data)?;
 

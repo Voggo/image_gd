@@ -12,7 +12,7 @@ pub mod tabular_preprocessor;
 
 pub use base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitSignatureGroups};
 pub use base_selection::{
-    SelectBases, SelectBasesOptimizedv1, SelectBasesOptimizedv2, SelectBasesOptimizedv3,
+    BatchedBaseBitImpl, SelectBases, SelectBasesOptimized,
 };
 pub use compress::{
     CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,
