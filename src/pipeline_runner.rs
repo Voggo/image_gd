@@ -68,6 +68,7 @@ pub struct ExperimentRecord {
     pub file_path: PathBuf,
     pub kind: InputKind,
     pub preset_name: String,
+    pub config: ExperimentConfigColumns,
     pub select_impl: SelectBasesImpl,
     pub encode_impl: EncodeImpl,
     pub m_max: usize,
@@ -75,6 +76,20 @@ pub struct ExperimentRecord {
     pub stage_ms: CompressionStageDurationsMs,
     pub original_bits: usize,
     pub size_breakdown_bits: CompressedSizeBreakdownBits,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExperimentConfigColumns {
+    pub csv_has_headers: Option<bool>,
+    pub csv_float_storage: Option<String>,
+    pub csv_missing_value_policy: Option<String>,
+    pub csv_float_scaling: Option<String>,
+    pub csv_max_decimal_scale: Option<u8>,
+    pub csv_integer_zero_normalization: Option<bool>,
+    pub image_colorspace: Option<String>,
+    pub image_color_model: Option<String>,
+    pub image_pixel_grouping: Option<u32>,
+    pub image_grouping_transform: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,13 +196,13 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,encode_impl,m_max,patience,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_table_value_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
+        "file_path,input_kind,preset,select_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_table_value_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
     )?;
 
     for record in records {
         writeln!(
             file,
-            "{},{:?},{},{:?},{:?},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{:?},{},{:?},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             record.file_path.display(),
             record.kind,
             record.preset_name,
@@ -195,6 +210,40 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
             record.encode_impl,
             record.m_max,
             record.patience,
+            record
+                .config
+                .csv_has_headers
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record.config.csv_float_storage.as_deref().unwrap_or(""),
+            record
+                .config
+                .csv_missing_value_policy
+                .as_deref()
+                .unwrap_or(""),
+            record.config.csv_float_scaling.as_deref().unwrap_or(""),
+            record
+                .config
+                .csv_max_decimal_scale
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record
+                .config
+                .csv_integer_zero_normalization
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record.config.image_colorspace.as_deref().unwrap_or(""),
+            record.config.image_color_model.as_deref().unwrap_or(""),
+            record
+                .config
+                .image_pixel_grouping
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record
+                .config
+                .image_grouping_transform
+                .as_deref()
+                .unwrap_or(""),
             record.original_bits,
             record.stage_ms.load_input,
             record.stage_ms.preprocess,
@@ -270,6 +319,15 @@ fn run_csv_profile(
         file_path: file.to_path_buf(),
         kind: InputKind::Csv,
         preset_name: profile.name.to_string(),
+        config: ExperimentConfigColumns {
+            csv_has_headers: Some(profile.has_headers),
+            csv_float_storage: Some(format!("{:?}", profile.float_storage)),
+            csv_missing_value_policy: Some(format!("{:?}", profile.missing_value_policy)),
+            csv_float_scaling: Some(format!("{:?}", profile.preprocess.float_scaling)),
+            csv_max_decimal_scale: Some(profile.preprocess.max_decimal_scale),
+            csv_integer_zero_normalization: Some(profile.preprocess.integer_zero_normalization),
+            ..ExperimentConfigColumns::default()
+        },
         select_impl: profile.select_impl,
         encode_impl: profile.encode_impl,
         m_max: profile.m_max,
@@ -329,6 +387,13 @@ fn run_image_profile(
         file_path: file.to_path_buf(),
         kind: InputKind::Image,
         preset_name: profile.name.to_string(),
+        config: ExperimentConfigColumns {
+            image_colorspace: Some(format!("{:?}", profile.build.colorspace)),
+            image_color_model: Some(format!("{:?}", profile.build.color_model)),
+            image_pixel_grouping: Some(profile.build.pixel_grouping),
+            image_grouping_transform: Some(format!("{:?}", profile.build.grouping_transform)),
+            ..ExperimentConfigColumns::default()
+        },
         select_impl: profile.select_impl,
         encode_impl: profile.encode_impl,
         m_max: profile.m_max,

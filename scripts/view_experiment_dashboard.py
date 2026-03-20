@@ -14,6 +14,53 @@ from collections import defaultdict
 from pathlib import Path
 
 
+def _normalize_header(name: str) -> str:
+    return name.strip()
+
+
+def _stitch_rows(path: Path) -> list[dict]:
+    """Read CSV rows while tolerating whitespace-padded headers and split physical lines.
+
+    Some generated dashboard files can contain rows split across multiple physical
+    lines (e.g. from unexpected newlines in one field). This function stitches
+    partial rows until the expected column count is reached.
+    """
+    with path.open("r", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            raw_header = next(reader)
+        except StopIteration:
+            return []
+
+        header = [_normalize_header(col) for col in raw_header]
+        expected = len(header)
+        rows: list[dict] = []
+        pending: list[str] = []
+
+        for raw_row in reader:
+            row = [cell.strip() for cell in raw_row]
+
+            if not row:
+                continue
+
+            if pending:
+                pending.extend(row)
+            else:
+                pending = row
+
+            if len(pending) < expected:
+                continue
+
+            if len(pending) > expected:
+                # Keep extra fragments in the last column so we don't drop data.
+                pending = pending[: expected - 1] + [" ".join(pending[expected - 1 :])]
+
+            rows.append(dict(zip(header, pending)))
+            pending = []
+
+    return rows
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="View compression experiment dashboard data")
     parser.add_argument("--input", required=True, help="Path to dashboard CSV")
@@ -23,8 +70,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_rows(path: Path) -> list[dict]:
-    with path.open("r", newline="") as f:
-        rows = list(csv.DictReader(f))
+    rows = _stitch_rows(path)
+
+    if not rows:
+        return rows
 
     for row in rows:
         for key in (
@@ -36,7 +85,7 @@ def load_rows(path: Path) -> list[dict]:
             "select_ms",
             "encode_ms",
         ):
-            row[key] = float(row[key])
+            row[key] = float(row.get(key, "0") or "0")
 
         for key in (
             "original_bits",
@@ -56,7 +105,7 @@ def load_rows(path: Path) -> list[dict]:
             "base_bit_positions_bits",
             "condensed_weights_bits",
         ):
-            row[key] = int(row[key])
+            row[key] = int(row.get(key, "0") or "0")
 
         row["compression_ratio"] = row["estimated_total_bits"] / max(row["original_bits"], 1)
 
