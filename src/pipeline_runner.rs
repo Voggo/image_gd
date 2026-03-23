@@ -58,7 +58,6 @@ pub struct CompressedSizeBreakdownBits {
     pub huffman_symbol_table_bits: usize,
     pub huffman_code_lengths_bits: usize,
     pub base_table_patterns: usize,
-    pub base_table_values: usize,
     pub base_bit_positions: usize,
     pub condensed_weights: usize,
     pub estimated_total: usize,
@@ -198,13 +197,13 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,base_bit_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_table_value_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
     )?;
 
     for record in records {
         writeln!(
             file,
-            "{},{:?},{},{:?},{:?},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{:?},{},{:?},{:?},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             record.file_path.display(),
             record.kind,
             record.preset_name,
@@ -266,7 +265,6 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
             record.size_breakdown_bits.huffman_symbol_table_bits,
             record.size_breakdown_bits.huffman_code_lengths_bits,
             record.size_breakdown_bits.base_table_patterns,
-            record.size_breakdown_bits.base_table_values,
             record.size_breakdown_bits.base_bit_positions,
             record.size_breakdown_bits.condensed_weights,
             record.size_breakdown_bits.estimated_total,
@@ -482,11 +480,6 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
         .iter()
         .map(|(pattern, _)| pattern.len())
         .sum::<usize>();
-    let base_table_values = compressed
-        .base_table
-        .iter()
-        .map(|(_, count)| bits_needed_nonzero(*count))
-        .sum::<usize>();
 
     let position_width_bits = bits_needed_nonzero(compressed.metadata.chunk_size().max(1));
     let base_bit_positions = compressed.base_bit_positions.len() * position_width_bits;
@@ -553,7 +546,6 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
 
     let estimated_total = encoded_stream_total
         + base_table_patterns
-        + base_table_values
         + base_bit_positions
         + condensed_weights;
 
@@ -569,7 +561,6 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
         huffman_symbol_table_bits,
         huffman_code_lengths_bits,
         base_table_patterns,
-        base_table_values,
         base_bit_positions,
         condensed_weights,
         estimated_total,

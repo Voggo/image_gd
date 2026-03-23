@@ -13,13 +13,12 @@ pub(crate) fn calculate_compressed_size<B: BaseBit>(
 ) -> usize {
     let n = bit_data.num_rows();
     let d = bit_data.num_features();
-    let n_b = base_bit_groups.get_num_bases();
     let chunk_size = bit_data.chunk_size();
-
-    let len_b = base_bit_groups.get_num_bits_per_base().min(chunk_size);
+    let n_b = base_bit_groups.get_num_bases();
+    
+    let len_b = base_bit_groups.get_num_bits_per_base();
     let len_d = chunk_size - len_b;
 
-    let len_bc = if n == 0 { 0 } else { bits_needed_nonzero(n) };
     let len_id = if n_b == 0 {
         0
     } else {
@@ -27,13 +26,12 @@ pub(crate) fn calculate_compressed_size<B: BaseBit>(
     };
 
     let size_bases = n_b * len_b;
-    let size_base_counts = n_b * len_bc;
     let size_deviations = n * (len_d + len_id);
 
     let size_dev_bits = chunk_size;
     let size_params = 16 * d + 16 + size_dev_bits;
 
-    size_bases + size_base_counts + size_deviations + size_params
+    size_bases + size_deviations + size_params
 }
 
 pub struct SelectBases {
