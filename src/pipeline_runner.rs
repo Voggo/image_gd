@@ -459,6 +459,7 @@ fn encode_data(
     match implementation {
         EncodeImpl::Naive => EncodeData {}.process(input),
         EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
+        EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
         EncodeImpl::Rle => EncodeDataRLE {}.process(input),
         EncodeImpl::Huffman => EncodeDataHuffman {}.process(input),
         EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffmanBaseIdOnly {}.process(input),

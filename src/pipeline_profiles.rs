@@ -25,6 +25,7 @@ pub enum BaseBitImpl {
 pub enum EncodeImpl {
     Naive,
     Optimized,
+    FusedDictionary,
     Rle,
     Huffman,
     HuffmanBaseIdOnly,
@@ -52,6 +53,7 @@ pub enum ConfigBaseBitImpl {
 pub enum ConfigEncodeImpl {
     Naive,
     Optimized,
+    FusedDictionary,
     Rle,
     Huffman,
     HuffmanBaseIdOnly,
@@ -796,6 +798,7 @@ impl_from_enum!(ConfigBaseBitImpl => BaseBitImpl {
 impl_from_enum!(ConfigEncodeImpl => EncodeImpl {
     Naive => Naive,
     Optimized => Optimized,
+    FusedDictionary => FusedDictionary,
     Rle => Rle,
     Huffman => Huffman,
     HuffmanBaseIdOnly => HuffmanBaseIdOnly,

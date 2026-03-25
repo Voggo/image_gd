@@ -110,6 +110,7 @@ impl SelectBasesImpl {
 enum EncodeImpl {
     Naive,
     Optimized,
+    FusedDictionary,
 }
 
 impl EncodeImpl {
@@ -117,6 +118,7 @@ impl EncodeImpl {
         match self {
             EncodeImpl::Naive => "naive",
             EncodeImpl::Optimized => "optimized",
+            EncodeImpl::FusedDictionary => "fused_dictionary",
         }
     }
 
@@ -124,6 +126,7 @@ impl EncodeImpl {
         match self {
             EncodeImpl::Naive => EncodeData {}.process(input),
             EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
+            EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
         }
     }
 }
@@ -215,13 +218,13 @@ struct StepBenchCase {
 fn step_bench_cases() -> Vec<StepBenchCase> {
     vec![
         StepBenchCase {
-            data_file_path: "data/aarhus-citylab.csv",
+            data_file_path: "data/tabular/aarhus-citylab.csv",
             float_storage: FloatStorage::F32,
             m_max: 50,
             patience: 10,
         },
         StepBenchCase {
-            data_file_path: "data/aarhus-citylab_duplicated.csv",
+            data_file_path: "data/tabular/aarhus-citylab_duplicated.csv",
             float_storage: FloatStorage::F32,
             m_max: 50,
             patience: 10,
@@ -237,7 +240,11 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 4] = [
     SelectBasesImpl::Optimizedv2,
     SelectBasesImpl::Optimizedv3,
 ];
-const ENCODE_IMPLS: [EncodeImpl; 2] = [EncodeImpl::Naive, EncodeImpl::Optimized];
+const ENCODE_IMPLS: [EncodeImpl; 3] = [
+    EncodeImpl::Naive,
+    EncodeImpl::Optimized,
+    EncodeImpl::FusedDictionary,
+];
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
 const LOAD_IMPLS: [LoadImpl; 1] = [LoadImpl::Current];
 const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 1] = [DecompressRowsImpl::Current];

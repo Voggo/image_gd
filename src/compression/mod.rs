@@ -23,8 +23,8 @@ pub use decompression::{
     decompress_file, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
 pub use encoding::{
-    EncodeData, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized,
-    EncodeDataRLE,
+    EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,
+    EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
     EntropyNaive, EntropyOptimized, EntropyStrideSampled, calculate_entropy,
