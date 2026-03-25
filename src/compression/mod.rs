@@ -26,7 +26,10 @@ pub use encoding::{
     EncodeData, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized,
     EncodeDataRLE,
 };
-pub use entropy::{EntropyNaive, EntropyOptimized, calculate_entropy};
+pub use entropy::{
+    EntropyNaive, EntropyOptimized, EntropyStrideSampled, calculate_entropy,
+    calculate_entropy_stride_sampled,
+};
 pub use file_format::{
     EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,
     LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile, decompress_egd_to_csv,

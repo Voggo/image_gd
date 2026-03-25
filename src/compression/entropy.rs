@@ -47,35 +47,73 @@ impl Filter for EntropyOptimized {
 }
 
 pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
+    calculate_entropy_with_stride(bit_data, 1)
+}
+
+/// Entropy filter that computes entropy from a stride-sampled subset of rows.
+///
+/// `skip_rows` controls how many rows are skipped between sampled rows.
+/// - `skip_rows = 0` samples every row.
+/// - `skip_rows = 1` samples rows `0, 2, 4, ...`.
+/// - `skip_rows = n` samples every `n + 1`th row.
+pub struct EntropyStrideSampled {
+    pub skip_rows: usize,
+}
+
+impl EntropyStrideSampled {
+    pub fn new(skip_rows: usize) -> Self {
+        Self { skip_rows }
+    }
+}
+
+impl Filter for EntropyStrideSampled {
+    type Input = BitDataSet;
+    type Output = (BitDataSet, Vec<(usize, f64)>);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Calculating entropy for each bit position (stride sampled)");
+        let entropy = calculate_entropy_stride_sampled(&input, self.skip_rows);
+        Ok((input, entropy))
+    }
+}
+
+pub fn calculate_entropy_stride_sampled(bit_data: &BitDataSet, skip_rows: usize) -> Vec<(usize, f64)> {
+    let stride = skip_rows.saturating_add(1);
+    calculate_entropy_with_stride(bit_data, stride)
+}
+
+fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<(usize, f64)> {
     let num_rows = bit_data.num_rows();
     let chunk_size = bit_data.chunk_size();
     if num_rows == 0 {
         return (0..chunk_size).map(|bit| (bit, 0.0)).collect();
     }
 
-    let inv_rows = 1.0 / num_rows as f64;
-
+    let mut sampled_rows = 0usize;
     let mut ones_count = vec![0usize; chunk_size];
 
     // Iterate row slices directly and use iter_ones()
-    // to keep the sparse-bit O(number of 1s) counting behavior.
+    // to keep sparse-bit counting as O(number of 1s in sampled rows).
     for row_bits in bit_data
         .data
         .data
         .as_bitslice()
         .chunks_exact(chunk_size)
         .take(num_rows)
+        .step_by(stride)
     {
+        sampled_rows += 1;
         for bit_index in row_bits.iter_ones() {
             ones_count[bit_index] += 1;
         }
     }
 
+    let inv_rows = 1.0 / sampled_rows as f64;
     ones_count
         .into_iter()
         .enumerate()
         .map(|(bit, count)| {
-            let entropy = if count == 0 || count == num_rows {
+            let entropy = if count == 0 || count == sampled_rows {
                 0.0
             } else {
                 let p = count as f64 * inv_rows;
@@ -197,6 +235,111 @@ mod tests {
         let entropy_filter = EntropyNaive;
         let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
         tracing::info!("Entropies from pipeline: {:?}", entropies);
+        assert_eq!(entropies.len(), chunk_size);
+    }
+
+    #[test]
+    fn test_stride_sampled_entropy_skip_zero_matches_optimized() {
+        let num_rows = 6;
+        let chunk_size = 8;
+        let num_features = 8;
+        let bits_per_feature = 1;
+        let data = vec![
+            true, false, true, false, false, true, true, false, // Row 0
+            true, true, false, true, true, true, false, false, // Row 1
+            false, true, true, false, true, false, true, true, // Row 2
+            true, false, false, false, true, true, false, true, // Row 3
+            false, true, false, false, true, true, false, true, // Row 4
+            true, true, false, true, true, true, false, false, // Row 5
+        ];
+        let data = BitData {
+            data: data.into_iter().collect(),
+            chunk_size,
+            num_rows,
+        };
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let expected = calculate_entropy_optimized(&bit_data);
+        let sampled = calculate_entropy_stride_sampled(&bit_data, 0);
+        assert_eq!(sampled, expected);
+    }
+
+    #[test]
+    fn test_stride_sampled_entropy_skip_one_expected_values() {
+        let num_rows = 6;
+        let chunk_size = 8;
+        let num_features = 8;
+        let bits_per_feature = 1;
+        let data = vec![
+            true, false, true, false, false, true, true, false, // Row 0
+            true, true, false, true, true, true, false, false, // Row 1
+            false, true, true, false, true, false, true, true, // Row 2
+            true, false, false, false, true, true, false, true, // Row 3
+            false, true, false, false, true, true, false, true, // Row 4
+            true, true, false, true, true, true, false, false, // Row 5
+        ];
+        let data = BitData {
+            data: data.into_iter().collect(),
+            chunk_size,
+            num_rows,
+        };
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        // skip_rows = 1 samples rows: 0, 2, 4
+        let entropies = calculate_entropy_stride_sampled(&bit_data, 1);
+        let expected = vec![
+            (0, 0.9183),
+            (1, 0.9183),
+            (2, 0.9183),
+            (3, 0.0),
+            (4, 0.9183),
+            (5, 0.9183),
+            (6, 0.9183),
+            (7, 0.9183),
+        ];
+
+        assert_eq!(entropies.len(), chunk_size);
+        assert_eq!(
+            entropies
+                .iter()
+                .map(|(i, e)| (*i, (e * 100_000.0).round() / 100_000.0))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_pipeline_with_stride_sampled_entropy() {
+        let num_rows = 6;
+        let chunk_size = 8;
+        let num_features = 8;
+        let bits_per_feature = 1;
+        let data = vec![
+            true, false, true, false, false, true, true, false, // Row 0
+            true, true, false, true, true, true, false, false, // Row 1
+            false, true, true, false, true, false, true, true, // Row 2
+            true, false, false, false, true, true, false, true, // Row 3
+            false, true, false, false, true, true, false, true, // Row 4
+            true, true, false, true, true, true, false, false, // Row 5
+        ];
+        let data = BitData {
+            data: data.into_iter().collect(),
+            chunk_size,
+            num_rows,
+        };
+        let features =
+            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let entropy_filter = EntropyStrideSampled::new(1);
+        let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
         assert_eq!(entropies.len(), chunk_size);
     }
 }
