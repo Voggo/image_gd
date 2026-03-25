@@ -5,6 +5,7 @@ use entro_gd::{EntroGdError, decompress_igd_to_image, init_logging};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 
 fn main() -> Result<(), EntroGdError> {
     let _log_handle = init_logging();
@@ -49,6 +50,14 @@ fn main() -> Result<(), EntroGdError> {
     let data_folder = Path::new("data");
     let compressed_folder = data_folder.join("compressed");
     let decompressed_folder = data_folder.join("decompressed");
+    let base_debug_folder = data_folder.join("base_selection_debug");
+    let base_selection_debug_csv_paths = files_to_process.iter().map(|file| {
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image_dataset");
+        base_debug_folder.join(format!("{}_base_selection_debug.csv", stem))
+    });
 
     fs::create_dir_all(&compressed_folder)?;
     fs::create_dir_all(&decompressed_folder)?;
@@ -56,12 +65,15 @@ fn main() -> Result<(), EntroGdError> {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: 1,
-        grouping_transform: ImageGroupingTransform::Raw,
+        pixel_grouping: 3,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
     }
     .then(EntropyOptimized {})
     .then(GenCondensedSamples { m_max: 0 })
-    .then(SelectBases { patience: 10 })
+    .then(SelectBasesDebug {
+        patience: 10,
+        debug_csv_paths: Mutex::new(base_selection_debug_csv_paths.collect()),
+    })
     .then(EncodeDataHuffmanBaseIdOnly {});
 
     for image_file in files_to_process {
@@ -74,6 +86,7 @@ fn main() -> Result<(), EntroGdError> {
 
         let igd_path = compressed_folder.join(format!("{}.igd", stem));
         let decompressed_path = decompressed_folder.join(format!("{}-decompressed.png", stem));
+        
 
         tracing::info!("IGD output: {}", igd_path.display());
         tracing::info!("Decoded image output: {}", decompressed_path.display());

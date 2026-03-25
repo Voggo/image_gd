@@ -6,16 +6,30 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use crate::utils::bits_needed_nonzero;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-pub(crate) fn calculate_compressed_size<B: BaseBit>(
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CompressedSizeBreakdown {
+    pub total_size: usize,
+    pub num_bases: usize,
+    pub size_bases: usize,
+    pub size_deviations: usize,
+    pub size_ids: usize,
+    pub size_params: usize,
+}
+
+pub(crate) fn calculate_compressed_size_breakdown<B: BaseBit>(
     bit_data: &BitDataSet,
     base_bit_groups: &B,
-) -> usize {
+) -> CompressedSizeBreakdown {
     let n = bit_data.num_rows();
     let d = bit_data.num_features();
     let chunk_size = bit_data.chunk_size();
     let n_b = base_bit_groups.get_num_bases();
-    
+
     let len_b = base_bit_groups.get_num_bits_per_base();
     let len_d = chunk_size - len_b;
 
@@ -26,16 +40,130 @@ pub(crate) fn calculate_compressed_size<B: BaseBit>(
     };
 
     let size_bases = n_b * len_b;
-    let size_deviations = n * (len_d + len_id);
-
+    let size_deviations = n * len_d;
+    let size_ids = n * len_id;
     let size_dev_bits = chunk_size;
-    let size_params = 16 * d + 16 + size_dev_bits;
+    let size_params = 16 * d + 16 + size_dev_bits; // should revisit this
+    let total_size = size_bases + size_deviations + size_ids + size_params;
 
-    size_bases + size_deviations + size_params
+    CompressedSizeBreakdown {
+        total_size,
+        num_bases: n_b,
+        size_bases,
+        size_deviations,
+        size_ids,
+        size_params,
+    }
+}
+
+pub(crate) fn calculate_compressed_size<B: BaseBit>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+) -> usize {
+    calculate_compressed_size_breakdown(bit_data, base_bit_groups).total_size
+}
+
+struct SelectBasesCsvLogger {
+    writer: Option<BufWriter<File>>,
+}
+
+impl SelectBasesCsvLogger {
+    fn new(output_path: Option<&Path>) -> Self {
+        let Some(path) = output_path else {
+            return Self { writer: None };
+        };
+
+        let selected_path = Self::next_available_path(path);
+        let file = match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&selected_path)
+        {
+            Ok(file) => file,
+            Err(error) => {
+                tracing::warn!(path = %selected_path.display(), ?error, "failed to create select-bases debug csv");
+                return Self { writer: None };
+            }
+        };
+
+        let mut writer = BufWriter::new(file);
+        if let Err(error) = writeln!(
+            writer,
+            "bit_position,num_bases,size_bases,size_deviations,size_ids,size_params,total_size"
+        ) {
+            tracing::warn!(path = %selected_path.display(), ?error, "failed to write select-bases csv header");
+            return Self { writer: None };
+        }
+
+        if selected_path != path {
+            tracing::info!(
+                requested_path = %path.display(),
+                selected_path = %selected_path.display(),
+                "select-bases debug csv path already existed; using incremented suffix"
+            );
+        }
+
+        Self {
+            writer: Some(writer),
+        }
+    }
+
+    fn next_available_path(path: &Path) -> PathBuf {
+        if !path.exists() {
+            return path.to_path_buf();
+        }
+
+        let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "select_bases_debug".to_string());
+        let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
+
+        for suffix in 1..=usize::MAX {
+            let file_name = match &extension {
+                Some(ext) => format!("{}_{}.{}", stem, suffix, ext),
+                None => format!("{}_{}", stem, suffix),
+            };
+            let candidate = parent.join(file_name);
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+
+        path.to_path_buf()
+    }
+
+    fn log_row(&mut self, bit_position: usize, breakdown: CompressedSizeBreakdown) {
+        let Some(writer) = self.writer.as_mut() else {
+            return;
+        };
+
+        if let Err(error) = writeln!(
+            writer,
+            "{},{},{},{},{},{},{}",
+            bit_position,
+            breakdown.num_bases,
+            breakdown.size_bases,
+            breakdown.size_deviations,
+            breakdown.size_ids,
+            breakdown.size_params,
+            breakdown.total_size
+        ) {
+            tracing::warn!(?error, "failed to write select-bases csv row; disabling csv logging");
+            self.writer = None;
+        }
+    }
 }
 
 pub struct SelectBases {
     pub patience: usize,
+}
+
+pub struct SelectBasesDebug {
+    pub patience: usize,
+    pub debug_csv_paths: Mutex<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +185,52 @@ impl Filter for SelectBases {
         ));
         let (bit_data, entropy) = input;
         let base_bit_groups = select_base_bits(&bit_data, entropy, self.patience);
+        Ok((bit_data, Box::new(base_bit_groups)))
+    }
+}
+
+impl Filter for SelectBasesDebug {
+    type Input = (BitDataSet, Vec<(usize, f64)>);
+    type Output = (BitDataSet, Box<dyn BaseBit>);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Selecting base bits with CSV debug and patience {}",
+            self.patience
+        ));
+        let (bit_data, entropy) = input;
+
+        let selected_debug_csv_path = {
+            let guard = self
+                .debug_csv_paths
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.first().cloned()
+        };
+
+        if selected_debug_csv_path.is_none() {
+            tracing::warn!(
+                "SelectBasesDebug has no remaining debug CSV paths; running without CSV logging"
+            );
+        }
+
+        let base_bit_groups = select_base_bits_debug(
+            &bit_data,
+            entropy,
+            self.patience,
+            selected_debug_csv_path.as_deref(),
+        );
+
+        if let Some(selected_path) = selected_debug_csv_path {
+            let mut guard = self
+                .debug_csv_paths
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(pos) = guard.iter().position(|p| *p == selected_path) {
+                guard.remove(pos);
+            }
+        }
+
         Ok((bit_data, Box::new(base_bit_groups)))
     }
 }
@@ -125,6 +299,82 @@ fn select_base_bits(
         selected_mask = %selected_mask,
         selected_compressed_size_bytes = best_compressed_size / 8,
         "selected base bit mask (compressed size in bytes)"
+    );
+    best_base_bit_groups
+}
+
+fn select_base_bits_debug(
+    bit_data: &BitDataSet,
+    mut entropy: Vec<(usize, f64)>,
+    patience: usize,
+    debug_csv_path: Option<&Path>,
+) -> BaseBitGroups {
+    let mut non_improving_count = 0usize;
+    let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+    let mut csv_logger = SelectBasesCsvLogger::new(debug_csv_path);
+
+    entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    tracing::debug!(
+        entropy = ?entropy,
+        "Sorted entropies (bit position, entropy value)"
+    );
+    let zero_entropy_bits: Vec<usize> = entropy
+        .iter()
+        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
+        .map(|(bit_position, _)| *bit_position)
+        .collect();
+    for &bit_position in &zero_entropy_bits {
+        base_bit_groups.add_constant_bit_positions(&[bit_position]);
+        let breakdown = calculate_compressed_size_breakdown(bit_data, &base_bit_groups);
+        csv_logger.log_row(bit_position, breakdown);
+    }
+
+    let mut best_base_bit_groups = base_bit_groups.clone();
+    let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
+    let mut trial_base_bit_groups = base_bit_groups.clone();
+
+    for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
+        if best_base_bit_groups.get_num_bits_per_base()
+            >= (bit_data.chunk_size() as f64 * 1.0) as usize
+        {
+            break;
+        }
+
+        trial_base_bit_groups.add_bit_position(bit_data, bit_position);
+        let trial_breakdown = calculate_compressed_size_breakdown(bit_data, &trial_base_bit_groups);
+        csv_logger.log_row(bit_position, trial_breakdown);
+        let trial_compressed_size = trial_breakdown.total_size;
+
+        tracing::debug!(
+            bit_position,
+            trial_compressed_size,
+            best_compressed_size,
+            "evaluated trial base bit"
+        );
+
+        if trial_compressed_size < best_compressed_size {
+            best_compressed_size = trial_compressed_size;
+            best_base_bit_groups = trial_base_bit_groups.clone();
+            non_improving_count = 0;
+        } else {
+            non_improving_count += 1;
+        }
+
+        if non_improving_count >= patience {
+            break;
+        }
+    }
+    let selected_mask = best_base_bit_groups
+        .get_base_bit_mask()
+        .iter()
+        .map(|b| if *b { "1" } else { "0" })
+        .collect::<String>();
+    tracing::info!(
+        selected_num_bases = best_base_bit_groups.get_num_bases(),
+        selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
+        selected_mask = %selected_mask,
+        selected_compressed_size_bytes = best_compressed_size / 8,
+        "selected base bit mask (debug csv, compressed size in bytes)"
     );
     best_base_bit_groups
 }

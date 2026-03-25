@@ -6,4 +6,5 @@
 /data/**/decompressed*
 /data/**/compressed*
 /data/images_2
+/data/base_selection_debug
 /.vscode
