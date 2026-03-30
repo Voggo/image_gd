@@ -446,6 +446,28 @@ fn select_bases(
                 BaseBitImpl::SignatureGroups => {
                     crate::compression::base_selection::BaseBitImpl::SignatureGroups
                 }
+                BaseBitImpl::HyperLogLogCount => {
+                    crate::compression::base_selection::BaseBitImpl::HyperLogLogCount
+                }
+            },
+        }
+        .process(input),
+        SelectBasesImpl::ProfileAllBits => SelectBasesProfileAllBits {
+            split_into_batches: patience,
+            base_bit_impl: match base_bit_impl {
+                BaseBitImpl::Naive => crate::compression::base_selection::BaseBitImpl::Naive,
+                BaseBitImpl::BatchGroups => {
+                    crate::compression::base_selection::BaseBitImpl::BatchGroups
+                }
+                BaseBitImpl::IncSignatureGroups => {
+                    crate::compression::base_selection::BaseBitImpl::IncSignatureGroups
+                }
+                BaseBitImpl::SignatureGroups => {
+                    crate::compression::base_selection::BaseBitImpl::SignatureGroups
+                }
+                BaseBitImpl::HyperLogLogCount => {
+                    crate::compression::base_selection::BaseBitImpl::HyperLogLogCount
+                }
             },
         }
         .process(input),

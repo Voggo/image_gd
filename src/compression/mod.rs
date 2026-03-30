@@ -10,9 +10,12 @@ pub mod image_preprocessor;
 pub mod preprocessor;
 pub mod tabular_preprocessor;
 
-pub use base_bits::{BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitSignatureGroups};
+pub use base_bits::{
+    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
+};
 pub use base_selection::{
     BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized,
+    SelectBasesProfileAllBits,
 };
 pub use compress::{
     CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,

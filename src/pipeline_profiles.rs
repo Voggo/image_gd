@@ -11,6 +11,7 @@ use std::path::Path;
 pub enum SelectBasesImpl {
     Naive,
     Optimized,
+    ProfileAllBits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub enum BaseBitImpl {
     BatchGroups,
     IncSignatureGroups,
     SignatureGroups,
+    HyperLogLogCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +39,8 @@ pub enum ConfigSelectBasesImpl {
     Naive,
     #[serde(alias = "optimized_v1", alias = "optimized_v2", alias = "optimized_v3")]
     Optimized,
+    #[serde(alias = "profile")]
+    ProfileAllBits,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +50,7 @@ pub enum ConfigBaseBitImpl {
     BatchGroups,
     IncSignatureGroups,
     SignatureGroups,
+    HyperLogLogCount,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -786,6 +791,7 @@ macro_rules! impl_from_enum {
 impl_from_enum!(ConfigSelectBasesImpl => SelectBasesImpl {
     Naive => Naive,
     Optimized => Optimized,
+    ProfileAllBits => ProfileAllBits,
 });
 
 impl_from_enum!(ConfigBaseBitImpl => BaseBitImpl {
@@ -793,6 +799,7 @@ impl_from_enum!(ConfigBaseBitImpl => BaseBitImpl {
     BatchGroups => BatchGroups,
     IncSignatureGroups => IncSignatureGroups,
     SignatureGroups => SignatureGroups,
+    HyperLogLogCount => HyperLogLogCount,
 });
 
 impl_from_enum!(ConfigEncodeImpl => EncodeImpl {

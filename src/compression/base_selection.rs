@@ -1,5 +1,6 @@
 use crate::compression::base_bits::{
-    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitIncSignatureGroups, BaseBitSignatureGroups,
+    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount,
+    BaseBitIncSignatureGroups, BaseBitSignatureGroups,
 };
 use crate::compression::tabular_preprocessor::BitDataSet;
 use crate::error::EntroGdError;
@@ -21,7 +22,7 @@ pub(crate) struct CompressedSizeBreakdown {
     pub size_params: usize,
 }
 
-pub(crate) fn calculate_compressed_size_breakdown<B: BaseBit>(
+pub(crate) fn calculate_compressed_size_breakdown<B: BaseBit + ?Sized>(
     bit_data: &BitDataSet,
     base_bit_groups: &B,
 ) -> CompressedSizeBreakdown {
@@ -56,7 +57,7 @@ pub(crate) fn calculate_compressed_size_breakdown<B: BaseBit>(
     }
 }
 
-pub(crate) fn calculate_compressed_size<B: BaseBit>(
+pub(crate) fn calculate_compressed_size<B: BaseBit + ?Sized>(
     bit_data: &BitDataSet,
     base_bit_groups: &B,
 ) -> usize {
@@ -161,6 +162,20 @@ pub struct SelectBases {
     pub patience: usize,
 }
 
+/// Profiling-oriented selector that adds every bit position as base bits.
+///
+/// By default (`split_into_batches = 1`), all positions are added in a single
+/// batch call. Set `split_into_batches > 1` to split the full set of bit
+/// positions into that many smaller additions.
+pub struct SelectBasesProfileAllBits {
+    /// Desired number of additions used to add all bit positions.
+    ///
+    /// - `0` and `1` both behave as a single batch add.
+    /// - Values larger than the number of bit positions are clamped.
+    pub split_into_batches: usize,
+    pub base_bit_impl: BaseBitImpl,
+}
+
 pub struct SelectBasesDebug {
     pub patience: usize,
     pub debug_csv_paths: Mutex<Vec<PathBuf>>,
@@ -172,6 +187,7 @@ pub enum BaseBitImpl {
     BatchGroups,
     IncSignatureGroups,
     SignatureGroups,
+    HyperLogLogCount,
 }
 
 impl Filter for SelectBases {
@@ -186,6 +202,71 @@ impl Filter for SelectBases {
         let (bit_data, entropy) = input;
         let base_bit_groups = select_base_bits(&bit_data, entropy, self.patience);
         Ok((bit_data, Box::new(base_bit_groups)))
+    }
+}
+
+impl Filter for SelectBasesProfileAllBits {
+    type Input = (BitDataSet, Vec<(usize, f64)>);
+    type Output = (BitDataSet, Box<dyn BaseBit>);
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Selecting all base bits for profiling (split_into_batches={}, base_bit_impl={:?})",
+            self.split_into_batches,
+            self.base_bit_impl
+        ));
+
+        let (bit_data, _entropy) = input;
+        let chunk_size = bit_data.chunk_size();
+        let all_bit_positions: Vec<usize> = (0..chunk_size).collect();
+        let mut base_bit_groups: Box<dyn BaseBit> = match self.base_bit_impl {
+            BaseBitImpl::Naive => Box::new(BaseBitGroups::new(bit_data.num_rows(), chunk_size)),
+            BaseBitImpl::BatchGroups => {
+                Box::new(BaseBitBatchGroups::new(bit_data.num_rows(), chunk_size))
+            }
+            BaseBitImpl::IncSignatureGroups => Box::new(BaseBitIncSignatureGroups::new(
+                bit_data.num_rows(),
+                chunk_size,
+            )),
+            BaseBitImpl::SignatureGroups => {
+                Box::new(BaseBitSignatureGroups::new(bit_data.num_rows(), chunk_size))
+            }
+            BaseBitImpl::HyperLogLogCount => {
+                Box::new(BaseBitHyperLogLogCount::new(bit_data.num_rows(), chunk_size))
+            }
+        };
+
+        if !all_bit_positions.is_empty() {
+            let requested_batches = self.split_into_batches.max(1);
+            let batch_count = requested_batches.min(all_bit_positions.len());
+
+            if batch_count == 1 {
+                base_bit_groups
+                    .as_mut()
+                    .add_bit_positions(&bit_data, &all_bit_positions);
+            } else {
+                let batch_size = all_bit_positions.len().div_ceil(batch_count);
+                for batch in all_bit_positions.chunks(batch_size) {
+                    base_bit_groups.as_mut().add_bit_positions(&bit_data, batch);
+                }
+            }
+        }
+
+        let compressed_size = calculate_compressed_size(&bit_data, base_bit_groups.as_ref());
+        let selected_mask = base_bit_groups
+            .get_base_bit_mask()
+            .iter()
+            .map(|b| if *b { "1" } else { "0" })
+            .collect::<String>();
+        tracing::info!(
+            selected_num_bases = base_bit_groups.get_num_bases(),
+            selected_num_bits_per_base = base_bit_groups.get_num_bits_per_base(),
+            selected_mask = %selected_mask,
+            selected_compressed_size_bytes = compressed_size / 8,
+            "selected base bit mask (profile all bits, compressed size in bytes)"
+        );
+
+        Ok((bit_data, base_bit_groups))
     }
 }
 
@@ -419,6 +500,13 @@ impl Filter for SelectBasesOptimized {
             BaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy,
+                0.80,
+                self.patience,
+            ),
+            BaseBitImpl::HyperLogLogCount => select_base_bits_threshold_optimized(
+                &bit_data,
+                BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy,
                 0.80,
                 self.patience,

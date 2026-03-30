@@ -672,6 +672,254 @@ impl BaseBit for BaseBitIncSignatureGroups {
 }
 
 #[derive(Clone)]
+pub struct BaseBitHyperLogLogCount {
+    base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_positions: Vec<usize>,
+    num_bits_per_base: usize,
+    num_bases_estimate: usize,
+    row_hashes: Vec<u64>,
+    bit_hash_words: Vec<u64>,
+    registers: Vec<u8>,
+}
+
+impl std::fmt::Debug for BaseBitHyperLogLogCount {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("BaseBitHyperLogLogCount")
+            .field("base_bit_mask", &self.base_bit_mask)
+            .field("base_bit_positions", &self.base_bit_positions)
+            .field("num_bits_per_base", &self.num_bits_per_base)
+            .field("num_bases_estimate", &self.num_bases_estimate)
+            .finish()
+    }
+}
+
+impl BaseBitHyperLogLogCount {
+    const HLL_PRECISION: u8 = 8;
+    const SPLITMIX64_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
+
+    pub fn new(num_rows: usize, chunk_size: usize) -> Self {
+        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
+        let base_bit_positions = Vec::new();
+
+        let mut state = 0xD1B5_4A32_D192_ED03u64;
+        let mut bit_hash_words = Vec::with_capacity(chunk_size);
+        for _ in 0..chunk_size {
+            bit_hash_words.push(Self::splitmix64(&mut state));
+        }
+
+        BaseBitHyperLogLogCount {
+            base_bit_mask,
+            base_bit_positions,
+            num_bits_per_base: 0,
+            num_bases_estimate: 0,
+            row_hashes: vec![0u64; num_rows],
+            bit_hash_words,
+            registers: vec![0u8; 1usize << Self::HLL_PRECISION],
+        }
+    }
+
+    fn splitmix64(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(Self::SPLITMIX64_INCREMENT);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn avalanche_hash(mut value: u64) -> u64 {
+        value ^= value >> 33;
+        value = value.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+        value ^= value >> 33;
+        value = value.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+        value ^ (value >> 33)
+    }
+
+    fn hll_alpha(num_registers: usize) -> f64 {
+        match num_registers {
+            16 => 0.673,
+            32 => 0.697,
+            64 => 0.709,
+            _ => {
+                let m = num_registers as f64;
+                0.7213 / (1.0 + 1.079 / m)
+            }
+        }
+    }
+
+    fn estimate_from_registers(registers: &[u8], num_rows: usize) -> usize {
+        if num_rows == 0 {
+            return 0;
+        }
+
+        let m = registers.len() as f64;
+        let alpha = Self::hll_alpha(registers.len());
+
+        let mut harmonic_sum = 0.0f64;
+        let mut zero_count = 0usize;
+        for &register in registers {
+            if register == 0 {
+                zero_count += 1;
+            }
+            harmonic_sum += 2f64.powi(-(register as i32));
+        }
+
+        let mut estimate = alpha * m * m / harmonic_sum;
+        if estimate <= 2.5 * m && zero_count > 0 {
+            estimate = m * (m / zero_count as f64).ln();
+        }
+
+        estimate
+            .round()
+            .clamp(1.0, num_rows as f64)
+            .max(1.0) as usize
+    }
+
+    fn rebuild_synopsis(&mut self) {
+        self.registers.fill(0);
+
+        let bucket_shift = 64 - Self::HLL_PRECISION as usize;
+        for &row_hash in &self.row_hashes {
+            let mixed = Self::avalanche_hash(row_hash ^ 0xA24B_AED4_963E_E407);
+            let bucket = (mixed >> bucket_shift) as usize;
+
+            let suffix = mixed << Self::HLL_PRECISION;
+            let rank = (suffix.leading_zeros() as usize + 1)
+                .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
+
+            self.registers[bucket] = self.registers[bucket].max(rank);
+        }
+
+        self.num_bases_estimate = Self::estimate_from_registers(&self.registers, self.row_hashes.len());
+    }
+
+    pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
+        let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
+
+        if bit_positions.is_empty() {
+            return self.num_bases_estimate;
+        }
+
+        let raw_bits = bit_data.data.raw();
+        let chunk_size = bit_data.chunk_size();
+
+        for &bit_position in bit_positions {
+            assert!(
+                bit_position < self.base_bit_mask.len(),
+                "bit position {} out of bounds for chunk size {}",
+                bit_position,
+                self.base_bit_mask.len()
+            );
+            if self.base_bit_mask[bit_position] {
+                continue;
+            }
+
+            let bit_hash_word = self.bit_hash_words[bit_position];
+            let mut bit_index = bit_position;
+            for row_hash in &mut self.row_hashes {
+                if raw_bits[bit_index] {
+                    *row_hash ^= bit_hash_word;
+                }
+                bit_index += chunk_size;
+            }
+
+            self.base_bit_mask.set(bit_position, true);
+            self.base_bit_positions.push(bit_position);
+            self.num_bits_per_base += 1;
+        }
+
+        // Rebuild synopsis on every add call (PoC design).
+        self.rebuild_synopsis();
+        self.num_bases_estimate
+    }
+
+    pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
+        self.add_bit_positions(bit_data, &[bit_position])
+    }
+
+    pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
+        let _timer =
+            ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
+
+        let mut added_count = 0usize;
+        for &bit_position in bit_positions {
+            assert!(
+                bit_position < self.base_bit_mask.len(),
+                "bit position {} out of bounds for chunk size {}",
+                bit_position,
+                self.base_bit_mask.len()
+            );
+            if self.base_bit_mask[bit_position] {
+                continue;
+            }
+            self.base_bit_mask.set(bit_position, true);
+            self.base_bit_positions.push(bit_position);
+            added_count += 1;
+        }
+
+        self.num_bits_per_base += added_count;
+        self.num_bases_estimate
+    }
+
+    pub fn get_num_bases(&self) -> usize {
+        self.num_bases_estimate
+    }
+
+    pub fn get_num_bits_per_base(&self) -> usize {
+        self.num_bits_per_base
+    }
+
+    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+        &self.base_bit_mask
+    }
+
+    pub fn get_base_bit_positions(&self) -> &[usize] {
+        &self.base_bit_positions
+    }
+}
+
+impl BaseBit for BaseBitHyperLogLogCount {
+    fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
+        BaseBitHyperLogLogCount::add_bit_position(self, bit_data, bit_position)
+    }
+
+    fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
+        BaseBitHyperLogLogCount::add_bit_positions(self, bit_data, bit_positions)
+    }
+
+    fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
+        BaseBitHyperLogLogCount::add_constant_bit_positions(self, bit_positions)
+    }
+
+    fn get_bases(&self, _bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+        panic!(
+            "BaseBitHyperLogLogCount does not support get_bases(); use a different BaseBit implementation"
+        )
+    }
+
+    fn get_groups(&self) -> &[Vec<usize>] {
+        panic!(
+            "BaseBitHyperLogLogCount does not support get_groups(); use a different BaseBit implementation"
+        )
+    }
+
+    fn get_num_bases(&self) -> usize {
+        BaseBitHyperLogLogCount::get_num_bases(self)
+    }
+
+    fn get_num_bits_per_base(&self) -> usize {
+        BaseBitHyperLogLogCount::get_num_bits_per_base(self)
+    }
+
+    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+        BaseBitHyperLogLogCount::get_base_bit_mask(self)
+    }
+
+    fn get_base_bit_positions(&self) -> &[usize] {
+        BaseBitHyperLogLogCount::get_base_bit_positions(self)
+    }
+}
+
+#[derive(Clone)]
 pub struct BaseBitSignatureGroups {
     groups: Vec<Vec<usize>>,
     base_bit_mask: BitVec<usize, Msb0>,
@@ -998,5 +1246,33 @@ mod tests {
                 .sum::<usize>(),
             bit_data.num_rows()
         );
+    }
+
+    #[test]
+    fn test_base_bit_hll_count_add_multiple_bits() {
+        let bit_data = create_test_bit_data();
+
+        let mut hll_groups =
+            BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+        let num_bases = hll_groups.add_bit_positions(&bit_data, &[4, 5]);
+        assert!(num_bases >= 1);
+        assert!(num_bases <= bit_data.num_rows());
+        assert_eq!(hll_groups.get_num_bits_per_base(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not support get_groups")]
+    fn test_base_bit_hll_count_get_groups_panics() {
+        let bit_data = create_test_bit_data();
+        let hll_groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+        let _ = hll_groups.get_groups();
+    }
+
+    #[test]
+    #[should_panic(expected = "does not support get_bases")]
+    fn test_base_bit_hll_count_get_bases_panics() {
+        let bit_data = create_test_bit_data();
+        let hll_groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+        let _ = hll_groups.get_bases(&bit_data);
     }
 }
