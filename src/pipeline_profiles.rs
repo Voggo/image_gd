@@ -406,7 +406,7 @@ impl PipelineProfileSet {
             let converted: Vec<CsvPipelineProfile> = csv_profiles
                 .iter()
                 .cloned()
-                .map(|profile| CsvPipelineProfile::try_from(profile))
+                .map(CsvPipelineProfile::try_from)
                 .collect::<Result<_, EntroGdError>>()?;
             profiles.csv.extend(converted);
         }
@@ -414,7 +414,7 @@ impl PipelineProfileSet {
             let converted: Vec<ImagePipelineProfile> = image_profiles
                 .iter()
                 .cloned()
-                .map(|profile| ImagePipelineProfile::try_from(profile))
+                .map(ImagePipelineProfile::try_from)
                 .collect::<Result<_, EntroGdError>>()?;
             profiles.image.extend(converted);
         }
@@ -669,7 +669,7 @@ fn for_each_combination<E>(
     axis_lengths: &[usize],
     mut callback: impl FnMut(&[usize]) -> Result<(), E>,
 ) -> Result<(), E> {
-    if axis_lengths.iter().any(|len| *len == 0) {
+    if axis_lengths.contains(&0) {
         return Ok(());
     }
 

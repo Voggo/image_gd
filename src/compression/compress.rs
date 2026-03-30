@@ -625,11 +625,12 @@ impl HuffmanDeviationData {
             });
         }
 
-        let expected_raw_deviation_len = num_samples.checked_mul(num_deviation_bits).ok_or_else(|| {
-            EntroGdError::InvalidMetadata {
-                message: "raw deviation stream length overflow".to_string(),
-            }
-        })?;
+        let expected_raw_deviation_len =
+            num_samples.checked_mul(num_deviation_bits).ok_or_else(|| {
+                EntroGdError::InvalidMetadata {
+                    message: "raw deviation stream length overflow".to_string(),
+                }
+            })?;
 
         if let Some(raw) = raw_deviation_bit_stream.as_ref() {
             if raw.len() != expected_raw_deviation_len {
@@ -643,8 +644,9 @@ impl HuffmanDeviationData {
             }
             if huffman_symbol_num_deviation_bits != 0 {
                 return Err(EntroGdError::InvalidMetadata {
-                    message: "raw deviation stream can only be used with base-id-only Huffman symbols"
-                        .to_string(),
+                    message:
+                        "raw deviation stream can only be used with base-id-only Huffman symbols"
+                            .to_string(),
                 });
             }
         }
@@ -936,7 +938,6 @@ impl HuffmanDeviationData {
             message: "failed to decode Huffman symbol from bitstream".to_string(),
         })
     }
-
 }
 
 fn rebuild_huffman_codes(
@@ -1197,7 +1198,7 @@ mod tests {
     fn test_calculate_original_size_single_row() {
         let bit_data = create_test_bit_data(1, 2, 8);
         let original_size = calculate_original_size(&bit_data);
-        assert_eq!(original_size, 1 * 16);
+        assert_eq!(original_size, 16);
     }
 
     #[test]

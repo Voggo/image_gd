@@ -146,7 +146,7 @@ impl EgdFile {
         writer.align_to_byte();
 
         // Condensed sample weights
-        let weight_bits = bits_needed(original_num_rows);
+        let weight_bits = bits_needed_nonzero(original_num_rows);
         for &weight in condensed_weights {
             writer.write_usize_bits(weight, weight_bits);
         }
@@ -364,7 +364,7 @@ impl EgdFile {
         reader.align_to_byte();
 
         // Condensed sample weights
-        let weight_bits = bits_needed(n);
+        let weight_bits = bits_needed_nonzero(n);
         let mut weights = Vec::with_capacity(m);
         for _ in 0..m {
             weights.push(reader.read_usize_bits(weight_bits)?);
@@ -401,7 +401,7 @@ impl EgdFile {
             .ok_or_else(|| EntroGdError::InvalidMetadata {
                 message: "n + m overflows usize".to_string(),
             })?;
-        let num_id_bits = bits_needed(num_bases);
+        let num_id_bits = bits_needed_nonzero(num_bases);
         let num_deviation_bits = chunk_size.saturating_sub(base_bit_positions.len());
 
         let bits_per_sample = num_deviation_bits + num_id_bits;
@@ -1026,10 +1026,6 @@ fn ensure_csv_extension(path: &Path) -> PathBuf {
             out
         }
     }
-}
-
-fn bits_needed(value: usize) -> usize {
-    bits_needed_nonzero(value)
 }
 
 fn encode_data_type(data_type: FeatureDataType) -> u8 {

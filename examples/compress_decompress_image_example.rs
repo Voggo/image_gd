@@ -26,12 +26,12 @@ fn main() -> Result<(), EntroGdError> {
         for entry in fs::read_dir(input)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    let ext_str = ext.to_string_lossy().to_lowercase();
-                    if matches!(ext_str.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif") {
-                        files.push(path);
-                    }
+            if path.is_file()
+                && let Some(ext) = path.extension()
+            {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if matches!(ext_str.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "gif") {
+                    files.push(path);
                 }
             }
         }
@@ -86,7 +86,6 @@ fn main() -> Result<(), EntroGdError> {
 
         let igd_path = compressed_folder.join(format!("{}.igd", stem));
         let decompressed_path = decompressed_folder.join(format!("{}-decompressed.png", stem));
-        
 
         tracing::info!("IGD output: {}", igd_path.display());
         tracing::info!("Decoded image output: {}", decompressed_path.display());

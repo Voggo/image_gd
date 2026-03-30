@@ -439,7 +439,7 @@ mod tests {
     fn print_bitdata_head() {
         let loader = CsvDataLoader::new(true);
         let loaded = loader
-            .load("data/data-10000-8-int.csv")
+            .load("data/tabular/data-10000-8-int.csv")
             .expect("Failed to load dataset");
         let dataset = loaded.dataset;
         let bit_data =
@@ -466,7 +466,10 @@ mod tests {
     #[test]
     fn test_bitdata_from_dataset() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let dataset = loader
+            .load("data/tabular/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
@@ -480,7 +483,10 @@ mod tests {
     #[test]
     fn test_chunk_access() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let dataset = loader
+            .load("data/tabular/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
@@ -494,7 +500,10 @@ mod tests {
     #[test]
     fn test_get_bit_individual_access() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let dataset = loader
+            .load("data/tabular/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
@@ -520,7 +529,10 @@ mod tests {
     #[test]
     fn test_raw_access() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let dataset = loader
+            .load("data/tabular/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 
@@ -541,7 +553,10 @@ mod tests {
     #[test]
     fn test_single_bit_precision() {
         let loader = CsvDataLoader::new(true);
-        let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+        let dataset = loader
+            .load("data/tabular/data-10000-8-int.csv")
+            .unwrap()
+            .dataset;
         let bit_data =
             BitDataSet::from_dataset(&dataset).expect("Failed to create BitData from dataset");
 

@@ -6,7 +6,7 @@ fn main() -> Result<(), EntroGdError> {
 
     // Load the CSV file with headers
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv")?.dataset;
+    let dataset = loader.load("data/tabular/data-10000-8-int.csv")?.dataset;
 
     tracing::info!("Dataset loaded successfully!");
     tracing::info!("  Rows: {}", dataset.num_rows());

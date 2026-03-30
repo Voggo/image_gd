@@ -10,9 +10,9 @@ use crate::timing::ScopedTimer;
 use crate::utils::bits_needed_nonzero;
 use bitvec::prelude::*;
 use fxhash::FxHashMap;
-use std::hash::{Hash, Hasher};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::hash::{Hash, Hasher};
 
 const RLE_MAX_CONTROL_VALUE: usize = 134;
 const RLE_MAX_RUN_LEN: usize = RLE_MAX_CONTROL_VALUE + 1;
@@ -99,8 +99,10 @@ impl Filter for EncodeDataFusedDictionary {
         let (bit_data, base_bit_groups) = input;
         let fused = encode_data_fused_dictionary(&bit_data, base_bit_groups.as_ref());
 
-        let mut compressed =
-            CompressedData::new(EncodedData::Normal(fused.deviation_data), bit_data.info.clone());
+        let mut compressed = CompressedData::new(
+            EncodedData::Normal(fused.deviation_data),
+            bit_data.info.clone(),
+        );
         compressed.base_table = fused.base_table;
         compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
         compressed.condensed_sample_weights = bit_data
@@ -131,8 +133,6 @@ impl Filter for EncodeDataHuffman {
             .m_condensed_sample_weights()
             .map(|weights| weights.to_vec());
 
-        // debug_save_id_deviation_data(&bit_data, &(*base_bit_groups), "debug_output.csv")?;
-
         Ok(compressed)
     }
 }
@@ -144,7 +144,8 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info("Encoding data into compressed format (Huffman base-id only)");
+        let _timer =
+            ScopedTimer::info("Encoding data into compressed format (Huffman base-id only)");
         let (bit_data, base_bit_groups) = input;
         let mut compressed = CompressedData::new(
             EncodedData::Huffman(encode_data_huffman_base_id_only(
@@ -626,9 +627,8 @@ fn encode_data_huffman_base_id_only<B: BaseBit + ?Sized>(
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
 
     let mut pixel_bit_stream = BitVec::<usize, Msb0>::new();
-    let mut raw_deviation_bit_stream = BitVec::<usize, Msb0>::with_capacity(
-        bit_data.num_rows() * context.num_deviation_bits,
-    );
+    let mut raw_deviation_bit_stream =
+        BitVec::<usize, Msb0>::with_capacity(bit_data.num_rows() * context.num_deviation_bits);
     let mut row_offsets = Vec::with_capacity(row_count);
 
     for row_idx in 0..row_count {
@@ -872,51 +872,6 @@ fn symbol_slice(
 ) -> &BitSlice<usize, Msb0> {
     let start = row * symbol_width;
     &symbol_stream[start..start + symbol_width]
-}
-
-/// Debug function to save ID and deviation data to a CSV file
-pub fn debug_save_id_deviation_data<B: BaseBit + ?Sized>(
-    bit_data: &BitDataSet,
-    base_bit_groups: &B,
-    output_path: &str,
-) -> Result<(), EntroGdError> {
-    use std::fs::File;
-    use std::io::Write;
-
-    let context = prepare_encoding_context(bit_data, base_bit_groups);
-    let mut file = File::create(output_path).map_err(|e| EntroGdError::InvalidMetadata {
-        message: format!("Failed to create CSV file: {}", e),
-    })?;
-
-    // Write header
-    writeln!(file, "row,id_decimal,deviation_decimal").map_err(|e| {
-        EntroGdError::InvalidMetadata {
-            message: format!("Failed to write CSV header: {}", e),
-        }
-    })?;
-
-    // Extract and write data for each row
-    for row in 0..bit_data.num_rows() {
-        let chunk = bit_data.get_chunk(row);
-        let id = context.row_to_group_id[row] as u64;
-
-        // Extract deviation bits
-        let mut deviation = 0u64;
-        for &(start, end) in &context.deviation_ranges {
-            for bit in &chunk[start..end] {
-                deviation = (deviation << 1) | (*bit as u64);
-            }
-        }
-
-        writeln!(file, "{},{},{}", row, id, deviation).map_err(|e| {
-            EntroGdError::InvalidMetadata {
-                message: format!("Failed to write CSV row: {}", e),
-            }
-        })?;
-    }
-
-    tracing::info!("Saved ID and deviation data to {}", output_path);
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1242,7 +1197,11 @@ mod tests {
         add_base_bits(&mut trained_groups, &training_subset, &[0, 1]);
 
         let fused = encode_data_fused_dictionary(&full_data, &trained_groups);
-        let mut counts: Vec<usize> = fused.base_table.iter().map(|(_base, count)| *count).collect();
+        let mut counts: Vec<usize> = fused
+            .base_table
+            .iter()
+            .map(|(_base, count)| *count)
+            .collect();
         counts.sort_unstable();
 
         assert_eq!(fused.base_table.len(), 2);

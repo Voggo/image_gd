@@ -64,26 +64,12 @@ impl GenCondensedImpl {
 
 #[derive(Clone, Copy)]
 enum SelectBasesImpl {
-    Naive,
-    Optimized(BaseBitImpl),
     ProfileAllBits(BaseBitImpl),
 }
 
 impl SelectBasesImpl {
     fn label(self) -> &'static str {
         match self {
-            SelectBasesImpl::Naive => "naive",
-            SelectBasesImpl::Optimized(BaseBitImpl::Naive) => "optimized_naive",
-            SelectBasesImpl::Optimized(BaseBitImpl::BatchGroups) => "optimized_batch_groups",
-            SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups) => {
-                "optimized_inc_signature_groups"
-            }
-            SelectBasesImpl::Optimized(BaseBitImpl::SignatureGroups) => {
-                "optimized_signature_groups"
-            }
-            SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount) => {
-                "optimized_hyper_log_log_count"
-            }
             SelectBasesImpl::ProfileAllBits(BaseBitImpl::Naive) => "profile_all_bits_naive",
             SelectBasesImpl::ProfileAllBits(BaseBitImpl::BatchGroups) => {
                 "profile_all_bits_batch_groups"
@@ -106,12 +92,6 @@ impl SelectBasesImpl {
         patience: usize,
     ) -> Result<(BitDataSet, DynBaseBit), EntroGdError> {
         match self {
-            SelectBasesImpl::Naive => SelectBases { patience }.process(input),
-            SelectBasesImpl::Optimized(base_bit_impl) => SelectBasesOptimized {
-                patience,
-                base_bit_impl,
-            }
-            .process(input),
             SelectBasesImpl::ProfileAllBits(base_bit_impl) => SelectBasesProfileAllBits {
                 split_into_batches: patience,
                 base_bit_impl,
@@ -258,11 +238,7 @@ impl StepBenchCase {
         }
     }
 
-    fn image(
-        data_file_path: &'static str,
-        m_max: usize,
-        patience: usize,
-    ) -> Self {
+    fn image(data_file_path: &'static str, m_max: usize, patience: usize) -> Self {
         Self {
             data_file_path,
             input: StepBenchInput::Image {
@@ -292,15 +268,9 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Optimized];
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
 const SELECT_BASES_IMPLS: [SelectBasesImpl; 4] = [
-    // SelectBasesImpl::Naive,
-    // SelectBasesImpl::Optimized(BaseBitImpl::BatchGroups),
-    // SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups),
-    // SelectBasesImpl::Optimized(BaseBitImpl::SignatureGroups),
-    // SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::Naive),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::BatchGroups),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::IncSignatureGroups),
-    // SelectBasesImpl::ProfileAllBits(BaseBitImpl::SignatureGroups),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::HyperLogLogCount),
 ];
 const ENCODE_IMPLS: [EncodeImpl; 3] = [
@@ -339,7 +309,10 @@ fn build_loader(case: StepBenchCase) -> CsvDataLoader {
     let float_storage = match case.input {
         StepBenchInput::Csv { float_storage } => float_storage,
         StepBenchInput::Image { .. } => {
-            panic!("build_loader called for image case: {}", case.data_file_path)
+            panic!(
+                "build_loader called for image case: {}",
+                case.data_file_path
+            )
         }
     };
     CsvDataLoader::new(true).with_float_storage(float_storage)

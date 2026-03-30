@@ -1,12 +1,5 @@
 use crate::error::EntroGdError;
 
-// A simple filter pipeline framework for processing data through a sequence of transformations.
-// Each filter takes an input, processes it, and produces an output that can be fed into
-// the next filter in the chain.
-// Ill split most functions into a filter module, thus it might be useful to have functions constructing
-// pipelines for common ideas here i will build a factory or just use simple helper functions
-// with function deifinitions like this: fn create_processor() -> impl Filter<Input = i32, Output = String>
-
 pub trait Filter {
     type Input;
     type Output;

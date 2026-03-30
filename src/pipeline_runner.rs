@@ -11,6 +11,7 @@ use crate::pipeline_profiles::{
     SelectBasesImpl,
 };
 use crate::prelude::*;
+use crate::utils::bits_needed_nonzero;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,15 +24,9 @@ pub enum InputKind {
     Unsupported,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ExperimentRunOptions {
     pub recursive: bool,
-}
-
-impl Default for ExperimentRunOptions {
-    fn default() -> Self {
-        Self { recursive: false }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -488,14 +483,6 @@ fn encode_data(
     }
 }
 
-fn bits_needed_nonzero(value: usize) -> usize {
-    if value == 0 {
-        1
-    } else {
-        (usize::BITS as usize) - value.leading_zeros() as usize
-    }
-}
-
 fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBreakdownBits {
     let encoded_stream_total = compressed.encoded_data.get_encoded_size();
     let base_table_patterns = compressed
@@ -567,10 +554,8 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
         }
     };
 
-    let estimated_total = encoded_stream_total
-        + base_table_patterns
-        + base_bit_positions
-        + condensed_weights;
+    let estimated_total =
+        encoded_stream_total + base_table_patterns + base_bit_positions + condensed_weights;
 
     CompressedSizeBreakdownBits {
         encoded_stream_total,

@@ -71,13 +71,17 @@ impl Filter for EntropyStrideSampled {
     type Output = (BitDataSet, Vec<(usize, f64)>);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info("Calculating entropy for each bit position (stride sampled)");
+        let _timer =
+            ScopedTimer::info("Calculating entropy for each bit position (stride sampled)");
         let entropy = calculate_entropy_stride_sampled(&input, self.skip_rows);
         Ok((input, entropy))
     }
 }
 
-pub fn calculate_entropy_stride_sampled(bit_data: &BitDataSet, skip_rows: usize) -> Vec<(usize, f64)> {
+pub fn calculate_entropy_stride_sampled(
+    bit_data: &BitDataSet,
+    skip_rows: usize,
+) -> Vec<(usize, f64)> {
     let stride = skip_rows.saturating_add(1);
     calculate_entropy_with_stride(bit_data, stride)
 }
@@ -186,7 +190,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropies = calculate_entropy(&bit_data);
-        let exprected_entropies = vec![
+        let expected_entropies = vec![
             (0, 0.9183),
             (1, 0.9183),
             (2, 0.9183),
@@ -203,7 +207,7 @@ mod tests {
                 .iter()
                 .map(|(i, e)| (*i, (e * 100_000.0).round() / 100_000.0))
                 .collect::<Vec<_>>(),
-            exprected_entropies
+            expected_entropies
         );
     }
 

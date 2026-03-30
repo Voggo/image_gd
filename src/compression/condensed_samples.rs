@@ -240,49 +240,6 @@ mod tests {
                 info,
             }
         }
-
-        /// Build a BitDataSet and set specific bit patterns for testing
-        #[allow(dead_code)]
-        fn build_with_pattern<F>(self, pattern_fn: F) -> BitDataSet
-        where
-            F: Fn(&mut BitVec<usize, Msb0>, usize, usize),
-        {
-            let chunk_size = self.num_features * self.bits_per_feature;
-            let total_bits = chunk_size * self.num_rows;
-            let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
-
-            for _ in 0..self.num_rows {
-                for _ in 0..chunk_size {
-                    data.push(false);
-                }
-            }
-
-            for row_idx in 0..self.num_rows {
-                pattern_fn(&mut data, row_idx, chunk_size);
-            }
-
-            let features = (0..self.num_features)
-                .map(|_| FeatureSpec {
-                    data_type: FeatureDataType::UnsignedInt,
-                    bits: self.bits_per_feature,
-                    transform: crate::compression::preprocessor::FeatureTransform::None,
-                })
-                .collect();
-
-            let info =
-                BitDataInfo::new(features, total_bits).expect("failed to create BitDataInfo");
-
-            let data_struct = crate::compression::preprocessor::BitData {
-                data,
-                chunk_size,
-                num_rows: self.num_rows,
-            };
-
-            BitDataSet {
-                data: data_struct,
-                info,
-            }
-        }
     }
 
     /// Create a simple test entropy vector
@@ -302,25 +259,6 @@ mod tests {
             entropy.push((i, (i as f64) * 0.1));
         }
         entropy
-    }
-
-    /// Create BaseBitGroups with all rows in a single group
-    #[allow(dead_code)]
-    fn create_single_group_base_bits(num_rows: usize, chunk_size: usize) -> BaseBitGroups {
-        BaseBitGroups::new(num_rows, chunk_size)
-    }
-
-    /// Create BaseBitGroups with specified bit positions added
-    #[allow(dead_code)]
-    fn create_base_bits_with_positions(
-        bit_data: &BitDataSet,
-        bit_positions: &[usize],
-    ) -> BaseBitGroups {
-        let mut base_bits = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        for &pos in bit_positions {
-            base_bits.add_bit_position(bit_data, pos);
-        }
-        base_bits
     }
 
     // ============================================================================
@@ -359,8 +297,8 @@ mod tests {
         assert_eq!(result[1].1, 0.0);
 
         // Rest should be organized by feature in ascending entropy order within each feature
-        for i in 2..result.len() {
-            assert!(result[i].1 > 0.0);
+        for entry in result.iter().skip(2) {
+            assert!(entry.1 > 0.0);
         }
     }
 

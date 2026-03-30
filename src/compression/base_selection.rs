@@ -1,6 +1,6 @@
 use crate::compression::base_bits::{
-    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount,
-    BaseBitIncSignatureGroups, BaseBitSignatureGroups,
+    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitIncSignatureGroups,
+    BaseBitSignatureGroups,
 };
 use crate::compression::tabular_preprocessor::BitDataSet;
 use crate::error::EntroGdError;
@@ -152,7 +152,10 @@ impl SelectBasesCsvLogger {
             breakdown.size_params,
             breakdown.total_size
         ) {
-            tracing::warn!(?error, "failed to write select-bases csv row; disabling csv logging");
+            tracing::warn!(
+                ?error,
+                "failed to write select-bases csv row; disabling csv logging"
+            );
             self.writer = None;
         }
     }
@@ -212,8 +215,7 @@ impl Filter for SelectBasesProfileAllBits {
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
             "Selecting all base bits for profiling (split_into_batches={}, base_bit_impl={:?})",
-            self.split_into_batches,
-            self.base_bit_impl
+            self.split_into_batches, self.base_bit_impl
         ));
 
         let (bit_data, _entropy) = input;
@@ -231,9 +233,10 @@ impl Filter for SelectBasesProfileAllBits {
             BaseBitImpl::SignatureGroups => {
                 Box::new(BaseBitSignatureGroups::new(bit_data.num_rows(), chunk_size))
             }
-            BaseBitImpl::HyperLogLogCount => {
-                Box::new(BaseBitHyperLogLogCount::new(bit_data.num_rows(), chunk_size))
-            }
+            BaseBitImpl::HyperLogLogCount => Box::new(BaseBitHyperLogLogCount::new(
+                bit_data.num_rows(),
+                chunk_size,
+            )),
         };
 
         if !all_bit_positions.is_empty() {
@@ -481,7 +484,7 @@ impl Filter for SelectBasesOptimized {
                 BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy,
                 0.80,
-                self.patience
+                self.patience,
             ),
             BaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
                 &bit_data,
@@ -514,81 +517,6 @@ impl Filter for SelectBasesOptimized {
         };
         Ok((bit_data, base_bit_groups))
     }
-}
-
-#[allow(dead_code)]
-fn select_base_bits_optimized(
-    bit_data: &BitDataSet,
-    mut base_bit_groups: impl BaseBit + Clone + 'static,
-    mut entropy: Vec<(usize, f64)>,
-    patience: usize,
-) -> Box<dyn BaseBit> {
-    let mut non_improving_count = 0usize;
-
-    entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
-    tracing::debug!(
-        entropy = ?entropy,
-        "Sorted entropies (bit position, entropy value)"
-    );
-    let zero_entropy_bits: Vec<usize> = entropy
-        .iter()
-        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
-        .map(|(bit_position, _)| *bit_position)
-        .collect();
-    base_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
-
-    let mut best_base_bit_groups = base_bit_groups.clone();
-    let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
-    let mut trial_base_bit_groups = base_bit_groups.clone();
-
-    for i in (0..entropy.len()).step_by(3) {
-        let bit_positions: Vec<usize> = entropy
-            .iter()
-            .skip(zero_entropy_bits.len())
-            .skip(i)
-            .take(3)
-            .map(|(pos, _)| *pos)
-            .collect();
-
-        if bit_positions.is_empty() {
-            break;
-        }
-
-        trial_base_bit_groups.add_bit_positions(bit_data, &bit_positions);
-        let trial_compressed_size = calculate_compressed_size(bit_data, &trial_base_bit_groups);
-
-        tracing::debug!(
-            bit_positions = ?bit_positions,
-            trial_compressed_size,
-            best_compressed_size,
-            "evaluated trial base-bit batch"
-        );
-
-        if trial_compressed_size < best_compressed_size {
-            best_compressed_size = trial_compressed_size;
-            best_base_bit_groups = trial_base_bit_groups.clone();
-            non_improving_count = 0;
-        } else {
-            non_improving_count += 1;
-        }
-
-        if non_improving_count >= patience / 3 {
-            break;
-        }
-    }
-    let selected_mask = best_base_bit_groups
-        .get_base_bit_mask()
-        .iter()
-        .map(|b| if *b { "1" } else { "0" })
-        .collect::<String>();
-    tracing::info!(
-        selected_num_bases = best_base_bit_groups.get_num_bases(),
-        selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        selected_mask = %selected_mask,
-        selected_compressed_size_bytes = best_compressed_size / 8,
-        "selected base bit mask (optimized, compressed size in bytes)"
-    );
-    Box::new(best_base_bit_groups)
 }
 
 fn select_base_bits_threshold_optimized(

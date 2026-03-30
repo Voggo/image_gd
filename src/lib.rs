@@ -10,21 +10,19 @@ pub mod timing;
 mod utils;
 
 pub use compression::{
-    BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    BuildBitDataSet, BuildImageBitDataSet, CompressedData, CondensedSamples, DecompressAnalytics,
-    DecompressFileData, DecompressRowsData, DeviationData, DeviationSample, EgdFile, EncodeData,
-    EncodeDataFusedDictionary, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,
+    BaseBitImpl, BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo,
+    BitDataSet, BuildBitDataSet, BuildImageBitDataSet, CompressedData, CondensedSamples,
+    DecompressAnalytics, DecompressFileData, DecompressRowsData, DeviationData, DeviationSample,
+    EgdFile, EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,
     EncodeDataOptimized, EncodeDataRLE, EncodedData, EntropyNaive, EntropyOptimized,
     EntropyStrideSampled, FORMAT_VERSION, FeatureSpec, FeatureTransform, FloatScalingMode,
-    GenCondensedSamples,
-    IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel, ImageColorSpace,
-    ImageGroupingTransform, ImageReconstructionInfo, InferFeatureSpecs, LoadEgdFile,
-    LoadIgdFile, MAGIC_BYTES, BaseBitImpl, PreprocessOptions, RleDeviationData, SaveEgdFile,
-    SaveIgdFile, SelectBases, SelectBasesDebug, SelectBasesOptimized, calculate_entropy,
-    SelectBasesProfileAllBits,
-    calculate_entropy_stride_sampled, decode_value_from_bits, decompress_egd_to_csv,
-    decompress_igd_to_image, load_and_decompress_egd, load_and_decompress_igd,
-    write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
+    GenCondensedSamples, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel,
+    ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo, InferFeatureSpecs,
+    LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PreprocessOptions, RleDeviationData, SaveEgdFile,
+    SaveIgdFile, SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
+    calculate_entropy, calculate_entropy_stride_sampled, decode_value_from_bits,
+    decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
+    load_and_decompress_igd, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
 pub use data_loader::{
     ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
@@ -34,13 +32,13 @@ pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
 #[cfg(feature = "experiment-runner")]
 pub use pipeline_profiles::{
-    ConfigBaseBitImpl, ConfigEncodeImpl, ConfigImageColorModel,
-    ConfigImageColorSpace, ConfigImageGroupingTransform, ConfigMissingValuePolicy,
-    ConfigSelectBasesImpl, CsvPipelineProfile, CsvPipelineProfileConfig, CsvProfileGroupConfig,
-    EncodeImpl, ExperimentRunnerConfigFile, ImageBuildConfig,
-    ImageBuildSweepConfig, ImagePipelineProfile, ImagePipelineProfileConfig,
-    ImageProfileGroupConfig, IntegerRangeU8, IntegerRangeU32, IntegerRangeUsize, IntegerSweepU8,
-    IntegerSweepU32, IntegerSweepUsize, PipelineProfileSet, SelectBasesImpl,
+    ConfigBaseBitImpl, ConfigEncodeImpl, ConfigImageColorModel, ConfigImageColorSpace,
+    ConfigImageGroupingTransform, ConfigMissingValuePolicy, ConfigSelectBasesImpl,
+    CsvPipelineProfile, CsvPipelineProfileConfig, CsvProfileGroupConfig, EncodeImpl,
+    ExperimentRunnerConfigFile, ImageBuildConfig, ImageBuildSweepConfig, ImagePipelineProfile,
+    ImagePipelineProfileConfig, ImageProfileGroupConfig, IntegerRangeU8, IntegerRangeU32,
+    IntegerRangeUsize, IntegerSweepU8, IntegerSweepU32, IntegerSweepUsize, PipelineProfileSet,
+    SelectBasesImpl,
 };
 #[cfg(feature = "experiment-runner")]
 pub use pipeline_runner::{
@@ -52,12 +50,12 @@ pub use timing::ScopedTimer;
 
 pub mod prelude {
     pub use crate::{
-        BuildBitDataSet, BuildImageBitDataSet, DecompressAnalytics, DecompressFileData,
-        DecompressRowsData, EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman,
-        EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized, EncodeDataRLE, EntropyNaive,
-        EntropyOptimized, EntropyStrideSampled, Filter, FilterExt, FloatScalingMode,
+        BaseBitImpl, BuildBitDataSet, BuildImageBitDataSet, DecompressAnalytics,
+        DecompressFileData, DecompressRowsData, EncodeData, EncodeDataFusedDictionary,
+        EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized, EncodeDataRLE,
+        EntropyNaive, EntropyOptimized, EntropyStrideSampled, Filter, FilterExt, FloatScalingMode,
         GenCondensedSamples, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
-        InferFeatureSpecs, LoadEgdFile, LoadIgdFile, BaseBitImpl, PreprocessOptions, SaveEgdFile, SaveIgdFile,
+        InferFeatureSpecs, LoadEgdFile, LoadIgdFile, PreprocessOptions, SaveEgdFile, SaveIgdFile,
         SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
     };
 }
@@ -101,7 +99,7 @@ pub fn init_logging() -> Option<LogHandle> {
             .unwrap_or(false);
 
         if std::fs::create_dir_all(&log_dir).is_err() {
-            eprintln!("Failed to create log directory: {}", log_dir);
+            tracing::warn!(log_dir = %log_dir, "failed to create log directory");
             return;
         }
 
@@ -138,7 +136,7 @@ pub fn init_logging() -> Option<LogHandle> {
         };
 
         if init_result.is_err() {
-            eprintln!("Failed to initialize tracing subscriber");
+            tracing::warn!("failed to initialize tracing subscriber");
             return;
         }
 

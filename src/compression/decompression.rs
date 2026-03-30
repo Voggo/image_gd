@@ -7,6 +7,7 @@ use crate::data_loader::DataValue;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
+use crate::utils::{min_position_bits, signed_half_wrapped};
 use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::fs::File;
@@ -445,14 +446,6 @@ fn decode_grouped_feature(
     }
 }
 
-fn min_position_bits(pixels_per_group: usize) -> usize {
-    if pixels_per_group <= 1 {
-        0
-    } else {
-        usize::BITS as usize - (pixels_per_group - 1).leading_zeros() as usize
-    }
-}
-
 fn convert_ycocg_to_rgb_channels(raw: &[u8], channels: usize) -> Vec<u8> {
     let mut out = raw.to_vec();
     for pixel in out.chunks_exact_mut(channels) {
@@ -488,10 +481,6 @@ fn convert_ycocg_r_to_rgb_channels(raw: &[u8], channels: usize) -> Vec<u8> {
         pixel[2] = b;
     }
     out
-}
-
-fn signed_half_wrapped(value: u8) -> u8 {
-    ((value as i8) >> 1) as u8
 }
 
 fn clamp_to_u8(value: i16) -> u8 {
@@ -554,16 +543,6 @@ mod tests {
         bits
     }
 
-    /// Creates a base pattern (BitVec) with specific bits set at given positions
-    #[allow(dead_code)]
-    fn create_base_pattern(size: usize, set_positions: &[usize]) -> BitVec<usize, Msb0> {
-        let mut bits = BitVec::<usize, Msb0>::with_capacity(size);
-        for i in 0..size {
-            bits.push(set_positions.contains(&i));
-        }
-        bits
-    }
-
     /// Creates a BitDataInfo for testing with a single feature
     fn create_test_bit_data_info(chunk_size: usize, num_rows: usize) -> BitDataInfo {
         let features = vec![FeatureSpec {
@@ -571,24 +550,6 @@ mod tests {
             bits: chunk_size,
             transform: FeatureTransform::None,
         }];
-        BitDataInfo::new(features, chunk_size * num_rows).unwrap()
-    }
-
-    /// Creates a BitDataInfo with multiple features
-    #[allow(dead_code)]
-    fn create_test_bit_data_info_multi_feature(
-        feature_bits: Vec<usize>,
-        num_rows: usize,
-    ) -> BitDataInfo {
-        let chunk_size: usize = feature_bits.iter().sum();
-        let features = feature_bits
-            .into_iter()
-            .map(|bits| FeatureSpec {
-                data_type: FeatureDataType::UnsignedInt,
-                bits,
-                transform: FeatureTransform::None,
-            })
-            .collect();
         BitDataInfo::new(features, chunk_size * num_rows).unwrap()
     }
 
@@ -638,7 +599,7 @@ mod tests {
         (0..num_bases)
             .map(|i| {
                 let pattern = create_bit_pattern(chunk_size, i % 2 == 0);
-                (pattern, i as usize) // frequency is just the index for simplicity
+                (pattern, i) // frequency is just the index for simplicity
             })
             .collect()
     }

@@ -11,6 +11,7 @@ use crate::compression::tabular_preprocessor::{
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
+use crate::utils::{min_position_bits, signed_half_wrapped};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageColorSpace {
@@ -34,6 +35,22 @@ pub struct BuildImageBitDataSet {
     pub grouping_transform: ImageGroupingTransform,
 }
 
+#[derive(Debug, Clone)]
+struct ImageBuildInput {
+    width: u32,
+    height: u32,
+    channels: u8,
+    colorspace: u8,
+    raw: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImageBuildOptions {
+    color_model: ImageColorModel,
+    pixel_grouping: u32,
+    grouping_transform: ImageGroupingTransform,
+}
+
 impl Default for BuildImageBitDataSet {
     fn default() -> Self {
         Self {
@@ -53,24 +70,32 @@ impl Filter for BuildImageBitDataSet {
         let decoded = image::open(&input)?;
         match decoded {
             DynamicImage::ImageRgb8(img) => build_image_bitdataset(
-                img.width(),
-                img.height(),
-                3,
-                self.color_model,
-                self.pixel_grouping,
-                self.grouping_transform,
-                self.colorspace.as_u8(),
-                img.into_raw(),
+                ImageBuildInput {
+                    width: img.width(),
+                    height: img.height(),
+                    channels: 3,
+                    colorspace: self.colorspace.as_u8(),
+                    raw: img.into_raw(),
+                },
+                ImageBuildOptions {
+                    color_model: self.color_model,
+                    pixel_grouping: self.pixel_grouping,
+                    grouping_transform: self.grouping_transform,
+                },
             ),
             DynamicImage::ImageRgba8(img) => build_image_bitdataset(
-                img.width(),
-                img.height(),
-                4,
-                self.color_model,
-                self.pixel_grouping,
-                self.grouping_transform,
-                self.colorspace.as_u8(),
-                img.into_raw(),
+                ImageBuildInput {
+                    width: img.width(),
+                    height: img.height(),
+                    channels: 4,
+                    colorspace: self.colorspace.as_u8(),
+                    raw: img.into_raw(),
+                },
+                ImageBuildOptions {
+                    color_model: self.color_model,
+                    pixel_grouping: self.pixel_grouping,
+                    grouping_transform: self.grouping_transform,
+                },
             ),
             other => Err(EntroGdError::InvalidMetadata {
                 message: format!(
@@ -83,15 +108,22 @@ impl Filter for BuildImageBitDataSet {
 }
 
 fn build_image_bitdataset(
-    width: u32,
-    height: u32,
-    channels: u8,
-    color_model: ImageColorModel,
-    pixel_grouping: u32,
-    grouping_transform: ImageGroupingTransform,
-    colorspace: u8,
-    raw: Vec<u8>,
+    input: ImageBuildInput,
+    options: ImageBuildOptions,
 ) -> Result<BitDataSet, EntroGdError> {
+    let ImageBuildInput {
+        width,
+        height,
+        channels,
+        colorspace,
+        raw,
+    } = input;
+    let ImageBuildOptions {
+        color_model,
+        pixel_grouping,
+        grouping_transform,
+    } = options;
+
     if !matches!(channels, 3 | 4) {
         return Err(EntroGdError::InvalidMetadata {
             message: format!("unsupported channel count {} (expected 3 or 4)", channels),
@@ -336,14 +368,6 @@ fn encode_for_anchor(out: &mut BitVec<usize, Msb0>, values: &[u8], anchor: u8) {
     }
 }
 
-fn min_position_bits(pixels_per_group: usize) -> usize {
-    if pixels_per_group <= 1 {
-        0
-    } else {
-        usize::BITS as usize - (pixels_per_group - 1).leading_zeros() as usize
-    }
-}
-
 fn convert_rgb_to_ycocg_channels(raw: &[u8], channels: usize) -> Vec<u8> {
     tracing::warn!("By using the YCoCg color model, When converting back to RGB is lossy!");
     let mut out = raw.to_vec();
@@ -380,10 +404,6 @@ fn convert_rgb_to_ycocg_r_channels(raw: &[u8], channels: usize) -> Vec<u8> {
         pixel[2] = cg.wrapping_add(128);
     }
     out
-}
-
-fn signed_half_wrapped(value: u8) -> u8 {
-    ((value as i8) >> 1) as u8
 }
 
 #[cfg(test)]

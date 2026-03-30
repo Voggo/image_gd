@@ -5,7 +5,7 @@ use entro_gd::data_loader::{
 #[test]
 fn test_load_csv_from_file() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv");
+    let dataset = loader.load("data/tabular/data-10000-8-int.csv");
     assert!(dataset.is_ok(), "Failed to load CSV file");
 
     let dataset = dataset.unwrap().dataset;
@@ -16,7 +16,10 @@ fn test_load_csv_from_file() {
 #[test]
 fn test_dataset_structure() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     assert_eq!(dataset.num_columns(), 8, "Expected 8 columns");
     assert_eq!(dataset.num_rows(), 10000, "Expected 10000 rows");
@@ -29,7 +32,10 @@ fn test_dataset_structure() {
 #[test]
 fn test_dataset_row_access() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     let value_0_0 = dataset.value_at(0, 0);
     let value_100_0 = dataset.value_at(100, 0);
@@ -43,7 +49,10 @@ fn test_dataset_row_access() {
 #[test]
 fn test_dataset_values_are_numeric() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     for row_idx in 0..10 {
         for col_idx in 0..dataset.num_columns() {
@@ -56,7 +65,10 @@ fn test_dataset_values_are_numeric() {
 #[test]
 fn test_dataset_values_in_u8_range() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     for row_idx in 0..100 {
         for col_idx in 0..dataset.num_columns() {
@@ -71,7 +83,10 @@ fn test_dataset_values_in_u8_range() {
 #[test]
 fn test_dataset_rows_slice() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     assert_eq!(dataset.num_rows(), 10000);
     assert_eq!(dataset.num_columns(), 8);
@@ -150,7 +165,10 @@ fn test_dataset_empty() {
 #[test]
 fn test_dataset_consistent_column_count() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     let expected_rows = dataset.num_rows();
     for column in dataset.columns() {
@@ -161,7 +179,10 @@ fn test_dataset_consistent_column_count() {
 #[test]
 fn test_sample_data_values() {
     let loader = CsvDataLoader::new(true);
-    let dataset = loader.load("data/data-10000-8-int.csv").unwrap().dataset;
+    let dataset = loader
+        .load("data/tabular/data-10000-8-int.csv")
+        .unwrap()
+        .dataset;
 
     for col_idx in 0..dataset.num_columns() {
         let value = dataset.value_at(0, col_idx);

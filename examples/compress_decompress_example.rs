@@ -16,7 +16,10 @@ fn main() -> Result<(), EntroGdError> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         tracing::info!("Usage: {} <input_csv_file>", args[0]);
-        tracing::info!("Example: {} data/data-10000-4-8bit-sparse.csv", args[0]);
+        tracing::info!(
+            "Example: {} data/tabular/data-10000-4-8bit-sparse.csv",
+            args[0]
+        );
         return Ok(());
     }
 
@@ -66,7 +69,7 @@ fn main() -> Result<(), EntroGdError> {
     };
 
     let _compression_timer =
-        ScopedTimer::info("Compression process whithout loading .csv file and parsing");
+        ScopedTimer::info("Compression process without loading .csv file and parsing");
     // Compress the data with filters (pipe-and-filter style)
     tracing::info!("\nCompressing data...");
     let compression_pipeline = EntropyOptimized {}
@@ -101,7 +104,7 @@ fn main() -> Result<(), EntroGdError> {
         compressed.base_table.len(),
         loaded_compressed.base_table.len()
     );
-    // it should be the same here but they are out of order and i dont want to sort them just for the test, so we will skip this check for now
+    // Base bit positions can differ in order, so we skip exact ordering checks here.
     // assert_eq!(
     //     compressed.base_bit_positions,
     //     loaded_compressed.base_bit_positions

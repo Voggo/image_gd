@@ -768,10 +768,7 @@ impl BaseBitHyperLogLogCount {
             estimate = m * (m / zero_count as f64).ln();
         }
 
-        estimate
-            .round()
-            .clamp(1.0, num_rows as f64)
-            .max(1.0) as usize
+        estimate.round().clamp(1.0, num_rows as f64).max(1.0) as usize
     }
 
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {

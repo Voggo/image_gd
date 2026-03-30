@@ -14,8 +14,7 @@ pub use base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
 };
 pub use base_selection::{
-    BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized,
-    SelectBasesProfileAllBits,
+    BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
 };
 pub use compress::{
     CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,

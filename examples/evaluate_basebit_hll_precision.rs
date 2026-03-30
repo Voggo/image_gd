@@ -8,6 +8,7 @@ use entro_gd::{
 use std::env;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -79,11 +80,16 @@ fn parse_args() -> Result<CliOptions, EntroGdError> {
                         message: "missing value for --limit-bits".to_string(),
                     });
                 }
-                let value = args[i + 1]
-                    .parse::<usize>()
-                    .map_err(|err| EntroGdError::InvalidMetadata {
-                        message: format!("invalid --limit-bits value '{}': {}", args[i + 1], err),
-                    })?;
+                let value =
+                    args[i + 1]
+                        .parse::<usize>()
+                        .map_err(|err| EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "invalid --limit-bits value '{}': {}",
+                                args[i + 1],
+                                err
+                            ),
+                        })?;
                 limit_bits = Some(value);
                 i += 2;
             }
@@ -129,7 +135,7 @@ fn parse_args() -> Result<CliOptions, EntroGdError> {
     })
 }
 
-fn infer_input_kind(path: &PathBuf) -> InputKind {
+fn infer_input_kind(path: &Path) -> InputKind {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

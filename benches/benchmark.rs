@@ -36,7 +36,7 @@ struct RoundtripCase {
 
 fn roundtrip_cases() -> Vec<RoundtripCase> {
     vec![RoundtripCase {
-        data_file_path: "data/aarhus-citylab.csv",
+        data_file_path: "data/tabular/aarhus-citylab.csv",
         variant: CompressionVariant::BaselineV1,
         float_storage: FloatStorage::F32,
         m_max: 50,
