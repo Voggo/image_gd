@@ -774,24 +774,6 @@ impl BaseBitHyperLogLogCount {
             .max(1.0) as usize
     }
 
-    fn rebuild_synopsis(&mut self) {
-        self.registers.fill(0);
-
-        let bucket_shift = 64 - Self::HLL_PRECISION as usize;
-        for &row_hash in &self.row_hashes {
-            let mixed = Self::avalanche_hash(row_hash ^ 0xA24B_AED4_963E_E407);
-            let bucket = (mixed >> bucket_shift) as usize;
-
-            let suffix = mixed << Self::HLL_PRECISION;
-            let rank = (suffix.leading_zeros() as usize + 1)
-                .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
-
-            self.registers[bucket] = self.registers[bucket].max(rank);
-        }
-
-        self.num_bases_estimate = Self::estimate_from_registers(&self.registers, self.row_hashes.len());
-    }
-
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
 
@@ -799,9 +781,7 @@ impl BaseBitHyperLogLogCount {
             return self.num_bases_estimate;
         }
 
-        let raw_bits = bit_data.data.raw();
-        let chunk_size = bit_data.chunk_size();
-
+        let mut new_bit_positions = Vec::with_capacity(bit_positions.len());
         for &bit_position in bit_positions {
             assert!(
                 bit_position < self.base_bit_mask.len(),
@@ -813,22 +793,41 @@ impl BaseBitHyperLogLogCount {
                 continue;
             }
 
-            let bit_hash_word = self.bit_hash_words[bit_position];
-            let mut bit_index = bit_position;
-            for row_hash in &mut self.row_hashes {
-                if raw_bits[bit_index] {
-                    *row_hash ^= bit_hash_word;
-                }
-                bit_index += chunk_size;
-            }
-
+            new_bit_positions.push(bit_position);
             self.base_bit_mask.set(bit_position, true);
             self.base_bit_positions.push(bit_position);
             self.num_bits_per_base += 1;
         }
 
-        // Rebuild synopsis on every add call (PoC design).
-        self.rebuild_synopsis();
+        if new_bit_positions.is_empty() {
+            return self.num_bases_estimate;
+        }
+
+        let raw_bits = bit_data.data.raw();
+        let chunk_size = bit_data.chunk_size();
+        self.registers.fill(0);
+        let bucket_shift = 64 - Self::HLL_PRECISION as usize;
+
+        for (row, row_hash) in self.row_hashes.iter_mut().enumerate() {
+            let row_start = row * chunk_size;
+            for &bit_position in &new_bit_positions {
+                if raw_bits[row_start + bit_position] {
+                    *row_hash ^= self.bit_hash_words[bit_position];
+                }
+            }
+
+            let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
+            let bucket = (mixed >> bucket_shift) as usize;
+
+            let suffix = mixed << Self::HLL_PRECISION;
+            let rank = (suffix.leading_zeros() as usize + 1)
+                .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
+
+            self.registers[bucket] = self.registers[bucket].max(rank);
+        }
+
+        self.num_bases_estimate =
+            Self::estimate_from_registers(&self.registers, self.row_hashes.len());
         self.num_bases_estimate
     }
 
