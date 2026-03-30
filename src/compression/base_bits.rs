@@ -2,7 +2,7 @@ use crate::compression::preprocessor::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use once_cell::unsync::OnceCell;
 
 pub trait BaseBit {
@@ -21,6 +21,92 @@ pub trait BaseBit {
     fn get_num_bits_per_base(&self) -> usize;
     fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0>;
     fn get_base_bit_positions(&self) -> &[usize];
+}
+
+fn initial_groups(num_rows: usize) -> Vec<Vec<usize>> {
+    vec![(0..num_rows).collect()]
+}
+
+fn count_non_empty_groups(groups: &[Vec<usize>]) -> usize {
+    groups.iter().filter(|group| !group.is_empty()).count()
+}
+
+fn collect_new_bit_positions(
+    base_bit_mask: &BitSlice<usize, Msb0>,
+    bit_positions: &[usize],
+) -> Vec<usize> {
+    let mut seen = FxHashSet::with_capacity_and_hasher(bit_positions.len(), Default::default());
+    let mut new_bit_positions = Vec::with_capacity(bit_positions.len());
+
+    for &bit_position in bit_positions {
+        assert!(
+            bit_position < base_bit_mask.len(),
+            "bit position {} out of bounds for chunk size {}",
+            bit_position,
+            base_bit_mask.len()
+        );
+        if base_bit_mask[bit_position] || !seen.insert(bit_position) {
+            continue;
+        }
+        new_bit_positions.push(bit_position);
+    }
+
+    new_bit_positions
+}
+
+fn apply_selected_bit_positions(
+    base_bit_mask: &mut BitVec<usize, Msb0>,
+    base_bit_positions: &mut Vec<usize>,
+    bit_positions: &[usize],
+) -> usize {
+    let mut seen = FxHashSet::with_capacity_and_hasher(bit_positions.len(), Default::default());
+    let mut added_count = 0usize;
+
+    for &bit_position in bit_positions {
+        assert!(
+            bit_position < base_bit_mask.len(),
+            "bit position {} out of bounds for chunk size {}",
+            bit_position,
+            base_bit_mask.len()
+        );
+        if base_bit_mask[bit_position] || !seen.insert(bit_position) {
+            continue;
+        }
+        base_bit_mask.set(bit_position, true);
+        base_bit_positions.push(bit_position);
+        added_count += 1;
+    }
+
+    added_count
+}
+
+fn add_constant_bits(
+    base_bit_mask: &mut BitVec<usize, Msb0>,
+    base_bit_positions: &mut Vec<usize>,
+    num_bits_per_base: &mut usize,
+    bit_positions: &[usize],
+) -> usize {
+    let added_count =
+        apply_selected_bit_positions(base_bit_mask, base_bit_positions, bit_positions);
+    *num_bits_per_base += added_count;
+    added_count
+}
+
+fn get_masked_bases_from_groups(
+    groups: &[Vec<usize>],
+    base_bit_mask: &BitSlice<usize, Msb0>,
+    num_bases: usize,
+    bit_data: &BitDataSet,
+) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    let mut bases = Vec::with_capacity(num_bases);
+    for group in groups {
+        if group.is_empty() {
+            continue;
+        }
+        let base: BitVec<usize, Msb0> = bit_data.get_chunk(group[0]).to_bitvec();
+        bases.push((base & base_bit_mask, group.len()));
+    }
+    bases
 }
 
 #[derive(Clone)]
@@ -46,7 +132,7 @@ impl std::fmt::Debug for BaseBitGroups {
 
 impl BaseBitGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups: Vec<Vec<usize>> = vec![(0..num_rows).collect()];
+        let groups = initial_groups(num_rows);
         let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
@@ -109,26 +195,19 @@ impl BaseBitGroups {
     pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
         let _timer =
             ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-        for &bit_position in bit_positions {
-            self.base_bit_mask.set(bit_position, true);
-        }
-        self.num_bits_per_base += bit_positions.len();
-        self.base_bit_positions.extend_from_slice(bit_positions);
+        add_constant_bits(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &mut self.num_bits_per_base,
+            bit_positions,
+        );
         self.num_bases = self.groups.len(); // Number of bases doesn't change for constant bits
         self.num_bases
     }
     /// Get the bases as BitVecs along with their counts
     pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
-        let mut bases = Vec::with_capacity(self.num_bases);
-        for group in &self.groups {
-            if group.is_empty() {
-                continue;
-            }
-            let base: BitVec<usize, Msb0> = bit_data.get_chunk(group[0]).to_bitvec();
-            bases.push((base & &self.base_bit_mask, group.len()));
-        }
-        bases
+        get_masked_bases_from_groups(&self.groups, &self.base_bit_mask, self.num_bases, bit_data)
     }
 
     pub fn get_groups(&self) -> &[Vec<usize>] {
@@ -209,7 +288,7 @@ impl std::fmt::Debug for BaseBitBatchGroups {
 
 impl BaseBitBatchGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups: Vec<Vec<usize>> = vec![(0..num_rows).collect()];
+        let groups = initial_groups(num_rows);
         let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
@@ -225,20 +304,21 @@ impl BaseBitBatchGroups {
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
 
-        if bit_positions.is_empty() {
+        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
+        if new_bit_positions.is_empty() {
             return self.num_bases;
         }
 
         const BIT_LIMIT: usize = 8;
 
         // Process in recursive batches, but ensure this frame only handles <= BIT_LIMIT bits.
-        if bit_positions.len() > BIT_LIMIT {
-            let (head, tail) = bit_positions.split_at(BIT_LIMIT);
+        if new_bit_positions.len() > BIT_LIMIT {
+            let (head, tail) = new_bit_positions.split_at(BIT_LIMIT);
             self.add_bit_positions(bit_data, head);
             return self.add_bit_positions(bit_data, tail);
         }
 
-        let bucket_count = 1usize << bit_positions.len();
+        let bucket_count = 1usize << new_bit_positions.len();
         let mut counts = vec![0usize; bucket_count];
         let mut offsets = vec![0usize; bucket_count];
         let mut write_positions = vec![0usize; bucket_count];
@@ -265,7 +345,7 @@ impl BaseBitBatchGroups {
 
             for (idx, &row) in group.iter().enumerate() {
                 let mut bucket_id = 0usize;
-                for (bit_idx, &bit_position) in bit_positions.iter().enumerate() {
+                for (bit_idx, &bit_position) in new_bit_positions.iter().enumerate() {
                     bucket_id |= (bit_data.get_bit(row, bit_position) as usize) << bit_idx;
                 }
                 scratch_bucket_ids[idx] = bucket_id;
@@ -302,13 +382,14 @@ impl BaseBitBatchGroups {
             }
         }
 
-        for &bit_position in bit_positions {
-            self.base_bit_mask.set(bit_position, true);
-        }
-        self.base_bit_positions.extend_from_slice(bit_positions);
-        self.num_bits_per_base += bit_positions.len();
+        let added_count = apply_selected_bit_positions(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &new_bit_positions,
+        );
+        self.num_bits_per_base += added_count;
         self.groups = next_groups;
-        self.num_bases = self.groups.len();
+        self.num_bases = count_non_empty_groups(&self.groups);
         self.num_bases
     }
 
@@ -319,26 +400,19 @@ impl BaseBitBatchGroups {
     pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
         let _timer =
             ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-        for &bit_position in bit_positions {
-            self.base_bit_mask.set(bit_position, true);
-        }
-        self.num_bits_per_base += bit_positions.len();
-        self.base_bit_positions.extend_from_slice(bit_positions);
+        add_constant_bits(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &mut self.num_bits_per_base,
+            bit_positions,
+        );
         self.num_bases = self.groups.len();
         self.num_bases
     }
 
     pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
-        let mut bases = Vec::with_capacity(self.num_bases);
-        for group in &self.groups {
-            if group.is_empty() {
-                continue;
-            }
-            let base: BitVec<usize, Msb0> = bit_data.get_chunk(group[0]).to_bitvec();
-            bases.push((base & &self.base_bit_mask, group.len()));
-        }
-        bases
+        get_masked_bases_from_groups(&self.groups, &self.base_bit_mask, self.num_bases, bit_data)
     }
 
     pub fn get_groups(&self) -> &[Vec<usize>] {
@@ -512,19 +586,21 @@ impl BaseBitIncSignatureGroups {
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
 
-        if bit_positions.is_empty() {
+        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
+        if new_bit_positions.is_empty() {
             return self.get_num_bases();
         }
 
-        for batch in bit_positions.chunks(64) {
+        for batch in new_bit_positions.chunks(64) {
             self.refine_signatures_batch(bit_data, batch);
         }
 
-        for &bit_position in bit_positions {
-            self.base_bit_mask.set(bit_position, true);
-        }
-        self.base_bit_positions.extend_from_slice(bit_positions);
-        self.num_bits_per_base += bit_positions.len();
+        let added_count = apply_selected_bit_positions(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &new_bit_positions,
+        );
+        self.num_bits_per_base += added_count;
 
         // Signatures changed; lazy groups must be rebuilt on demand.
         self.groups_cache.take();
@@ -539,23 +615,12 @@ impl BaseBitIncSignatureGroups {
     pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
         let _timer =
             ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-
-        let mut added_count = 0usize;
-        for &bit_position in bit_positions {
-            assert!(
-                bit_position < self.base_bit_mask.len(),
-                "bit position {} out of bounds for chunk size {}",
-                bit_position,
-                self.base_bit_mask.len()
-            );
-            if self.base_bit_mask[bit_position] {
-                continue;
-            }
-            self.base_bit_mask.set(bit_position, true);
-            self.base_bit_positions.push(bit_position);
-            added_count += 1;
-        }
-        self.num_bits_per_base += added_count;
+        add_constant_bits(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &mut self.num_bits_per_base,
+            bit_positions,
+        );
 
         // Constants do not change row signatures; base count is unchanged.
         self.get_num_bases()
@@ -774,31 +839,17 @@ impl BaseBitHyperLogLogCount {
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
 
-        if bit_positions.is_empty() {
-            return self.num_bases_estimate;
-        }
-
-        let mut new_bit_positions = Vec::with_capacity(bit_positions.len());
-        for &bit_position in bit_positions {
-            assert!(
-                bit_position < self.base_bit_mask.len(),
-                "bit position {} out of bounds for chunk size {}",
-                bit_position,
-                self.base_bit_mask.len()
-            );
-            if self.base_bit_mask[bit_position] {
-                continue;
-            }
-
-            new_bit_positions.push(bit_position);
-            self.base_bit_mask.set(bit_position, true);
-            self.base_bit_positions.push(bit_position);
-            self.num_bits_per_base += 1;
-        }
-
+        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
         if new_bit_positions.is_empty() {
             return self.num_bases_estimate;
         }
+
+        let added_count = apply_selected_bit_positions(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &new_bit_positions,
+        );
+        self.num_bits_per_base += added_count;
 
         let raw_bits = bit_data.data.raw();
         let chunk_size = bit_data.chunk_size();
@@ -836,23 +887,12 @@ impl BaseBitHyperLogLogCount {
         let _timer =
             ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
 
-        let mut added_count = 0usize;
-        for &bit_position in bit_positions {
-            assert!(
-                bit_position < self.base_bit_mask.len(),
-                "bit position {} out of bounds for chunk size {}",
-                bit_position,
-                self.base_bit_mask.len()
-            );
-            if self.base_bit_mask[bit_position] {
-                continue;
-            }
-            self.base_bit_mask.set(bit_position, true);
-            self.base_bit_positions.push(bit_position);
-            added_count += 1;
-        }
-
-        self.num_bits_per_base += added_count;
+        add_constant_bits(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &mut self.num_bits_per_base,
+            bit_positions,
+        );
         self.num_bases_estimate
     }
 
@@ -938,7 +978,7 @@ impl std::fmt::Debug for BaseBitSignatureGroups {
 
 impl BaseBitSignatureGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups: Vec<Vec<usize>> = vec![(0..num_rows).collect()];
+        let groups = initial_groups(num_rows);
         let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
@@ -957,23 +997,16 @@ impl BaseBitSignatureGroups {
             bit_positions
         ));
 
-        if bit_positions.is_empty() {
+        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
+        if new_bit_positions.is_empty() {
             return self.num_bases;
         }
 
-        let mut added_count = 0usize;
-        for &bit_position in bit_positions {
-            if !self.base_bit_mask[bit_position] {
-                self.base_bit_mask.set(bit_position, true);
-                self.base_bit_positions.push(bit_position);
-                added_count += 1;
-            }
-        }
-
-        if added_count == 0 {
-            return self.num_bases;
-        }
-
+        let added_count = apply_selected_bit_positions(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &new_bit_positions,
+        );
         self.num_bits_per_base += added_count;
 
         let groups = if self.base_bit_positions.len() <= 128 {
@@ -1049,28 +1082,19 @@ impl BaseBitSignatureGroups {
     pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
         let _timer =
             ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-        for &bit_position in bit_positions {
-            if !self.base_bit_mask[bit_position] {
-                self.base_bit_mask.set(bit_position, true);
-                self.base_bit_positions.push(bit_position);
-                self.num_bits_per_base += 1;
-            }
-        }
+        add_constant_bits(
+            &mut self.base_bit_mask,
+            &mut self.base_bit_positions,
+            &mut self.num_bits_per_base,
+            bit_positions,
+        );
         self.num_bases = self.groups.len();
         self.num_bases
     }
 
     pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
-        let mut bases = Vec::with_capacity(self.num_bases);
-        for group in &self.groups {
-            if group.is_empty() {
-                continue;
-            }
-            let base: BitVec<usize, Msb0> = bit_data.get_chunk(group[0]).to_bitvec();
-            bases.push((base & &self.base_bit_mask, group.len()));
-        }
-        bases
+        get_masked_bases_from_groups(&self.groups, &self.base_bit_mask, self.num_bases, bit_data)
     }
 
     pub fn get_groups(&self) -> &[Vec<usize>] {
@@ -1270,5 +1294,74 @@ mod tests {
         let bit_data = create_test_bit_data();
         let hll_groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
         let _ = hll_groups.get_bases(&bit_data);
+    }
+
+    #[test]
+    fn test_constant_bits_ignore_duplicates_base_groups() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+
+        groups.add_constant_bit_positions(&[1, 1, 2]);
+
+        assert_eq!(groups.get_num_bits_per_base(), 2);
+        assert_eq!(groups.get_base_bit_positions(), &[1, 2]);
+    }
+
+    #[test]
+    fn test_constant_bits_ignore_duplicates_batch_groups() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+
+        groups.add_constant_bit_positions(&[1, 1, 2]);
+
+        assert_eq!(groups.get_num_bits_per_base(), 2);
+        assert_eq!(groups.get_base_bit_positions(), &[1, 2]);
+    }
+
+    #[test]
+    fn test_add_bit_positions_ignore_duplicates_batch_groups() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+
+        let num_bases = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
+
+        assert_eq!(num_bases, 3);
+        assert_eq!(groups.get_num_bits_per_base(), 2);
+        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
+    }
+
+    #[test]
+    fn test_add_bit_positions_ignore_duplicates_signature_groups() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+
+        let num_bases = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
+
+        assert_eq!(num_bases, 3);
+        assert_eq!(groups.get_num_bits_per_base(), 2);
+        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
+    }
+
+    #[test]
+    fn test_add_bit_positions_ignore_duplicates_inc_signature_groups() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+
+        let num_bases = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
+
+        assert_eq!(num_bases, 3);
+        assert_eq!(groups.get_num_bits_per_base(), 2);
+        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
+    }
+
+    #[test]
+    fn test_add_bit_positions_ignore_duplicates_hll_groups() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+
+        let _ = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
+
+        assert_eq!(groups.get_num_bits_per_base(), 2);
+        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
     }
 }
