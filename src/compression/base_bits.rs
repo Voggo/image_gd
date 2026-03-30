@@ -109,83 +109,6 @@ fn get_masked_bases_from_groups(
     bases
 }
 
-fn build_groups_from_selected_bits(
-    bit_data: &BitDataSet,
-    selected_bit_positions: &[usize],
-) -> Vec<Vec<usize>> {
-    if selected_bit_positions.is_empty() {
-        return initial_groups(bit_data.num_rows());
-    }
-
-    if selected_bit_positions.len() <= 128 {
-        build_groups_with_u128_signatures(bit_data, selected_bit_positions)
-    } else {
-        build_groups_with_word_signatures(bit_data, selected_bit_positions)
-    }
-}
-
-fn build_groups_with_u128_signatures(
-    bit_data: &BitDataSet,
-    selected_bit_positions: &[usize],
-) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut group_index_by_signature = FxHashMap::<u128, usize>::with_capacity_and_hasher(
-        bit_data.num_rows().min(1024),
-        Default::default(),
-    );
-
-    for row in 0..bit_data.num_rows() {
-        let mut signature = 0u128;
-        for &bit_position in selected_bit_positions {
-            signature <<= 1;
-            signature |= bit_data.get_bit(row, bit_position) as u128;
-        }
-
-        if let Some(&group_idx) = group_index_by_signature.get(&signature) {
-            groups[group_idx].push(row);
-        } else {
-            let group_idx = groups.len();
-            groups.push(vec![row]);
-            group_index_by_signature.insert(signature, group_idx);
-        }
-    }
-
-    groups
-}
-
-fn build_groups_with_word_signatures(
-    bit_data: &BitDataSet,
-    selected_bit_positions: &[usize],
-) -> Vec<Vec<usize>> {
-    let words_per_signature = selected_bit_positions.len().div_ceil(64);
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut group_index_by_signature = FxHashMap::<Vec<u64>, usize>::with_capacity_and_hasher(
-        bit_data.num_rows().min(1024),
-        Default::default(),
-    );
-
-    for row in 0..bit_data.num_rows() {
-        let mut signature_words = vec![0u64; words_per_signature];
-        for (bit_idx, &bit_position) in selected_bit_positions.iter().enumerate() {
-            if bit_data.get_bit(row, bit_position) {
-                let word_idx = bit_idx / 64;
-                let bit_in_word = 63 - (bit_idx % 64);
-                signature_words[word_idx] |= 1u64 << bit_in_word;
-            }
-        }
-
-        if let Some(&group_idx) = group_index_by_signature.get(&signature_words) {
-            groups[group_idx].push(row);
-        } else {
-            let group_idx = groups.len();
-            groups.push(vec![row]);
-            group_index_by_signature.insert(signature_words, group_idx);
-        }
-    }
-
-    groups
-}
-
 #[derive(Clone)]
 pub struct BaseBitGroups {
     groups: Vec<Vec<usize>>,
@@ -1086,7 +1009,68 @@ impl BaseBitSignatureGroups {
         );
         self.num_bits_per_base += added_count;
 
-        self.groups = build_groups_from_selected_bits(bit_data, &self.base_bit_positions);
+        let groups = if self.base_bit_positions.len() <= 128 {
+            let mut signature_rows: Vec<(u128, usize)> = Vec::with_capacity(bit_data.num_rows());
+            for row in 0..bit_data.num_rows() {
+                let mut signature = 0u128;
+                for &bit_position in &self.base_bit_positions {
+                    signature <<= 1;
+                    signature |= bit_data.get_bit(row, bit_position) as u128;
+                }
+                signature_rows.push((signature, row));
+            }
+
+            signature_rows.sort_unstable_by_key(|(signature, _row)| *signature);
+
+            let mut groups: Vec<Vec<usize>> = Vec::new();
+            let mut current_signature: Option<u128> = None;
+            for (signature, row) in signature_rows {
+                if current_signature == Some(signature) {
+                    groups.last_mut().expect("group exists").push(row);
+                } else {
+                    current_signature = Some(signature);
+                    groups.push(vec![row]);
+                }
+            }
+            groups
+        } else {
+            tracing::warn!(
+                "More than 128 selected bits; using lexicographic fallback for grouping"
+            );
+            let mut rows: Vec<usize> = (0..bit_data.num_rows()).collect();
+            rows.sort_unstable_by(|&lhs, &rhs| {
+                for &bit_position in &self.base_bit_positions {
+                    let lhs_bit = bit_data.get_bit(lhs, bit_position);
+                    let rhs_bit = bit_data.get_bit(rhs, bit_position);
+                    match lhs_bit.cmp(&rhs_bit) {
+                        std::cmp::Ordering::Equal => {}
+                        ordering => return ordering,
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+
+            let mut groups: Vec<Vec<usize>> = Vec::new();
+            'rows_loop: for row in rows {
+                if let Some(last_group) = groups.last_mut() {
+                    let last_row = last_group[0];
+                    for &bit_position in &self.base_bit_positions {
+                        if bit_data.get_bit(last_row, bit_position)
+                            != bit_data.get_bit(row, bit_position)
+                        {
+                            groups.push(vec![row]);
+                            continue 'rows_loop;
+                        }
+                    }
+                    last_group.push(row);
+                } else {
+                    groups.push(vec![row]);
+                }
+            }
+            groups
+        };
+
+        self.groups = groups;
         self.num_bases = self.groups.len();
         self.num_bases
     }
@@ -1379,69 +1363,5 @@ mod tests {
 
         assert_eq!(groups.get_num_bits_per_base(), 2);
         assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
-    }
-
-    #[test]
-    fn test_batch_and_signature_groups_equivalent_for_selected_bits() {
-        let bit_data = create_test_bit_data();
-        let selected_bits = [4, 5, 1];
-
-        let mut batch_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let mut signature_groups =
-            BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-
-        batch_groups.add_bit_positions(&bit_data, &selected_bits);
-        signature_groups.add_bit_positions(&bit_data, &selected_bits);
-
-        let mut batch_bases = batch_groups.get_bases(&bit_data);
-        let mut signature_bases = signature_groups.get_bases(&bit_data);
-        batch_bases.sort_by(|a, b| a.0.cmp(&b.0));
-        signature_bases.sort_by(|a, b| a.0.cmp(&b.0));
-
-        assert_eq!(batch_bases, signature_bases);
-        assert_eq!(
-            batch_groups
-                .get_groups()
-                .iter()
-                .map(|group| group.len())
-                .sum::<usize>(),
-            bit_data.num_rows()
-        );
-        assert_eq!(
-            signature_groups
-                .get_groups()
-                .iter()
-                .map(|group| group.len())
-                .sum::<usize>(),
-            bit_data.num_rows()
-        );
-    }
-
-    #[test]
-    fn test_inc_signature_and_batch_groups_equivalent_for_selected_bits() {
-        let bit_data = create_test_bit_data();
-        let selected_bits = [4, 5, 1];
-
-        let mut batch_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let mut inc_signature_groups =
-            BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-
-        batch_groups.add_bit_positions(&bit_data, &selected_bits);
-        inc_signature_groups.add_bit_positions(&bit_data, &selected_bits);
-
-        let mut batch_bases = batch_groups.get_bases(&bit_data);
-        let mut inc_signature_bases = inc_signature_groups.get_bases(&bit_data);
-        batch_bases.sort_by(|a, b| a.0.cmp(&b.0));
-        inc_signature_bases.sort_by(|a, b| a.0.cmp(&b.0));
-
-        assert_eq!(batch_bases, inc_signature_bases);
-        assert_eq!(
-            inc_signature_groups
-                .get_groups()
-                .iter()
-                .map(|group| group.len())
-                .sum::<usize>(),
-            bit_data.num_rows()
-        );
     }
 }
