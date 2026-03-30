@@ -1,4 +1,4 @@
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -131,7 +131,7 @@ fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<(u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
     use pretty_assertions::assert_eq;
 

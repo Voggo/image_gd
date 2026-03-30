@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
 
 use crate::compression::base_bits::BaseBit;
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
 
 pub(super) struct EncodingContext {

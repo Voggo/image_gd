@@ -14,9 +14,7 @@ use crate::compression::compress::{
     RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
-use crate::compression::tabular_preprocessor::{
-    BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform,
-};
+use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::utils::bits_needed_nonzero;

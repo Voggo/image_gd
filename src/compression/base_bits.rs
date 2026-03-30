@@ -1,4 +1,4 @@
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 
@@ -1135,7 +1135,7 @@ impl BaseBit for BaseBitSignatureGroups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
 
     /// Helper function to create standard test data with 6 rows and 8 bits per row

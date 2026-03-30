@@ -2,7 +2,7 @@ use crate::compression::base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitIncSignatureGroups,
     BaseBitSignatureGroups,
 };
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;

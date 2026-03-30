@@ -2,7 +2,7 @@ use crate::BitDataSet;
 use crate::compression::base_bits::BaseBit;
 use crate::compression::compress::{CompressedData, EncodedData};
 use crate::compression::image_preprocessor::BuildImageBitDataSet;
-use crate::compression::tabular_preprocessor::{BuildBitDataSet, InferFeatureSpecs};
+use crate::compression::preprocessor::{BuildBitDataSet, InferFeatureSpecs};
 use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;

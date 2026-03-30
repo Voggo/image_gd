@@ -1,7 +1,7 @@
 use bitvec::prelude::*;
 use fxhash::FxHashMap;
 
-use crate::compression::tabular_preprocessor::BitDataInfo;
+use crate::compression::preprocessor::BitDataInfo;
 
 /// Represents the compressed output.
 #[derive(Debug, Clone)]

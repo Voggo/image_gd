@@ -9,7 +9,7 @@ pub use self::types::{
     CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
     HuffmanDeviationData, RleDeviationData,
 };
-use crate::compression::tabular_preprocessor::{BitDataInfo, BitDataReconstructionInfo};
+use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
 use bitvec::prelude::*;
 
@@ -243,7 +243,7 @@ mod tests {
     };
     use crate::compression::encoding::{EncodeData, EncodeDataRLE};
     use crate::compression::entropy::EntropyOptimized;
-    use crate::compression::tabular_preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
+    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
     use pretty_assertions::assert_eq;

@@ -1,8 +1,8 @@
 use crate::compression::compress::{CompressedData, CondensedSamples, build_base_bit_mask};
 use crate::compression::preprocessor::{
-    BitDataReconstructionInfo, ImageColorModel, ImageGroupingTransform, decode_value_from_bits,
+    BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
+    decode_value_from_bits,
 };
-use crate::compression::tabular_preprocessor::{BitData, BitDataSet};
 use crate::data_loader::DataValue;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;

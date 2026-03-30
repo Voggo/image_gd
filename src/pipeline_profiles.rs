@@ -1,6 +1,6 @@
 use crate::compression::image_preprocessor::ImageColorSpace;
+use crate::compression::preprocessor::PreprocessOptions;
 use crate::compression::preprocessor::{FloatScalingMode, ImageColorModel, ImageGroupingTransform};
-use crate::compression::tabular_preprocessor::PreprocessOptions;
 use crate::data_loader::{FloatStorage, MissingValuePolicy};
 use crate::error::EntroGdError;
 use serde::Deserialize;

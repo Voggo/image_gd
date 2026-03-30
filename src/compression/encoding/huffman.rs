@@ -8,7 +8,7 @@ use super::context::EncodingContext;
 use crate::compression::compress::{
     HuffmanDeviationData, build_huffman_code_map, huffman_row_layout,
 };
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 
 pub(super) fn encode_data_huffman(

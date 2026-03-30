@@ -23,7 +23,7 @@ mod tests {
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
     use crate::compression::entropy::EntropyOptimized;
-    use crate::compression::tabular_preprocessor::{
+    use crate::compression::preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
         ImageGroupingTransform, ImageReconstructionInfo,
     };

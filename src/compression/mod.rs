@@ -8,7 +8,6 @@ pub mod entropy;
 pub mod file_format;
 pub mod image_preprocessor;
 pub mod preprocessor;
-pub mod tabular_preprocessor;
 
 pub use base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
@@ -42,7 +41,6 @@ pub use image_preprocessor::{
 };
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo, PreprocessOptions,
-    decode_value_from_bits,
+    BuildBitDataSet, FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo,
+    InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
 };
-pub use tabular_preprocessor::{BuildBitDataSet, InferFeatureSpecs};

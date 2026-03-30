@@ -6,7 +6,7 @@ use super::context::build_deviation_ranges;
 
 use crate::compression::base_bits::BaseBit;
 use crate::compression::compress::DeviationData;
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
 
 pub(super) struct FusedEncodingResult {

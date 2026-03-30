@@ -11,7 +11,7 @@ use self::huffman::{
 
 use crate::compression::base_bits::BaseBit;
 use crate::compression::compress::{CompressedData, DeviationData, EncodedData, RleDeviationData};
-use crate::compression::tabular_preprocessor::BitDataSet;
+use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
