@@ -1,12 +1,17 @@
 mod huffman;
 mod rle;
+mod types;
 
 pub(crate) use self::huffman::build_huffman_code_map;
 pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD};
+use self::types::DeviationSampleRef;
+pub use self::types::{
+    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
+    HuffmanDeviationData, RleDeviationData,
+};
 use crate::compression::tabular_preprocessor::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
 use bitvec::prelude::*;
-use fxhash::FxHashMap;
 
 pub(crate) fn huffman_row_layout(
     metadata: &BitDataInfo,
@@ -60,22 +65,6 @@ pub(crate) fn huffman_row_layout(
     }
 }
 
-/// Represents the compressed output
-#[derive(Debug, Clone)]
-pub struct CompressedData {
-    /// The encoded data stream
-    pub encoded_data: EncodedData,
-    /// The Weights for the condensed samples (if used)
-    // Should be stored as a bitstream of length m * l_w (log_2(n).ceil() bits per weight)
-    pub condensed_sample_weights: Option<Vec<usize>>,
-    /// Base table mapping base patterns to their frequencies or encodings
-    pub base_table: Vec<(BitVec<usize, Msb0>, usize)>,
-    /// Bit positions used as base bits during compression
-    pub base_bit_positions: Vec<usize>,
-    /// Metadata for decompression (column count, base bits used, etc.)
-    pub metadata: BitDataInfo,
-}
-
 impl CompressedData {
     pub fn new(encoded_data: EncodedData, metadata: BitDataInfo) -> Self {
         CompressedData {
@@ -86,66 +75,6 @@ impl CompressedData {
             metadata,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct CondensedSamples {
-    pub samples: Vec<BitVec<usize, Msb0>>,
-    pub weights: Vec<usize>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DeviationSample {
-    pub deviation: BitVec<usize, Msb0>,
-    pub id: BitVec<usize, Msb0>,
-}
-
-pub(crate) struct DeviationSampleRef<'a> {
-    pub deviation: &'a BitSlice<usize, Msb0>,
-    pub id: &'a BitSlice<usize, Msb0>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DeviationData {
-    encoded_bit_stream: BitVec<usize, Msb0>,
-    num_samples: usize,
-    num_deviation_bits: usize,
-    num_id_bits: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct RleDeviationData {
-    symbol_bit_stream: BitVec<usize, Msb0>,
-    rm_values: Vec<(u8, u8)>,
-    rm_control_stream: BitVec<usize, Msb0>,
-    num_samples: usize,
-    num_deviation_bits: usize,
-    num_id_bits: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct HuffmanDeviationData {
-    pixel_bit_stream: BitVec<usize, Msb0>,
-    raw_deviation_bit_stream: Option<BitVec<usize, Msb0>>,
-    canonical_symbols: Vec<u64>,
-    canonical_code_lengths: Vec<u8>,
-    row_offsets: Vec<u32>,
-    num_samples: usize,
-    original_num_samples: usize,
-    num_deviation_bits: usize,
-    huffman_symbol_num_deviation_bits: usize,
-    num_id_bits: usize,
-    row_width: usize,
-    max_code_length: u8,
-    decode_by_length: Vec<FxHashMap<u32, u64>>,
-    original_stream_end_offset_bits: usize,
-}
-
-#[derive(Debug, Clone)]
-pub enum EncodedData {
-    Normal(DeviationData),
-    Rle(RleDeviationData),
-    Huffman(HuffmanDeviationData),
 }
 
 pub(crate) fn build_base_bit_mask(
