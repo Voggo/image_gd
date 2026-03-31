@@ -726,7 +726,7 @@ impl BitDataInfo {
 }
 
 /// Represents the bit-level preprocessed data where each row is a contiguous chunk of bits.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitData {
     /// The underlying bit storage - all chunks stored contiguously
     pub data: BitVec<usize, Msb0>,

@@ -1,0 +1,131 @@
+use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use entro_gd::prelude::*;
+use entro_gd::{
+    BitDataSet, DecompressFileData, ImageColorModel, LoadEgdFile, SaveEgdFile, SaveIgdFile,
+    decompress_igd_to_image,
+};
+use std::env;
+
+#[test]
+fn test_csv_roundtrip_compression() {
+    let input_path = "data/tabular/data-10000-8-int.csv";
+    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
+    let loaded = loader.load(input_path).expect("Failed to load CSV");
+
+    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+
+    let compression_pipeline = EntropyOptimized {}
+        .then(GenCondensedSamples { m_max: 50 })
+        .then(SelectBasesOptimized {
+            patience: 10,
+            base_bit_impl: BaseBitImpl::BatchGroups,
+        })
+        .then(EncodeDataOptimized {});
+
+    let compressed = compression_pipeline
+        .process(bit_data.clone())
+        .expect("Failed to compress CSV");
+
+    let temp_egd_path = env::temp_dir().join("test_roundtrip.egd");
+
+    let saved_path = SaveEgdFile {
+        output_path: temp_egd_path.clone(),
+    }
+    .process(compressed)
+    .expect("Failed to save EGD file");
+
+    let loaded_compressed = LoadEgdFile {}
+        .process(saved_path)
+        .expect("Failed to load EGD file");
+
+    let decompressed = DecompressFileData {}
+        .process(loaded_compressed)
+        .expect("Failed to decompress data");
+
+    assert_eq!(
+        bit_data.data.total_bits(),
+        decompressed.data.total_bits(),
+        "Decompressed BitData total bits does not match original"
+    );
+    assert_eq!(
+        bit_data.data.chunk_size, decompressed.data.chunk_size,
+        "Decompressed BitData chunk size does not match original"
+    );
+    assert_eq!(
+        bit_data.data.num_rows, decompressed.data.num_rows,
+        "Decompressed BitData num rows does not match original"
+    );
+
+    // Deep data verification: Check that every single bit is identical
+    assert_eq!(
+        bit_data.data.data, decompressed.data.data,
+        "Decompressed BitData content does not perfectly match original"
+    );
+
+    // Cleanup
+    if temp_egd_path.exists() {
+        std::fs::remove_file(temp_egd_path).ok();
+    }
+}
+
+#[test]
+fn test_image_roundtrip_compression() {
+    let input_path = std::path::PathBuf::from("data/images/rustacean.png");
+    assert!(input_path.exists(), "Image file not found");
+
+    let compression_pipeline = BuildImageBitDataSet {
+        colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+        color_model: ImageColorModel::YCoCgR,
+        pixel_grouping: 3,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+    }
+    .then(EntropyOptimized {})
+    .then(GenCondensedSamples { m_max: 0 })
+    .then(SelectBasesOptimized {
+        patience: 10,
+        base_bit_impl: BaseBitImpl::BatchGroups,
+    })
+    .then(EncodeDataHuffmanBaseIdOnly {});
+
+    let compressed = compression_pipeline
+        .process(input_path.clone())
+        .expect("Failed to compress image");
+
+    let temp_igd_path = env::temp_dir().join("test_rustacean.igd");
+    let temp_png_path = env::temp_dir().join("test_rustacean_out.png");
+
+    let saved_path = SaveIgdFile {
+        output_path: temp_igd_path.clone(),
+    }
+    .process(compressed)
+    .expect("Failed to save IGD file");
+
+    decompress_igd_to_image(&saved_path, &temp_png_path).expect("Failed to decompress image");
+
+    assert!(temp_png_path.exists(), "Output image was not created");
+
+    let metadata = std::fs::metadata(&temp_png_path).expect("Failed to get metadata");
+    assert!(metadata.len() > 0, "Output image is empty");
+
+    // Exact Image Verification
+    let original_rgba = image::open(&input_path)
+        .expect("Failed to open original image")
+        .into_rgba8();
+    let decompressed_rgba = image::open(&temp_png_path)
+        .expect("Failed to open decompressed image")
+        .into_rgba8();
+
+    assert_eq!(
+        original_rgba.into_raw(),
+        decompressed_rgba.into_raw(),
+        "Decompressed image pixels do not perfectly match original"
+    );
+
+    // Cleanup
+    if temp_igd_path.exists() {
+        std::fs::remove_file(temp_igd_path).ok();
+    }
+    if temp_png_path.exists() {
+        std::fs::remove_file(temp_png_path).ok();
+    }
+}
