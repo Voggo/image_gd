@@ -231,6 +231,7 @@ mod tests {
             let data_struct = crate::compression::preprocessor::BitData {
                 data,
                 chunk_size,
+                stride: chunk_size,
                 num_rows: self.num_rows,
             };
 

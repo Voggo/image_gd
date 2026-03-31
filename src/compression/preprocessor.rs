@@ -729,8 +729,10 @@ impl BitDataInfo {
 pub struct BitData {
     /// The underlying bit storage - all chunks stored contiguously
     pub data: crate::BitStream,
-    /// Total bits per chunk
+    /// Logical bits per chunk (what algorithms see)
     pub chunk_size: usize,
+    /// Physical bits per chunk including word-alignment padding
+    pub stride: usize,
     /// Number of rows/chunks (number of records)
     pub num_rows: usize,
 }
@@ -745,20 +747,24 @@ impl BitData {
             });
         }
         self.data.extend(bits);
+        // Add alignment padding to maintain stride
+        for _ in self.chunk_size..self.stride {
+            self.data.push(false);
+        }
         self.num_rows += 1; // Treat the new bits as an additional row/chunk
         Ok(())
     }
 
     /// Get a slice of bits for a specific row/chunk
     pub fn get_chunk(&self, row: usize) -> &crate::BitView {
-        let start = row * self.chunk_size;
+        let start = row * self.stride;
         let end = start + self.chunk_size;
         &self.data[start..end]
     }
 
     /// Get a specific bit by row and bit position within the chunk
     pub fn get_bit(&self, row: usize, bit_in_chunk: usize) -> bool {
-        let idx = row * self.chunk_size + bit_in_chunk;
+        let idx = row * self.stride + bit_in_chunk;
         self.data[idx]
     }
 
@@ -769,7 +775,7 @@ impl BitData {
 
     /// Get the total number of bits stored
     pub fn total_bits(&self) -> usize {
-        self.data.len()
+        self.chunk_size * self.num_rows
     }
 }
 
@@ -923,11 +929,18 @@ impl BitDataSet {
                 }
                 push_bits(&mut data, bits, spec.bits);
             }
+            // Add word-alignment padding
+            let stride = chunk_size.next_multiple_of(64);
+            for _ in chunk_size..stride {
+                data.push(false);
+            }
         }
 
+        let stride = chunk_size.next_multiple_of(64);
         let data = BitData {
             data,
             chunk_size,
+            stride,
             num_rows,
         };
         let info = info.with_original_size_bits(chunk_size * num_rows);
@@ -936,7 +949,8 @@ impl BitDataSet {
             rows = num_rows,
             features = info.num_features(),
             chunk_size_bits = chunk_size,
-            total_bits = chunk_size * num_rows,
+            stride_bits = stride,
+            total_logical_bits = chunk_size * num_rows,
             "BitDataSet preprocessing complete"
         );
 
@@ -945,7 +959,7 @@ impl BitDataSet {
 
     /// Get a slice of bits for a specific feature within a row
     pub fn get_feature(&self, row: usize, feature: usize) -> &crate::BitView {
-        let chunk_start = row * self.data.chunk_size;
+        let chunk_start = row * self.data.stride;
         let feat_start = chunk_start + self.info.feature_offset(feature);
         let feat_end = feat_start + self.info.feature_bits(feature);
         &self.data.data[feat_start..feat_end]
@@ -953,7 +967,7 @@ impl BitDataSet {
 
     /// Get a specific bit by row, feature, and bit index within the feature
     pub fn get_bit_by_feature(&self, row: usize, feature: usize, bit: usize) -> bool {
-        let idx = row * self.data.chunk_size + self.info.feature_offset(feature) + bit;
+        let idx = row * self.data.stride + self.info.feature_offset(feature) + bit;
         self.data.data[idx]
     }
 
@@ -1267,15 +1281,17 @@ mod tests {
         let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
 
         let raw = bit_data.data.raw();
-        assert_eq!(raw.len(), bit_data.data.total_bits());
+        // Since we now have padding, the raw length is num_rows * stride
+        assert_eq!(raw.len(), bit_data.data.num_rows * bit_data.data.stride);
 
         let feature_bits = bit_data.info.feature_bits(0);
-        for i in 0..100 {
-            let row = i / bit_data.data.chunk_size;
-            let within_chunk = i % bit_data.data.chunk_size;
-            let feat = within_chunk / feature_bits;
-            let bit = within_chunk % feature_bits;
-            assert_eq!(raw[i], bit_data.get_bit_by_feature(row, feat, bit));
+        for row in 0..10 {
+            for within_chunk in 0..bit_data.data.chunk_size {
+                let i = row * bit_data.data.stride + within_chunk;
+                let feat = within_chunk / feature_bits;
+                let bit = within_chunk % feature_bits;
+                assert_eq!(raw[i], bit_data.get_bit_by_feature(row, feat, bit));
+            }
         }
     }
 

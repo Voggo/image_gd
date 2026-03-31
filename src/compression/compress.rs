@@ -281,6 +281,7 @@ mod tests {
         let data = BitData {
             data,
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -696,6 +697,7 @@ mod tests {
         let data = BitData {
             data,
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -724,7 +726,7 @@ mod tests {
         assert_eq!(decompressed.data.num_rows, original_rows); // Should match original, not expanded
         assert_eq!(decompressed.data.chunk_size, 32);
         assert_eq!(decompressed.info.feature_bits(0), 2);
-        assert_eq!(decompressed.data.data.len(), original_rows * 32); // Original size, not expanded
+        assert_eq!(decompressed.data.total_bits(), original_rows * 32); // Original size, not expanded
     }
 
     #[test]
@@ -775,14 +777,15 @@ mod tests {
         // Check row by row - use decompressed row count since bit_data now contains condensed samples
         let num_original_rows = 5;
         for row in 0..num_original_rows {
-            let start = row * bit_data.data.chunk_size;
-            let end = start + bit_data.data.chunk_size;
-
-            let original_chunk: Vec<u8> = bit_data.data.data[start..end]
+            let original_chunk: Vec<u8> = bit_data
+                .data
+                .get_chunk(row)
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
-            let decompressed_chunk: Vec<u8> = decompressed.data.data[start..end]
+            let decompressed_chunk: Vec<u8> = decompressed
+                .data
+                .get_chunk(row)
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
@@ -797,16 +800,12 @@ mod tests {
         }
 
         // Verify the original rows match by checking only the first num_original_rows rows
-        let original_bits: Vec<bool> = bit_data.data.data
-            [0..(num_original_rows * bit_data.data.chunk_size)]
-            .iter()
-            .map(|b| *b)
-            .collect();
-        let decompressed_bits: Vec<bool> = decompressed.data.data
-            [0..(num_original_rows * bit_data.data.chunk_size)]
-            .iter()
-            .map(|b| *b)
-            .collect();
+        let mut original_bits: Vec<bool> = Vec::new();
+        let mut decompressed_bits: Vec<bool> = Vec::new();
+        for row in 0..num_original_rows {
+            original_bits.extend(bit_data.data.get_chunk(row).iter().map(|b| *b));
+            decompressed_bits.extend(decompressed.data.get_chunk(row).iter().map(|b| *b));
+        }
         assert_eq!(
             decompressed_bits, original_bits,
             "Decompressed data does not match original for the first {} rows",
@@ -849,6 +848,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -901,13 +901,15 @@ mod tests {
         // Check row by row - use decompressed row count since bit_data now contains condensed samples
         let num_original_rows = 12;
         for row in 0..num_original_rows {
-            let start = row * bit_data.data.chunk_size;
-            let end = start + bit_data.data.chunk_size;
-            let original_chunk: Vec<u8> = bit_data.data.data[start..end]
+            let original_chunk: Vec<u8> = bit_data
+                .data
+                .get_chunk(row)
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
-            let decompressed_chunk: Vec<u8> = decompressed.data.data[start..end]
+            let decompressed_chunk: Vec<u8> = decompressed
+                .data
+                .get_chunk(row)
                 .iter()
                 .map(|b| if *b { 1 } else { 0 })
                 .collect();
@@ -963,10 +965,12 @@ mod tests {
 
         assert_eq!(decompressed.data.num_rows, original_rows);
         assert_eq!(decompressed.data.chunk_size, bit_data.chunk_size());
-        assert_eq!(
-            decompressed.data.data,
-            bit_data.data.data[0..(original_rows * bit_data.chunk_size())]
-        );
+        for row in 0..original_rows {
+            assert_eq!(
+                decompressed.data.get_chunk(row),
+                bit_data.data.get_chunk(row)
+            );
+        }
     }
 
     #[test]

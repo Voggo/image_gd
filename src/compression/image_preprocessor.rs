@@ -219,12 +219,18 @@ fn build_image_bitdataset(
                 );
                 encode_grouped_channel(&mut bitstream, &grouped_values, grouping_transform);
             }
+            let stride = chunk_size.next_multiple_of(64);
+            for _ in chunk_size..stride {
+                bitstream.push(false);
+            }
         }
     }
 
+    let stride = chunk_size.next_multiple_of(64);
     let data = BitData {
         data: bitstream,
         chunk_size,
+        stride,
         num_rows: rows,
     };
 

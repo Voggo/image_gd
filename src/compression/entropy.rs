@@ -151,6 +151,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -182,6 +183,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -229,6 +231,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -259,6 +262,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -288,6 +292,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =
@@ -335,6 +340,7 @@ mod tests {
         let data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
         let features =

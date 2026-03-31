@@ -341,6 +341,7 @@ mod tests {
         let bit_data = BitData {
             data,
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
 
@@ -376,6 +377,7 @@ mod tests {
         let bit_data = BitData {
             data,
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
 

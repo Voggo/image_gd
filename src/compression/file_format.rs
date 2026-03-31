@@ -57,6 +57,7 @@ mod tests {
         let data = BitData {
             data: bitvec::bitvec![usize, crate::BitOrder; 0; 64],
             num_rows: 1,
+            stride: 64,
             chunk_size: 64,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
@@ -82,6 +83,7 @@ mod tests {
         let data = BitData {
             data: bitvec::bitvec![usize, crate::BitOrder; 0; 320],
             num_rows: 5,
+            stride: 64,
             chunk_size: 64,
         };
         let features = vec![
@@ -130,6 +132,7 @@ mod tests {
         let data = BitData {
             data: bitvec::bitvec![usize, crate::BitOrder; 0; 96],
             num_rows: 4,
+            stride: 24,
             chunk_size: 24,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 3];
@@ -175,6 +178,7 @@ mod tests {
         let data = BitData {
             data: bitvec::bitvec![usize, crate::BitOrder; 0; 111],
             num_rows: 1,
+            stride: 111,
             chunk_size: 111,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 37); 3];
@@ -218,6 +222,7 @@ mod tests {
         let data = BitData {
             data: bitvec::bitvec![usize, crate::BitOrder; 0; 512],
             num_rows: 8,
+            stride: 64,
             chunk_size: 64,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
@@ -253,6 +258,7 @@ mod tests {
                 1, 1, 0, 0, 1, 1, 0, 0,
             ],
             num_rows: 4,
+            stride: 8,
             chunk_size: 8,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
@@ -267,10 +273,15 @@ mod tests {
 
         assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
         assert_eq!(loaded.metadata, compressed.metadata);
-        assert_eq!(
-            decompress_file(&loaded).unwrap().data.data,
-            bit_data.data.data[0..32]
-        );
+        let decompressed_data = decompress_file(&loaded).unwrap().data;
+        assert_eq!(decompressed_data.num_rows, bit_data.data.num_rows);
+        assert_eq!(decompressed_data.chunk_size, bit_data.data.chunk_size);
+        for row in 0..bit_data.data.num_rows {
+            assert_eq!(
+                decompressed_data.get_chunk(row),
+                bit_data.data.get_chunk(row)
+            );
+        }
     }
 
     #[test]
@@ -283,6 +294,7 @@ mod tests {
                 1,0,1,0, 1,0,1,1, 1,1,0,0,
             ],
             num_rows: 4,
+            stride: 12,
             chunk_size: 12,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 4); 3];
@@ -321,9 +333,14 @@ mod tests {
                 colorspace: 0
             })
         ));
-        assert_eq!(
-            decompress_file(&loaded).unwrap().data.data,
-            bit_data.data.data[0..48]
-        );
+        let decompressed_data = decompress_file(&loaded).unwrap().data;
+        assert_eq!(decompressed_data.num_rows, bit_data.data.num_rows);
+        assert_eq!(decompressed_data.chunk_size, bit_data.data.chunk_size);
+        for row in 0..bit_data.data.num_rows {
+            assert_eq!(
+                decompressed_data.get_chunk(row),
+                bit_data.data.get_chunk(row)
+            );
+        }
     }
 }

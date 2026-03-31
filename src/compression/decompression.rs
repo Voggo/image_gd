@@ -35,6 +35,7 @@ pub(crate) fn decompress_samples_batch(
     let data_info = &compressed.metadata;
     let num_features = data_info.num_features();
     let chunk_size = data_info.chunk_size();
+    let stride = chunk_size.next_multiple_of(64);
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     if num_features == 0 {
         return Err(EntroGdError::InvalidMetadata {
@@ -47,7 +48,7 @@ pub(crate) fn decompress_samples_batch(
     let base_bit_positions = &compressed.base_bit_positions;
     let base_bit_mask = build_base_bit_mask(chunk_size, base_bit_positions);
 
-    let mut reconstructed_bits = crate::BitStream::with_capacity(chunk_size * indices.len());
+    let mut reconstructed_bits = crate::BitStream::with_capacity(stride * indices.len());
 
     for &sample_idx in indices {
         let sample = match compressed.encoded_data.get_sample(sample_idx) {
@@ -65,11 +66,17 @@ pub(crate) fn decompress_samples_batch(
             sample.deviation.as_bitslice(),
             sample.id.as_bitslice(),
         )?;
+
+        // Add word-alignment padding
+        for _ in chunk_size..stride {
+            reconstructed_bits.push(false);
+        }
     }
 
     let data = BitData {
         data: reconstructed_bits,
         chunk_size,
+        stride,
         num_rows: indices.len(),
     };
     let info = data_info.with_original_size_bits(chunk_size * indices.len());
@@ -91,9 +98,10 @@ impl Filter for DecompressFileData {
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
     let data_info = &compressed.metadata;
     let chunk_size = data_info.chunk_size();
+    let stride = chunk_size.next_multiple_of(64);
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let base_bit_mask = build_base_bit_mask(chunk_size, &compressed.base_bit_positions);
-    let mut reconstructed_bits = crate::BitStream::with_capacity(chunk_size * original_num_rows);
+    let mut reconstructed_bits = crate::BitStream::with_capacity(stride * original_num_rows);
     let mut decoded_rows = 0usize;
 
     compressed.encoded_data.for_each_sample(|sample| {
@@ -109,6 +117,12 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
             sample.deviation,
             sample.id,
         )?;
+
+        // Add word-alignment padding
+        for _ in chunk_size..stride {
+            reconstructed_bits.push(false);
+        }
+
         decoded_rows += 1;
         Ok(())
     })?;
@@ -125,6 +139,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let data = BitData {
         data: reconstructed_bits,
         chunk_size,
+        stride,
         num_rows: original_num_rows,
     };
     let info = data_info.with_original_size_bits(chunk_size * original_num_rows);

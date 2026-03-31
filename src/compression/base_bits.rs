@@ -852,12 +852,12 @@ impl BaseBitHyperLogLogCount {
         self.num_bits_per_base += added_count;
 
         let raw_bits = bit_data.data.raw();
-        let chunk_size = bit_data.chunk_size();
+        let stride = bit_data.data.stride;
         self.registers.fill(0);
         let bucket_shift = 64 - Self::HLL_PRECISION as usize;
 
         for (row, row_hash) in self.row_hashes.iter_mut().enumerate() {
-            let row_start = row * chunk_size;
+            let row_start = row * stride;
             for &bit_position in &new_bit_positions {
                 if raw_bits[row_start + bit_position] {
                     *row_hash ^= self.bit_hash_words[bit_position];
@@ -1181,6 +1181,7 @@ mod tests {
         let bit_data = BitData {
             data: data.into_iter().collect(),
             chunk_size,
+            stride: chunk_size,
             num_rows,
         };
 
