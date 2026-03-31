@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn test_build_and_save_egd() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0; 0; 64],
+            data: bitvec::bitvec![usize, crate::BitOrder; 0; 64],
             num_rows: 1,
             chunk_size: 64,
         };
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_to_compressed_data() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0; 0; 320],
+            data: bitvec::bitvec![usize, crate::BitOrder; 0; 320],
             num_rows: 5,
             chunk_size: 64,
         };
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_roundtrip_igd_to_compressed_data_with_image_metadata() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0; 0; 96],
+            data: bitvec::bitvec![usize, crate::BitOrder; 0; 96],
             num_rows: 4,
             chunk_size: 24,
         };
@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn test_roundtrip_igd_to_compressed_data_with_for_min_metadata() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0; 0; 111],
+            data: bitvec::bitvec![usize, crate::BitOrder; 0; 111],
             num_rows: 1,
             chunk_size: 111,
         };
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_with_rle_payload() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0; 0; 512],
+            data: bitvec::bitvec![usize, crate::BitOrder; 0; 512],
             num_rows: 8,
             chunk_size: 64,
         };
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_with_huffman_payload() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0;
+            data: bitvec::bitvec![usize, crate::BitOrder;
                 0, 1, 0, 1, 0, 1, 0, 1,
                 0, 1, 1, 0, 0, 1, 1, 0,
                 1, 0, 0, 1, 1, 0, 0, 1,
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_roundtrip_igd_with_huffman_image_payload() {
         let data = BitData {
-            data: bitvec::bitvec![usize, bitvec::order::Msb0;
+            data: bitvec::bitvec![usize, crate::BitOrder;
                 0,0,0,1, 0,0,1,0, 0,0,1,1,
                 0,1,0,0, 0,1,0,1, 0,1,1,0,
                 0,1,1,1, 1,0,0,0, 1,0,0,1,

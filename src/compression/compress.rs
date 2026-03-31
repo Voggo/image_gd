@@ -80,8 +80,8 @@ impl CompressedData {
 pub(crate) fn build_base_bit_mask(
     chunk_size: usize,
     base_bit_positions: &[usize],
-) -> BitVec<usize, Msb0> {
-    let mut mask = bitvec![usize, Msb0; 0; chunk_size];
+) -> crate::BitStream {
+    let mut mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
     for &bit_pos in base_bit_positions {
         if bit_pos < chunk_size {
             mask.set(bit_pos, true);
@@ -92,7 +92,7 @@ pub(crate) fn build_base_bit_mask(
 
 impl DeviationData {
     pub fn new(
-        encoded_bit_stream: BitVec<usize, Msb0>,
+        encoded_bit_stream: crate::BitStream,
         num_samples: usize,
         num_deviation_bits: usize,
         num_id_bits: usize,
@@ -122,7 +122,7 @@ impl DeviationData {
         self.encoded_bit_stream.len()
     }
 
-    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Msb0> {
+    pub fn encoded_bit_stream(&self) -> &crate::BitStream {
         &self.encoded_bit_stream
     }
 
@@ -174,7 +174,7 @@ impl EncodedData {
         }
     }
 
-    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Msb0> {
+    pub fn encoded_bit_stream(&self) -> &crate::BitStream {
         match self {
             EncodedData::Normal(data) => data.encoded_bit_stream(),
             EncodedData::Rle(data) => data.symbol_bit_stream(),
@@ -277,7 +277,7 @@ mod tests {
         let chunk_size = bits_per_feature * num_features;
         let total_bits = chunk_size * num_rows;
 
-        let data = bitvec![usize, Msb0; 0; total_bits];
+        let data = bitvec![usize, crate::BitOrder; 0; total_bits];
         let data = BitData {
             data,
             chunk_size,
@@ -675,7 +675,7 @@ mod tests {
     ) -> BitDataSet {
         let chunk_size = bits_per_feature * num_features;
         let total_bits = chunk_size * num_rows;
-        let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
+        let mut data = crate::BitStream::with_capacity(total_bits);
 
         // Create simulated data with low entropy patterns
         for row in 0..num_rows {

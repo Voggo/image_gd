@@ -383,7 +383,7 @@ impl EgdFile {
 
         let mut base_table = Vec::with_capacity(num_bases);
         for _ in 0..num_bases {
-            let mut base_bits = bitvec![usize, Msb0; 0; chunk_size];
+            let mut base_bits = bitvec![usize, crate::BitOrder; 0; chunk_size];
             for &bit_pos in &base_bit_positions {
                 let bit = reader.read_bit()?;
                 base_bits.set(bit_pos, bit);

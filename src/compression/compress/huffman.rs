@@ -1,4 +1,3 @@
-use bitvec::prelude::*;
 use fxhash::FxHashMap;
 
 use super::{DeviationData, DeviationSample, DeviationSampleRef, HuffmanDeviationData};
@@ -17,7 +16,7 @@ struct HuffmanCode {
 impl HuffmanDeviationData {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        pixel_bit_stream: BitVec<usize, Msb0>,
+        pixel_bit_stream: crate::BitStream,
         canonical_symbols: Vec<u64>,
         canonical_code_lengths: Vec<u8>,
         row_offsets: Vec<u32>,
@@ -44,8 +43,8 @@ impl HuffmanDeviationData {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_base_id_only(
-        pixel_bit_stream: BitVec<usize, Msb0>,
-        raw_deviation_bit_stream: BitVec<usize, Msb0>,
+        pixel_bit_stream: crate::BitStream,
+        raw_deviation_bit_stream: crate::BitStream,
         canonical_symbols: Vec<u64>,
         canonical_code_lengths: Vec<u8>,
         row_offsets: Vec<u32>,
@@ -72,8 +71,8 @@ impl HuffmanDeviationData {
 
     #[allow(clippy::too_many_arguments)]
     fn new_internal(
-        pixel_bit_stream: BitVec<usize, Msb0>,
-        raw_deviation_bit_stream: Option<BitVec<usize, Msb0>>,
+        pixel_bit_stream: crate::BitStream,
+        raw_deviation_bit_stream: Option<crate::BitStream>,
         canonical_symbols: Vec<u64>,
         canonical_code_lengths: Vec<u8>,
         row_offsets: Vec<u32>,
@@ -262,11 +261,11 @@ impl HuffmanDeviationData {
         Ok(data)
     }
 
-    pub fn pixel_bit_stream(&self) -> &BitVec<usize, Msb0> {
+    pub fn pixel_bit_stream(&self) -> &crate::BitStream {
         &self.pixel_bit_stream
     }
 
-    pub fn raw_deviation_bit_stream(&self) -> Option<&BitVec<usize, Msb0>> {
+    pub fn raw_deviation_bit_stream(&self) -> Option<&crate::BitStream> {
         self.raw_deviation_bit_stream.as_ref()
     }
 
@@ -387,7 +386,7 @@ impl HuffmanDeviationData {
                 message: "decoded Huffman deviation stream length overflow".to_string(),
             }
         })?;
-        let mut raw = BitVec::<usize, Msb0>::with_capacity(expected_bits);
+        let mut raw = crate::BitStream::with_capacity(expected_bits);
         let mut bit_pos = 0usize;
 
         for sample_idx in 0..self.num_samples {
@@ -533,13 +532,13 @@ fn bit_mask(width: usize) -> u64 {
     }
 }
 
-fn bitvec_from_u64(value: u64, width: usize) -> BitVec<usize, Msb0> {
-    let mut bits = BitVec::<usize, Msb0>::with_capacity(width);
+fn bitvec_from_u64(value: u64, width: usize) -> crate::BitStream {
+    let mut bits = crate::BitStream::with_capacity(width);
     append_symbol_bits(&mut bits, value, width);
     bits
 }
 
-fn append_symbol_bits(out: &mut BitVec<usize, Msb0>, value: u64, width: usize) {
+fn append_symbol_bits(out: &mut crate::BitStream, value: u64, width: usize) {
     for shift in (0..width).rev() {
         out.push(((value >> shift) & 1) == 1);
     }

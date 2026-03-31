@@ -1,4 +1,3 @@
-use bitvec::prelude::*;
 use fxhash::FxHashMap;
 use std::hash::{Hash, Hasher};
 
@@ -11,7 +10,7 @@ use crate::utils::bits_needed_nonzero;
 
 pub(super) struct FusedEncodingResult {
     pub(super) deviation_data: DeviationData,
-    pub(super) base_table: Vec<(BitVec<usize, Msb0>, usize)>,
+    pub(super) base_table: Vec<(crate::BitStream, usize)>,
 }
 
 enum SignatureKey {
@@ -46,10 +45,7 @@ impl Hash for SignatureKey {
     }
 }
 
-fn build_signature_key(
-    chunk: &BitSlice<usize, Msb0>,
-    base_bit_positions: &[usize],
-) -> SignatureKey {
+fn build_signature_key(chunk: &crate::BitView, base_bit_positions: &[usize]) -> SignatureKey {
     if base_bit_positions.len() <= 128 {
         let mut packed = 0u128;
         for &bit_pos in base_bit_positions {
@@ -107,11 +103,11 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
 
     let num_bases = representative_rows.len();
     let l_id = bits_needed_nonzero(num_bases);
-    let mut id_bits_per_base: Vec<BitVec<usize, Msb0>> = Vec::new();
+    let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
     if l_id > 0 {
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
-            let mut id_bits = BitVec::<usize, Msb0>::with_capacity(l_id);
+            let mut id_bits = crate::BitStream::with_capacity(l_id);
             for shift in (0..l_id).rev() {
                 id_bits.push(((id >> shift) & 1) == 1);
             }
@@ -120,7 +116,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     }
 
     let symbol_width = num_deviation_bits + l_id;
-    let mut encoded_bit_stream = BitVec::<usize, Msb0>::with_capacity(num_rows * symbol_width);
+    let mut encoded_bit_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
     for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;
         let chunk = bit_data.get_chunk(row);
@@ -136,7 +132,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
 
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
-        let base: BitVec<usize, Msb0> = bit_data.get_chunk(representative_row).to_bitvec();
+        let base: crate::BitStream = bit_data.get_chunk(representative_row).to_bitvec();
         base_table.push((base & base_bit_mask, base_counts[id]));
     }
 

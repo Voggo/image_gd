@@ -1,4 +1,3 @@
-use bitvec::prelude::*;
 use fxhash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -21,7 +20,7 @@ pub(super) fn encode_data_huffman(
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
 
-    let mut pixel_bit_stream = BitVec::<usize, Msb0>::new();
+    let mut pixel_bit_stream = crate::BitStream::new();
     let mut row_offsets = Vec::with_capacity(row_count);
 
     for row_idx in 0..row_count {
@@ -78,9 +77,9 @@ pub(super) fn encode_data_huffman_base_id_only(
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
 
-    let mut pixel_bit_stream = BitVec::<usize, Msb0>::new();
+    let mut pixel_bit_stream = crate::BitStream::new();
     let mut raw_deviation_bit_stream =
-        BitVec::<usize, Msb0>::with_capacity(bit_data.num_rows() * context.num_deviation_bits);
+        crate::BitStream::with_capacity(bit_data.num_rows() * context.num_deviation_bits);
     let mut row_offsets = Vec::with_capacity(row_count);
 
     for row_idx in 0..row_count {
@@ -296,7 +295,7 @@ fn build_huffman_code_lengths(symbols: &[SymbolFrequency]) -> Result<Vec<usize>,
     Ok(lengths)
 }
 
-fn append_code_bits(out: &mut BitVec<usize, Msb0>, code: u32, code_len: u8) {
+fn append_code_bits(out: &mut crate::BitStream, code: u32, code_len: u8) {
     for shift in (0..code_len as usize).rev() {
         out.push(((code >> shift) & 1) == 1);
     }

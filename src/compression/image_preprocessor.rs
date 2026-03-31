@@ -1,4 +1,3 @@
-use bitvec::prelude::*;
 use image::DynamicImage;
 use std::path::PathBuf;
 
@@ -202,7 +201,7 @@ fn build_image_bitdataset(
         ImageColorModel::YCoCgR => convert_rgb_to_ycocg_r_channels(&raw, channels_usize),
     };
 
-    let mut bitstream = BitVec::<usize, Msb0>::with_capacity(total_bits);
+    let mut bitstream = crate::BitStream::with_capacity(total_bits);
 
     let width_usize = width as usize;
     let height_usize = height as usize;
@@ -232,13 +231,13 @@ fn build_image_bitdataset(
     Ok(BitDataSet { data, info })
 }
 
-fn push_bits_u8(out: &mut BitVec<usize, Msb0>, value: u8) {
+fn push_bits_u8(out: &mut crate::BitStream, value: u8) {
     for shift in (0..8).rev() {
         out.push(((value >> shift) & 1) == 1);
     }
 }
 
-fn push_bits_u16(out: &mut BitVec<usize, Msb0>, value: u16, bit_count: usize) {
+fn push_bits_u16(out: &mut crate::BitStream, value: u16, bit_count: usize) {
     for shift in (0..bit_count).rev() {
         out.push(((value >> shift) & 1) == 1);
     }
@@ -323,7 +322,7 @@ fn grouped_channel_values(
 }
 
 fn encode_grouped_channel(
-    out: &mut BitVec<usize, Msb0>,
+    out: &mut crate::BitStream,
     values: &[u8],
     grouping_transform: ImageGroupingTransform,
 ) {
@@ -359,7 +358,7 @@ fn encode_grouped_channel(
     }
 }
 
-fn encode_for_anchor(out: &mut BitVec<usize, Msb0>, values: &[u8], anchor: u8) {
+fn encode_for_anchor(out: &mut crate::BitStream, values: &[u8], anchor: u8) {
     push_bits_u8(out, anchor);
     for &value in values.iter().skip(1) {
         let delta = value as i16 - anchor as i16;
@@ -492,13 +491,13 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    fn bits_to_u16(bits: &BitSlice<usize, Msb0>) -> u16 {
+    fn bits_to_u16(bits: &crate::BitView) -> u16 {
         bits.iter()
             .fold(0u16, |acc, bit| (acc << 1) | u16::from(*bit))
     }
 
     fn decode_grouped_feature(
-        bits: &BitSlice<usize, Msb0>,
+        bits: &crate::BitView,
         pixel_grouping: usize,
         grouping_transform: ImageGroupingTransform,
     ) -> Vec<u8> {

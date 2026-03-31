@@ -15,11 +15,11 @@ pub trait BaseBit {
         num_bases
     }
     fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize;
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)>;
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)>;
     fn get_groups(&self) -> &[Vec<usize>];
     fn get_num_bases(&self) -> usize;
     fn get_num_bits_per_base(&self) -> usize;
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0>;
+    fn get_base_bit_mask(&self) -> &crate::BitView;
     fn get_base_bit_positions(&self) -> &[usize];
 }
 
@@ -32,7 +32,7 @@ fn count_non_empty_groups(groups: &[Vec<usize>]) -> usize {
 }
 
 fn collect_new_bit_positions(
-    base_bit_mask: &BitSlice<usize, Msb0>,
+    base_bit_mask: &crate::BitView,
     bit_positions: &[usize],
 ) -> Vec<usize> {
     let mut seen = FxHashSet::with_capacity_and_hasher(bit_positions.len(), Default::default());
@@ -55,7 +55,7 @@ fn collect_new_bit_positions(
 }
 
 fn apply_selected_bit_positions(
-    base_bit_mask: &mut BitVec<usize, Msb0>,
+    base_bit_mask: &mut crate::BitStream,
     base_bit_positions: &mut Vec<usize>,
     bit_positions: &[usize],
 ) -> usize {
@@ -81,7 +81,7 @@ fn apply_selected_bit_positions(
 }
 
 fn add_constant_bits(
-    base_bit_mask: &mut BitVec<usize, Msb0>,
+    base_bit_mask: &mut crate::BitStream,
     base_bit_positions: &mut Vec<usize>,
     num_bits_per_base: &mut usize,
     bit_positions: &[usize],
@@ -94,16 +94,16 @@ fn add_constant_bits(
 
 fn get_masked_bases_from_groups(
     groups: &[Vec<usize>],
-    base_bit_mask: &BitSlice<usize, Msb0>,
+    base_bit_mask: &crate::BitView,
     num_bases: usize,
     bit_data: &BitDataSet,
-) -> Vec<(BitVec<usize, Msb0>, usize)> {
+) -> Vec<(crate::BitStream, usize)> {
     let mut bases = Vec::with_capacity(num_bases);
     for group in groups {
         if group.is_empty() {
             continue;
         }
-        let base: BitVec<usize, Msb0> = bit_data.get_chunk(group[0]).to_bitvec();
+        let base: crate::BitStream = bit_data.get_chunk(group[0]).to_bitvec();
         bases.push((base & base_bit_mask, group.len()));
     }
     bases
@@ -112,7 +112,7 @@ fn get_masked_bases_from_groups(
 #[derive(Clone)]
 pub struct BaseBitGroups {
     groups: Vec<Vec<usize>>,
-    base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_mask: crate::BitStream,
     base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
@@ -133,7 +133,7 @@ impl std::fmt::Debug for BaseBitGroups {
 impl BaseBitGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
         let groups = initial_groups(num_rows);
-        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
+        let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
         BaseBitGroups {
@@ -205,7 +205,7 @@ impl BaseBitGroups {
         self.num_bases
     }
     /// Get the bases as BitVecs along with their counts
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         get_masked_bases_from_groups(&self.groups, &self.base_bit_mask, self.num_bases, bit_data)
     }
@@ -222,7 +222,7 @@ impl BaseBitGroups {
         self.num_bits_per_base
     }
 
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    pub fn get_base_bit_mask(&self) -> &crate::BitView {
         &self.base_bit_mask
     }
 
@@ -240,7 +240,7 @@ impl BaseBit for BaseBitGroups {
         BaseBitGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         BaseBitGroups::get_bases(self, bit_data)
     }
 
@@ -256,7 +256,7 @@ impl BaseBit for BaseBitGroups {
         BaseBitGroups::get_num_bits_per_base(self)
     }
 
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    fn get_base_bit_mask(&self) -> &crate::BitView {
         BaseBitGroups::get_base_bit_mask(self)
     }
 
@@ -268,7 +268,7 @@ impl BaseBit for BaseBitGroups {
 #[derive(Clone)]
 pub struct BaseBitBatchGroups {
     groups: Vec<Vec<usize>>,
-    base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_mask: crate::BitStream,
     base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
@@ -289,7 +289,7 @@ impl std::fmt::Debug for BaseBitBatchGroups {
 impl BaseBitBatchGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
         let groups = initial_groups(num_rows);
-        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
+        let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
         BaseBitBatchGroups {
@@ -410,7 +410,7 @@ impl BaseBitBatchGroups {
         self.num_bases
     }
 
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         get_masked_bases_from_groups(&self.groups, &self.base_bit_mask, self.num_bases, bit_data)
     }
@@ -427,7 +427,7 @@ impl BaseBitBatchGroups {
         self.num_bits_per_base
     }
 
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    pub fn get_base_bit_mask(&self) -> &crate::BitView {
         &self.base_bit_mask
     }
 
@@ -449,7 +449,7 @@ impl BaseBit for BaseBitBatchGroups {
         BaseBitBatchGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         BaseBitBatchGroups::get_bases(self, bit_data)
     }
 
@@ -465,7 +465,7 @@ impl BaseBit for BaseBitBatchGroups {
         BaseBitBatchGroups::get_num_bits_per_base(self)
     }
 
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    fn get_base_bit_mask(&self) -> &crate::BitView {
         BaseBitBatchGroups::get_base_bit_mask(self)
     }
 
@@ -491,7 +491,7 @@ pub struct BaseBitIncSignatureGroups {
     /// This keeps `add_bit_positions()` allocation-free per row and defers
     /// `Vec<Vec<usize>>` construction to the rare `get_groups()` call.
     groups_cache: OnceCell<Vec<Vec<usize>>>,
-    base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_mask: crate::BitStream,
     base_bit_positions: Vec<usize>,
     num_bits_per_base: usize,
 }
@@ -512,7 +512,7 @@ impl std::fmt::Debug for BaseBitIncSignatureGroups {
 
 impl BaseBitIncSignatureGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
+        let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let row_signatures = vec![0u64; num_rows];
         let mut signature_counts = FxHashMap::with_capacity_and_hasher(1, Default::default());
@@ -626,7 +626,7 @@ impl BaseBitIncSignatureGroups {
         self.get_num_bases()
     }
 
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
 
         // Preserve stable ordering by first row occurrence for consistency with
@@ -649,7 +649,7 @@ impl BaseBitIncSignatureGroups {
                 .signature_counts
                 .get(&signature)
                 .expect("signature must exist in signature_counts");
-            let base: BitVec<usize, Msb0> = bit_data.get_chunk(representative_row).to_bitvec();
+            let base: crate::BitStream = bit_data.get_chunk(representative_row).to_bitvec();
             bases.push((base & &self.base_bit_mask, count));
         }
         bases
@@ -689,7 +689,7 @@ impl BaseBitIncSignatureGroups {
         self.num_bits_per_base
     }
 
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    pub fn get_base_bit_mask(&self) -> &crate::BitView {
         &self.base_bit_mask
     }
 
@@ -711,7 +711,7 @@ impl BaseBit for BaseBitIncSignatureGroups {
         BaseBitIncSignatureGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         BaseBitIncSignatureGroups::get_bases(self, bit_data)
     }
 
@@ -727,7 +727,7 @@ impl BaseBit for BaseBitIncSignatureGroups {
         BaseBitIncSignatureGroups::get_num_bits_per_base(self)
     }
 
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    fn get_base_bit_mask(&self) -> &crate::BitView {
         BaseBitIncSignatureGroups::get_base_bit_mask(self)
     }
 
@@ -738,7 +738,7 @@ impl BaseBit for BaseBitIncSignatureGroups {
 
 #[derive(Clone)]
 pub struct BaseBitHyperLogLogCount {
-    base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_mask: crate::BitStream,
     base_bit_positions: Vec<usize>,
     num_bits_per_base: usize,
     num_bases_estimate: usize,
@@ -763,7 +763,7 @@ impl BaseBitHyperLogLogCount {
     const SPLITMIX64_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
 
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
+        let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
 
         let mut state = 0xD1B5_4A32_D192_ED03u64;
@@ -904,7 +904,7 @@ impl BaseBitHyperLogLogCount {
         self.num_bits_per_base
     }
 
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    pub fn get_base_bit_mask(&self) -> &crate::BitView {
         &self.base_bit_mask
     }
 
@@ -926,7 +926,7 @@ impl BaseBit for BaseBitHyperLogLogCount {
         BaseBitHyperLogLogCount::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, _bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn get_bases(&self, _bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         panic!(
             "BaseBitHyperLogLogCount does not support get_bases(); use a different BaseBit implementation"
         )
@@ -946,7 +946,7 @@ impl BaseBit for BaseBitHyperLogLogCount {
         BaseBitHyperLogLogCount::get_num_bits_per_base(self)
     }
 
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    fn get_base_bit_mask(&self) -> &crate::BitView {
         BaseBitHyperLogLogCount::get_base_bit_mask(self)
     }
 
@@ -958,7 +958,7 @@ impl BaseBit for BaseBitHyperLogLogCount {
 #[derive(Clone)]
 pub struct BaseBitSignatureGroups {
     groups: Vec<Vec<usize>>,
-    base_bit_mask: BitVec<usize, Msb0>,
+    base_bit_mask: crate::BitStream,
     base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
@@ -979,7 +979,7 @@ impl std::fmt::Debug for BaseBitSignatureGroups {
 impl BaseBitSignatureGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
         let groups = initial_groups(num_rows);
-        let base_bit_mask = bitvec![usize, Msb0; 0; chunk_size];
+        let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
         BaseBitSignatureGroups {
@@ -1092,7 +1092,7 @@ impl BaseBitSignatureGroups {
         self.num_bases
     }
 
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         get_masked_bases_from_groups(&self.groups, &self.base_bit_mask, self.num_bases, bit_data)
     }
@@ -1109,7 +1109,7 @@ impl BaseBitSignatureGroups {
         self.num_bits_per_base
     }
 
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    pub fn get_base_bit_mask(&self) -> &crate::BitView {
         &self.base_bit_mask
     }
 
@@ -1131,7 +1131,7 @@ impl BaseBit for BaseBitSignatureGroups {
         BaseBitSignatureGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
         BaseBitSignatureGroups::get_bases(self, bit_data)
     }
 
@@ -1147,7 +1147,7 @@ impl BaseBit for BaseBitSignatureGroups {
         BaseBitSignatureGroups::get_num_bits_per_base(self)
     }
 
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Msb0> {
+    fn get_base_bit_mask(&self) -> &crate::BitView {
         BaseBitSignatureGroups::get_base_bit_mask(self)
     }
 

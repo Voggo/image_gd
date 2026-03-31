@@ -16,7 +16,6 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use crate::utils::bits_needed_nonzero;
-use bitvec::prelude::*;
 
 const RLE_MAX_CONTROL_VALUE: usize = 134;
 const RLE_MAX_RUN_LEN: usize = RLE_MAX_CONTROL_VALUE + 1;
@@ -169,7 +168,7 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
 }
 
 fn encode_data<B: BaseBit + ?Sized>(bit_data: &BitDataSet, base_bit_groups: &B) -> DeviationData {
-    let mut encoded_bit_stream = BitVec::<usize, Msb0>::new();
+    let mut encoded_bit_stream = crate::BitStream::new();
     let base_bit_mask = base_bit_groups.get_base_bit_mask();
 
     let num_bases = base_bit_groups.get_num_bases();
@@ -235,7 +234,7 @@ fn encode_data_rle<B: BaseBit + ?Sized>(
     let symbol_width = context.num_deviation_bits + context.l_id;
     let num_rows = bit_data.num_rows();
     let raw_symbol_stream = encode_rows_as_symbol_stream(bit_data, &context);
-    let mut symbol_stream = BitVec::<usize, Msb0>::new();
+    let mut symbol_stream = crate::BitStream::new();
     let mut rm_values: Vec<(u8, u8)> = Vec::new();
 
     if num_rows == 0 || symbol_width == 0 {
@@ -315,10 +314,10 @@ fn encode_data_rle<B: BaseBit + ?Sized>(
 }
 
 fn symbol_slice(
-    symbol_stream: &BitVec<usize, Msb0>,
+    symbol_stream: &crate::BitStream,
     symbol_width: usize,
     row: usize,
-) -> &BitSlice<usize, Msb0> {
+) -> &crate::BitView {
     let start = row * symbol_width;
     &symbol_stream[start..start + symbol_width]
 }
@@ -334,7 +333,7 @@ mod tests {
     /// Helper function to create a simple BitDataSet for testing
     /// Creates a dataset with `num_rows` rows and `chunk_size` bits per row
     fn create_test_bit_data_set(num_rows: usize, chunk_size: usize) -> BitDataSet {
-        let mut data = BitVec::<usize, Msb0>::with_capacity(num_rows * chunk_size);
+        let mut data = crate::BitStream::with_capacity(num_rows * chunk_size);
         for _ in 0..num_rows * chunk_size {
             data.push(false);
         }
@@ -366,7 +365,7 @@ mod tests {
         let chunk_size = rows_and_bits[0].len();
         let num_rows = rows_and_bits.len();
 
-        let mut data = BitVec::<usize, Msb0>::with_capacity(num_rows * chunk_size);
+        let mut data = crate::BitStream::with_capacity(num_rows * chunk_size);
         for row in &rows_and_bits {
             assert_eq!(row.len(), chunk_size, "All rows must have the same size");
             for &bit in row {

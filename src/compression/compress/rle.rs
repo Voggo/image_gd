@@ -1,5 +1,3 @@
-use bitvec::prelude::*;
-
 use super::{DeviationData, DeviationSample, DeviationSampleRef, RleDeviationData};
 use crate::error::EntroGdError;
 
@@ -10,13 +8,13 @@ pub(crate) const RLE_TERMINATOR_PAYLOAD: u8 = 0x7F;
 
 impl RleDeviationData {
     pub fn new(
-        symbol_bit_stream: BitVec<usize, Msb0>,
+        symbol_bit_stream: crate::BitStream,
         rm_values: Vec<(u8, u8)>,
         num_samples: usize,
         num_deviation_bits: usize,
         num_id_bits: usize,
     ) -> Self {
-        let mut rm_control_stream = BitVec::<usize, Msb0>::new();
+        let mut rm_control_stream = crate::BitStream::new();
         for &(r, m) in &rm_values {
             write_rle_control_value(&mut rm_control_stream, r);
             write_rle_control_value(&mut rm_control_stream, m);
@@ -93,11 +91,11 @@ impl RleDeviationData {
         None
     }
 
-    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Msb0> {
+    pub fn symbol_bit_stream(&self) -> &crate::BitStream {
         &self.symbol_bit_stream
     }
 
-    pub fn rm_control_stream(&self) -> &BitVec<usize, Msb0> {
+    pub fn rm_control_stream(&self) -> &crate::BitStream {
         &self.rm_control_stream
     }
 
@@ -202,7 +200,7 @@ impl RleDeviationData {
             }
         })?;
 
-        let mut raw = BitVec::<usize, Msb0>::with_capacity(expected_raw_bits);
+        let mut raw = crate::BitStream::with_capacity(expected_raw_bits);
         let mut symbol_cursor = 0usize;
         let mut decoded_samples = 0usize;
 
@@ -268,7 +266,7 @@ impl RleDeviationData {
     }
 }
 
-pub(super) fn write_rle_control_value(out: &mut BitVec<usize, Msb0>, value: u8) {
+pub(super) fn write_rle_control_value(out: &mut crate::BitStream, value: u8) {
     assert!(
         value <= RLE_LONG_MAX,
         "RLE control value {} out of range (max {})",

@@ -1,4 +1,3 @@
-use bitvec::prelude::*;
 use std::fmt::Display;
 use std::path::Path;
 use tracing::{debug, info, trace};
@@ -729,7 +728,7 @@ impl BitDataInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitData {
     /// The underlying bit storage - all chunks stored contiguously
-    pub data: BitVec<usize, Msb0>,
+    pub data: crate::BitStream,
     /// Total bits per chunk
     pub chunk_size: usize,
     /// Number of rows/chunks (number of records)
@@ -738,10 +737,7 @@ pub struct BitData {
 
 impl BitData {
     /// Extend the BitData with additional bits from a BitSlice (used for adding condensed samples)
-    pub fn extend_from_bitslice(
-        &mut self,
-        bits: &BitSlice<usize, Msb0>,
-    ) -> Result<(), EntroGdError> {
+    pub fn extend_from_bitslice(&mut self, bits: &crate::BitView) -> Result<(), EntroGdError> {
         if bits.len() != self.chunk_size {
             return Err(EntroGdError::BitSliceLengthMismatch {
                 expected: self.chunk_size,
@@ -754,7 +750,7 @@ impl BitData {
     }
 
     /// Get a slice of bits for a specific row/chunk
-    pub fn get_chunk(&self, row: usize) -> &BitSlice<usize, Msb0> {
+    pub fn get_chunk(&self, row: usize) -> &crate::BitView {
         let start = row * self.chunk_size;
         let end = start + self.chunk_size;
         &self.data[start..end]
@@ -767,7 +763,7 @@ impl BitData {
     }
 
     /// Get raw access to the underlying bit vector
-    pub fn raw(&self) -> &BitVec<usize, Msb0> {
+    pub fn raw(&self) -> &crate::BitStream {
         &self.data
     }
 
@@ -902,7 +898,7 @@ impl BitDataSet {
             "packing rows into bitstream"
         );
 
-        let mut data = BitVec::<usize, Msb0>::with_capacity(total_bits);
+        let mut data = crate::BitStream::with_capacity(total_bits);
         for row_idx in 0..num_rows {
             for col_idx in 0..num_features {
                 let spec = info.feature_spec(col_idx);
@@ -948,7 +944,7 @@ impl BitDataSet {
     }
 
     /// Get a slice of bits for a specific feature within a row
-    pub fn get_feature(&self, row: usize, feature: usize) -> &BitSlice<usize, Msb0> {
+    pub fn get_feature(&self, row: usize, feature: usize) -> &crate::BitView {
         let chunk_start = row * self.data.chunk_size;
         let feat_start = chunk_start + self.info.feature_offset(feature);
         let feat_end = feat_start + self.info.feature_bits(feature);
@@ -989,7 +985,7 @@ impl BitDataSet {
         self.data.get_bit(row, bit_in_chunk)
     }
 
-    pub fn get_chunk(&self, row: usize) -> &BitSlice<usize, Msb0> {
+    pub fn get_chunk(&self, row: usize) -> &crate::BitView {
         self.data.get_chunk(row)
     }
 }
@@ -1079,7 +1075,7 @@ fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
     }
 }
 
-pub fn decode_value_from_bits(bits: &BitSlice<usize, Msb0>, spec: &FeatureSpec) -> DataValue {
+pub fn decode_value_from_bits(bits: &crate::BitView, spec: &FeatureSpec) -> DataValue {
     let value = bits_to_u64(bits);
     match spec.data_type {
         FeatureDataType::UnsignedInt => match spec.transform {
@@ -1133,7 +1129,7 @@ pub fn decode_value_from_bits(bits: &BitSlice<usize, Msb0>, spec: &FeatureSpec) 
     }
 }
 
-fn bits_to_u64(bits: &BitSlice<usize, Msb0>) -> u64 {
+fn bits_to_u64(bits: &crate::BitView) -> u64 {
     let mut value = 0u64;
     for bit in bits {
         value = (value << 1) | (*bit as u64);
@@ -1155,7 +1151,7 @@ fn scale_float_to_i64(value: f64, decimal_scale: u8) -> i64 {
     (value * factor).round() as i64
 }
 
-fn push_bits(stream: &mut BitVec<usize, Msb0>, mut value: u64, bits: usize) {
+fn push_bits(stream: &mut crate::BitStream, mut value: u64, bits: usize) {
     if bits == 64 {
         for shift in (0..64).rev() {
             stream.push(((value >> shift) & 1) == 1);

@@ -47,7 +47,7 @@ pub(crate) fn decompress_samples_batch(
     let base_bit_positions = &compressed.base_bit_positions;
     let base_bit_mask = build_base_bit_mask(chunk_size, base_bit_positions);
 
-    let mut reconstructed_bits = BitVec::<usize, Msb0>::with_capacity(chunk_size * indices.len());
+    let mut reconstructed_bits = crate::BitStream::with_capacity(chunk_size * indices.len());
 
     for &sample_idx in indices {
         let sample = match compressed.encoded_data.get_sample(sample_idx) {
@@ -93,8 +93,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let chunk_size = data_info.chunk_size();
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let base_bit_mask = build_base_bit_mask(chunk_size, &compressed.base_bit_positions);
-    let mut reconstructed_bits =
-        BitVec::<usize, Msb0>::with_capacity(chunk_size * original_num_rows);
+    let mut reconstructed_bits = crate::BitStream::with_capacity(chunk_size * original_num_rows);
     let mut decoded_rows = 0usize;
 
     compressed.encoded_data.for_each_sample(|sample| {
@@ -133,14 +132,14 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
 }
 
 fn append_reconstructed_chunk(
-    out: &mut BitVec<usize, Msb0>,
-    base_bit_mask: &BitVec<usize, Msb0>,
-    base_table: &[(BitVec<usize, Msb0>, usize)],
+    out: &mut crate::BitStream,
+    base_bit_mask: &crate::BitStream,
+    base_table: &[(crate::BitStream, usize)],
     chunk_size: usize,
-    deviation_bits: &BitSlice<usize, Msb0>,
-    id_bits: &BitSlice<usize, Msb0>,
+    deviation_bits: &crate::BitView,
+    id_bits: &crate::BitView,
 ) -> Result<(), EntroGdError> {
-    let mut chunk = bitvec![usize, Msb0; 0; chunk_size];
+    let mut chunk = bitvec![usize, crate::BitOrder; 0; chunk_size];
     let base_id = decode_base_id(id_bits);
     if base_id >= base_table.len() {
         return Err(EntroGdError::InvalidBaseId {
@@ -166,7 +165,7 @@ fn append_reconstructed_chunk(
     Ok(())
 }
 
-fn decode_base_id(id_bits: &BitSlice<usize, Msb0>) -> usize {
+fn decode_base_id(id_bits: &crate::BitView) -> usize {
     id_bits
         .iter()
         .fold(0usize, |base_id, bit| (base_id << 1) | usize::from(*bit))
@@ -186,7 +185,7 @@ impl Filter for DecompressAnalytics {
 
 pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamples> {
     if let Some(weights) = &compressed.condensed_sample_weights {
-        let samples: Vec<BitVec<usize, Msb0>> = compressed
+        let samples: Vec<crate::BitStream> = compressed
             .base_table
             .iter()
             .map(|(bv, _)| bv.clone())
@@ -323,7 +322,7 @@ pub fn write_bitdata_to_output<P: AsRef<Path>>(
     }
 }
 
-fn byte_from_bits(bits: &BitSlice<usize, Msb0>) -> Result<u8, EntroGdError> {
+fn byte_from_bits(bits: &crate::BitView) -> Result<u8, EntroGdError> {
     if bits.len() != 8 {
         return Err(EntroGdError::InvalidMetadata {
             message: format!("expected 8 bits for image byte, got {}", bits.len()),
@@ -335,7 +334,7 @@ fn byte_from_bits(bits: &BitSlice<usize, Msb0>) -> Result<u8, EntroGdError> {
         .fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit)))
 }
 
-fn bits_to_u16(bits: &BitSlice<usize, Msb0>) -> Result<u16, EntroGdError> {
+fn bits_to_u16(bits: &crate::BitView) -> Result<u16, EntroGdError> {
     if bits.len() > 16 {
         return Err(EntroGdError::InvalidMetadata {
             message: format!("expected at most 16 bits, got {}", bits.len()),
@@ -348,7 +347,7 @@ fn bits_to_u16(bits: &BitSlice<usize, Msb0>) -> Result<u16, EntroGdError> {
 }
 
 fn decode_grouped_feature(
-    bits: &BitSlice<usize, Msb0>,
+    bits: &crate::BitView,
     pixel_grouping: usize,
     grouping_transform: ImageGroupingTransform,
 ) -> Result<Vec<u8>, EntroGdError> {
@@ -535,8 +534,8 @@ mod tests {
 
     /// Creates a simple BitVec with a specific pattern for testing.
     /// Pattern: alternating bits if alternate=true, all zeros if alternate=false
-    fn create_bit_pattern(size: usize, alternate: bool) -> BitVec<usize, Msb0> {
-        let mut bits = BitVec::<usize, Msb0>::with_capacity(size);
+    fn create_bit_pattern(size: usize, alternate: bool) -> crate::BitStream {
+        let mut bits = crate::BitStream::with_capacity(size);
         for i in 0..size {
             bits.push(if alternate { i % 2 == 0 } else { false });
         }
@@ -555,11 +554,11 @@ mod tests {
 
     /// Creates a deviation sample with specified ID and deviation bits
     fn create_deviation_sample(id_bits: Vec<bool>, deviation_bits: Vec<bool>) -> DeviationSample {
-        let mut id = BitVec::<usize, Msb0>::with_capacity(id_bits.len());
+        let mut id = crate::BitStream::with_capacity(id_bits.len());
         for bit in id_bits {
             id.push(bit);
         }
-        let mut deviation = BitVec::<usize, Msb0>::with_capacity(deviation_bits.len());
+        let mut deviation = crate::BitStream::with_capacity(deviation_bits.len());
         for bit in deviation_bits {
             deviation.push(bit);
         }
@@ -580,7 +579,7 @@ mod tests {
             0
         };
 
-        let mut encoded_bit_stream = BitVec::<usize, Msb0>::new();
+        let mut encoded_bit_stream = crate::BitStream::new();
         for sample in samples {
             encoded_bit_stream.extend(&sample.deviation);
             encoded_bit_stream.extend(&sample.id);
@@ -595,7 +594,7 @@ mod tests {
     }
 
     /// Creates a base table for testing
-    fn create_base_table(num_bases: usize, chunk_size: usize) -> Vec<(BitVec<usize, Msb0>, usize)> {
+    fn create_base_table(num_bases: usize, chunk_size: usize) -> Vec<(crate::BitStream, usize)> {
         (0..num_bases)
             .map(|i| {
                 let pattern = create_bit_pattern(chunk_size, i % 2 == 0);

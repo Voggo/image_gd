@@ -1,5 +1,3 @@
-use bitvec::prelude::*;
-
 use crate::compression::base_bits::BaseBit;
 use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
@@ -9,11 +7,11 @@ pub(super) struct EncodingContext {
     pub(super) num_deviation_bits: usize,
     pub(super) row_to_group_id: Vec<usize>,
     pub(super) deviation_ranges: Vec<(usize, usize)>,
-    pub(super) id_bits_per_base: Vec<BitVec<usize, Msb0>>,
+    pub(super) id_bits_per_base: Vec<crate::BitStream>,
 }
 
 pub(super) fn build_deviation_ranges(
-    base_bit_mask: &BitSlice<usize, Msb0>,
+    base_bit_mask: &crate::BitView,
     chunk_size: usize,
     num_deviation_bits: usize,
 ) -> Vec<(usize, usize)> {
@@ -57,11 +55,11 @@ pub(super) fn prepare_encoding_context<B: BaseBit + ?Sized>(
 
     let deviation_ranges = build_deviation_ranges(base_bit_mask, chunk_size, num_deviation_bits);
 
-    let mut id_bits_per_base: Vec<BitVec<usize, Msb0>> = Vec::new();
+    let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
     if l_id > 0 {
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
-            let mut id_bits = BitVec::<usize, Msb0>::with_capacity(l_id);
+            let mut id_bits = crate::BitStream::with_capacity(l_id);
             for shift in (0..l_id).rev() {
                 id_bits.push(((id >> shift) & 1) == 1);
             }
@@ -89,10 +87,10 @@ pub(super) fn prepare_encoding_context<B: BaseBit + ?Sized>(
 pub(super) fn encode_rows_as_symbol_stream(
     bit_data: &BitDataSet,
     context: &EncodingContext,
-) -> BitVec<usize, Msb0> {
+) -> crate::BitStream {
     let symbol_width = context.num_deviation_bits + context.l_id;
     let num_rows = bit_data.num_rows();
-    let mut symbol_stream = BitVec::<usize, Msb0>::with_capacity(num_rows * symbol_width);
+    let mut symbol_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
 
     for (row, id_ref) in context.row_to_group_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;

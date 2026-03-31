@@ -1,5 +1,3 @@
-use bitvec::prelude::*;
-
 use crate::error::EntroGdError;
 
 #[derive(Debug, Default)]
@@ -100,7 +98,7 @@ impl<'a> BitReader<'a> {
         self.bytes.len() * 8 - self.bit_pos
     }
 
-    pub(super) fn read_bits(&mut self, len: usize) -> Result<BitVec<usize, Msb0>, EntroGdError> {
+    pub(super) fn read_bits(&mut self, len: usize) -> Result<crate::BitStream, EntroGdError> {
         if len > self.remaining_bits() {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
@@ -110,7 +108,7 @@ impl<'a> BitReader<'a> {
                 ),
             });
         }
-        let mut out = BitVec::<usize, Msb0>::with_capacity(len);
+        let mut out = crate::BitStream::with_capacity(len);
         for _ in 0..len {
             out.push(self.read_bit()?);
         }
@@ -135,7 +133,7 @@ impl BitWriter {
         self.bit_len += 1;
     }
 
-    pub(super) fn write_bitslice(&mut self, bits: &BitSlice<usize, Msb0>) {
+    pub(super) fn write_bitslice(&mut self, bits: &crate::BitView) {
         for bit in bits {
             self.write_bit(*bit);
         }
