@@ -756,16 +756,46 @@ impl BitData {
     }
 
     /// Get a slice of bits for a specific row/chunk
+    #[inline(always)]
     pub fn get_chunk(&self, row: usize) -> &crate::BitView {
         let start = row * self.stride;
         let end = start + self.chunk_size;
         &self.data[start..end]
     }
 
+    /// Get a specific bit by linear bit index without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `bit_idx < self.data.len()`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_bit_linear_unchecked(&self, bit_idx: usize) -> bool {
+        debug_assert!(bit_idx < self.data.len());
+        let word_bits = usize::BITS as usize;
+        let word_idx = bit_idx / word_bits;
+        let bit_in_word = bit_idx % word_bits;
+        let raw_word = unsafe { *self.data.as_raw_slice().get_unchecked(word_idx) };
+        ((raw_word >> bit_in_word) & 1) == 1
+    }
+
     /// Get a specific bit by row and bit position within the chunk
+    #[inline(always)]
     pub fn get_bit(&self, row: usize, bit_in_chunk: usize) -> bool {
         let idx = row * self.stride + bit_in_chunk;
         self.data[idx]
+    }
+
+    /// Get a specific bit by row and bit position within the chunk without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.num_rows` and `bit_in_chunk < self.chunk_size`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_bit_unchecked(&self, row: usize, bit_in_chunk: usize) -> bool {
+        debug_assert!(row < self.num_rows);
+        debug_assert!(bit_in_chunk < self.chunk_size);
+        let idx = row * self.stride + bit_in_chunk;
+        unsafe { self.get_bit_linear_unchecked(idx) }
     }
 
     /// Get raw access to the underlying bit vector
@@ -958,6 +988,7 @@ impl BitDataSet {
     }
 
     /// Get a slice of bits for a specific feature within a row
+    #[inline(always)]
     pub fn get_feature(&self, row: usize, feature: usize) -> &crate::BitView {
         let chunk_start = row * self.data.stride;
         let feat_start = chunk_start + self.info.feature_offset(feature);
@@ -966,9 +997,57 @@ impl BitDataSet {
     }
 
     /// Get a specific bit by row, feature, and bit index within the feature
+    #[inline(always)]
     pub fn get_bit_by_feature(&self, row: usize, feature: usize, bit: usize) -> bool {
         let idx = row * self.data.stride + self.info.feature_offset(feature) + bit;
         self.data.data[idx]
+    }
+
+    /// Get a feature slice without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.data.num_rows` and `feature < self.info.num_features()`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_feature_unchecked(
+        &self,
+        row: usize,
+        feature: usize,
+    ) -> &crate::BitView {
+        debug_assert!(row < self.data.num_rows);
+        debug_assert!(feature < self.info.num_features());
+        let chunk_start = row * self.data.stride;
+        let feature_offset =
+            unsafe { *self.info.compression.feature_offsets.get_unchecked(feature) };
+        let feature_bits = unsafe { self.info.compression.features.get_unchecked(feature).bits };
+        let feat_start = chunk_start + feature_offset;
+        let feat_end = feat_start + feature_bits;
+        unsafe { self.data.data.get_unchecked(feat_start..feat_end) }
+    }
+
+    /// Get a chunk without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.data.num_rows`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_chunk_unchecked(&self, row: usize) -> &crate::BitView {
+        debug_assert!(row < self.data.num_rows);
+        let start = row * self.data.stride;
+        let end = start + self.data.chunk_size;
+        unsafe { self.data.data.get_unchecked(start..end) }
+    }
+
+    /// Get a bit without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.data.num_rows` and `bit_in_chunk < self.data.chunk_size`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_bit_unchecked(&self, row: usize, bit_in_chunk: usize) -> bool {
+        debug_assert!(row < self.data.num_rows);
+        debug_assert!(bit_in_chunk < self.data.chunk_size);
+        unsafe { self.data.get_bit_unchecked(row, bit_in_chunk) }
     }
 
     pub fn num_rows(&self) -> usize {

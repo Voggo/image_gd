@@ -111,10 +111,18 @@ impl DeviationData {
         }
         let start_bit = sample_idx * (self.num_deviation_bits + self.num_id_bits);
         let end_bit = start_bit + self.num_deviation_bits + self.num_id_bits;
+        debug_assert!(end_bit <= self.encoded_bit_stream.len());
         Some(DeviationSample {
-            deviation: self.encoded_bit_stream[start_bit..start_bit + self.num_deviation_bits]
-                .to_bitvec(),
-            id: self.encoded_bit_stream[start_bit + self.num_deviation_bits..end_bit].to_bitvec(),
+            deviation: unsafe {
+                self.encoded_bit_stream
+                    .get_unchecked(start_bit..start_bit + self.num_deviation_bits)
+            }
+            .to_bitvec(),
+            id: unsafe {
+                self.encoded_bit_stream
+                    .get_unchecked(start_bit + self.num_deviation_bits..end_bit)
+            }
+            .to_bitvec(),
         })
     }
 
@@ -147,9 +155,16 @@ impl DeviationData {
         for sample_idx in 0..self.num_samples {
             let start_bit = sample_idx * sample_width;
             let end_bit = start_bit + sample_width;
+            debug_assert!(end_bit <= self.encoded_bit_stream.len());
             f(DeviationSampleRef {
-                deviation: &self.encoded_bit_stream[start_bit..start_bit + self.num_deviation_bits],
-                id: &self.encoded_bit_stream[start_bit + self.num_deviation_bits..end_bit],
+                deviation: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(start_bit..start_bit + self.num_deviation_bits)
+                },
+                id: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(start_bit + self.num_deviation_bits..end_bit)
+                },
             })?;
         }
 

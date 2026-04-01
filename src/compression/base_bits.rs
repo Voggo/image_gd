@@ -103,7 +103,7 @@ fn get_masked_bases_from_groups(
         if group.is_empty() {
             continue;
         }
-        let base: crate::BitStream = bit_data.get_chunk(group[0]).to_bitvec();
+        let base: crate::BitStream = unsafe { bit_data.get_chunk_unchecked(group[0]) }.to_bitvec();
         bases.push((base & base_bit_mask, group.len()));
     }
     bases
@@ -170,7 +170,7 @@ impl BaseBitGroups {
             // This avoids allocating a second vector for zeros.
             let mut group_ones = Vec::with_capacity(group.len() / 2 + 1);
             group.retain(|&row| {
-                if bit_data.get_bit(row, bit_position) {
+                if unsafe { bit_data.get_bit_unchecked(row, bit_position) } {
                     group_ones.push(row);
                     false
                 } else {
@@ -346,7 +346,9 @@ impl BaseBitBatchGroups {
             for (idx, &row) in group.iter().enumerate() {
                 let mut bucket_id = 0usize;
                 for (bit_idx, &bit_position) in new_bit_positions.iter().enumerate() {
-                    bucket_id |= (bit_data.get_bit(row, bit_position) as usize) << bit_idx;
+                    bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) }
+                        as usize)
+                        << bit_idx;
                 }
                 scratch_bucket_ids[idx] = bucket_id;
                 counts[bucket_id] += 1;
@@ -541,11 +543,14 @@ impl BaseBitIncSignatureGroups {
 
         for row in 0..self.row_signatures.len() {
             let old_signature = self.row_signatures[row];
-            let row_chunk = bit_data.get_chunk(row);
 
             let mut mini_signature = 0u64;
             for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
-                let bit = if row_chunk[bit_position] { 1 } else { 0 };
+                let bit = if unsafe { bit_data.get_bit_unchecked(row, bit_position) } {
+                    1
+                } else {
+                    0
+                };
                 mini_signature |= bit << i;
             }
 
@@ -649,7 +654,8 @@ impl BaseBitIncSignatureGroups {
                 .signature_counts
                 .get(&signature)
                 .expect("signature must exist in signature_counts");
-            let base: crate::BitStream = bit_data.get_chunk(representative_row).to_bitvec();
+            let base: crate::BitStream =
+                unsafe { bit_data.get_chunk_unchecked(representative_row) }.to_bitvec();
             bases.push((base & &self.base_bit_mask, count));
         }
         bases
@@ -851,7 +857,6 @@ impl BaseBitHyperLogLogCount {
         );
         self.num_bits_per_base += added_count;
 
-        let raw_bits = bit_data.data.raw();
         let stride = bit_data.data.stride;
         self.registers.fill(0);
         let bucket_shift = 64 - Self::HLL_PRECISION as usize;
@@ -859,7 +864,11 @@ impl BaseBitHyperLogLogCount {
         for (row, row_hash) in self.row_hashes.iter_mut().enumerate() {
             let row_start = row * stride;
             for &bit_position in &new_bit_positions {
-                if raw_bits[row_start + bit_position] {
+                if unsafe {
+                    bit_data
+                        .data
+                        .get_bit_linear_unchecked(row_start + bit_position)
+                } {
                     *row_hash ^= self.bit_hash_words[bit_position];
                 }
             }
@@ -1015,7 +1024,7 @@ impl BaseBitSignatureGroups {
                 let mut signature = 0u128;
                 for &bit_position in &self.base_bit_positions {
                     signature <<= 1;
-                    signature |= bit_data.get_bit(row, bit_position) as u128;
+                    signature |= unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u128;
                 }
                 signature_rows.push((signature, row));
             }
@@ -1040,8 +1049,8 @@ impl BaseBitSignatureGroups {
             let mut rows: Vec<usize> = (0..bit_data.num_rows()).collect();
             rows.sort_unstable_by(|&lhs, &rhs| {
                 for &bit_position in &self.base_bit_positions {
-                    let lhs_bit = bit_data.get_bit(lhs, bit_position);
-                    let rhs_bit = bit_data.get_bit(rhs, bit_position);
+                    let lhs_bit = unsafe { bit_data.get_bit_unchecked(lhs, bit_position) };
+                    let rhs_bit = unsafe { bit_data.get_bit_unchecked(rhs, bit_position) };
                     match lhs_bit.cmp(&rhs_bit) {
                         std::cmp::Ordering::Equal => {}
                         ordering => return ordering,
@@ -1055,8 +1064,8 @@ impl BaseBitSignatureGroups {
                 if let Some(last_group) = groups.last_mut() {
                     let last_row = last_group[0];
                     for &bit_position in &self.base_bit_positions {
-                        if bit_data.get_bit(last_row, bit_position)
-                            != bit_data.get_bit(row, bit_position)
+                        if unsafe { bit_data.get_bit_unchecked(last_row, bit_position) }
+                            != unsafe { bit_data.get_bit_unchecked(row, bit_position) }
                         {
                             groups.push(vec![row]);
                             continue 'rows_loop;

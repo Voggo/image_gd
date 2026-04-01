@@ -325,7 +325,8 @@ impl HuffmanDeviationData {
         let deviation = if let Some(raw_deviation) = &self.raw_deviation_bit_stream {
             let start = sample_idx.checked_mul(self.num_deviation_bits)?;
             let end = start.checked_add(self.num_deviation_bits)?;
-            raw_deviation.get(start..end)?.to_bitvec()
+            debug_assert!(end <= raw_deviation.len());
+            unsafe { raw_deviation.get_unchecked(start..end) }.to_bitvec()
         } else {
             let deviation_mask = bit_mask(self.num_deviation_bits);
             let deviation_value = symbol & deviation_mask;
@@ -443,7 +444,8 @@ impl HuffmanDeviationData {
                 });
             }
 
-            code = (code << 1) | u32::from(self.pixel_bit_stream[next_bit_pos]);
+            code = (code << 1)
+                | u32::from(unsafe { *self.pixel_bit_stream.get_unchecked(next_bit_pos) });
             if let Some(symbol) = self.decode_by_length[len].get(&code) {
                 return Ok((*symbol, len));
             }

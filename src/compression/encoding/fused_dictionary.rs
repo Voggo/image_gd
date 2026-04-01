@@ -49,14 +49,14 @@ fn build_signature_key(chunk: &crate::BitView, base_bit_positions: &[usize]) -> 
     if base_bit_positions.len() <= 128 {
         let mut packed = 0u128;
         for &bit_pos in base_bit_positions {
-            packed = (packed << 1) | (chunk[bit_pos] as u128);
+            packed = (packed << 1) | (unsafe { *chunk.get_unchecked(bit_pos) } as u128);
         }
         SignatureKey::PackedU128(packed)
     } else {
         let num_bytes = base_bit_positions.len().div_ceil(8);
         let mut bytes = vec![0u8; num_bytes];
         for (idx, &bit_pos) in base_bit_positions.iter().enumerate() {
-            if chunk[bit_pos] {
+            if unsafe { *chunk.get_unchecked(bit_pos) } {
                 let byte_idx = idx / 8;
                 let bit_in_byte = 7 - (idx % 8);
                 bytes[byte_idx] |= 1u8 << bit_in_byte;
@@ -86,7 +86,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     let mut base_counts: Vec<usize> = Vec::new();
 
     for row in 0..num_rows {
-        let chunk = bit_data.get_chunk(row);
+        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
         let signature = build_signature_key(chunk, base_bit_positions);
         let id = if let Some(existing_id) = signature_to_id.get(&signature).copied() {
             base_counts[existing_id] += 1;
@@ -119,10 +119,10 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     let mut encoded_bit_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
     for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;
-        let chunk = bit_data.get_chunk(row);
+        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
 
         for &(start, end) in &deviation_ranges {
-            encoded_bit_stream.extend_from_bitslice(&chunk[start..end]);
+            encoded_bit_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
         }
 
         if l_id > 0 {
@@ -132,7 +132,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
 
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
-        let base: crate::BitStream = bit_data.get_chunk(representative_row).to_bitvec();
+        let base: crate::BitStream =
+            unsafe { bit_data.get_chunk_unchecked(representative_row) }.to_bitvec();
         base_table.push((base & base_bit_mask, base_counts[id]));
     }
 

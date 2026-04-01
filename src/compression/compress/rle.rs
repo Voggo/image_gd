@@ -49,8 +49,11 @@ impl RleDeviationData {
                 if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
                     return None;
                 }
-                let run_symbol =
-                    self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width].to_bitvec();
+                let run_symbol = unsafe {
+                    self.symbol_bit_stream
+                        .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                }
+                .to_bitvec();
                 symbol_cursor += symbol_width;
 
                 let run_len = (r_encoded as usize) + 1;
@@ -74,7 +77,8 @@ impl RleDeviationData {
                 if end > self.symbol_bit_stream.len() {
                     return None;
                 }
-                let symbol = self.symbol_bit_stream[start..end].to_bitvec();
+                let symbol =
+                    unsafe { self.symbol_bit_stream.get_unchecked(start..end) }.to_bitvec();
                 return Some(DeviationSample {
                     deviation: symbol[0..self.num_deviation_bits].to_bitvec(),
                     id: symbol[self.num_deviation_bits..].to_bitvec(),
@@ -136,11 +140,13 @@ impl RleDeviationData {
                     });
                 }
 
-                let run_symbol =
-                    &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width];
+                let run_symbol = unsafe {
+                    self.symbol_bit_stream
+                        .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                };
                 let sample = DeviationSampleRef {
-                    deviation: &run_symbol[..self.num_deviation_bits],
-                    id: &run_symbol[self.num_deviation_bits..],
+                    deviation: unsafe { run_symbol.get_unchecked(..self.num_deviation_bits) },
+                    id: unsafe { run_symbol.get_unchecked(self.num_deviation_bits..) },
                 };
                 for _ in 0..run_len {
                     f(DeviationSampleRef {
@@ -160,10 +166,13 @@ impl RleDeviationData {
                     });
                 }
 
-                let literal = &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width];
+                let literal = unsafe {
+                    self.symbol_bit_stream
+                        .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                };
                 f(DeviationSampleRef {
-                    deviation: &literal[..self.num_deviation_bits],
-                    id: &literal[self.num_deviation_bits..],
+                    deviation: unsafe { literal.get_unchecked(..self.num_deviation_bits) },
+                    id: unsafe { literal.get_unchecked(self.num_deviation_bits..) },
                 })?;
                 symbol_cursor += symbol_width;
             }
@@ -213,8 +222,10 @@ impl RleDeviationData {
                     });
                 }
 
-                let run_symbol =
-                    &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width];
+                let run_symbol = unsafe {
+                    self.symbol_bit_stream
+                        .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                };
                 for _ in 0..run_len {
                     raw.extend_from_bitslice(run_symbol);
                 }
@@ -230,9 +241,10 @@ impl RleDeviationData {
                     });
                 }
 
-                raw.extend_from_bitslice(
-                    &self.symbol_bit_stream[symbol_cursor..symbol_cursor + symbol_width],
-                );
+                raw.extend_from_bitslice(unsafe {
+                    self.symbol_bit_stream
+                        .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                });
                 symbol_cursor += symbol_width;
             }
             decoded_samples += literal_count;

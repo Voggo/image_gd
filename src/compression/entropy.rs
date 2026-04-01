@@ -17,20 +17,32 @@ impl Filter for EntropyNaive {
 }
 
 pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
-    (0..bit_data.chunk_size())
-        .map(|bit| {
-            let count_ones = (0..bit_data.num_rows())
-                .filter(|&row| bit_data.get_bit(row, bit))
-                .count();
-            let p = count_ones as f64 / bit_data.num_rows() as f64;
-            let entropy = if p == 0.0 || p == 1.0 {
-                0.0
-            } else {
-                -p * p.log2() - (1.0 - p) * (1.0 - p).log2()
-            };
-            (bit, entropy)
-        })
-        .collect()
+    let num_rows = bit_data.num_rows();
+    let chunk_size = bit_data.chunk_size();
+    if num_rows == 0 {
+        return (0..chunk_size).map(|bit| (bit, 0.0)).collect();
+    }
+
+    let inv_rows = 1.0 / num_rows as f64;
+    let mut out = Vec::with_capacity(chunk_size);
+
+    for bit in 0..chunk_size {
+        let mut count_ones = 0usize;
+        for row in 0..num_rows {
+            if unsafe { bit_data.get_bit_unchecked(row, bit) } {
+                count_ones += 1;
+            }
+        }
+        let entropy = if count_ones == 0 || count_ones == num_rows {
+            0.0
+        } else {
+            let p = count_ones as f64 * inv_rows;
+            -p * p.log2() - (1.0 - p) * (1.0 - p).log2()
+        };
+        out.push((bit, entropy));
+    }
+
+    out
 }
 
 pub struct EntropyOptimized {}
@@ -92,20 +104,13 @@ fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<(u
     if num_rows == 0 {
         return (0..chunk_size).map(|bit| (bit, 0.0)).collect();
     }
+    let stride = stride.max(1);
 
     let mut sampled_rows = 0usize;
     let mut ones_count = vec![0usize; chunk_size];
 
-    // Iterate row slices directly and use iter_ones()
-    // to keep sparse-bit counting as O(number of 1s in sampled rows).
-    for row_bits in bit_data
-        .data
-        .data
-        .as_bitslice()
-        .chunks_exact(chunk_size)
-        .take(num_rows)
-        .step_by(stride)
-    {
+    for row in (0..num_rows).step_by(stride) {
+        let row_bits = unsafe { bit_data.get_chunk_unchecked(row) };
         sampled_rows += 1;
         for bit_index in row_bits.iter_ones() {
             ones_count[bit_index] += 1;

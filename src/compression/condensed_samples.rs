@@ -143,7 +143,8 @@ fn select_condensed_samples(
 
             let mut deviation_accumulator = 0u128;
             for &sample_idx in base_group.iter() {
-                let sample_feature = &bit_data.get_chunk(sample_idx)[feature_offset..feature_end];
+                let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
+                let sample_feature = unsafe { chunk.get_unchecked(feature_offset..feature_end) };
                 let sample_feature_value = bits_to_u64(sample_feature);
                 let feature_deviation = sample_feature_value & deviation_mask;
                 deviation_accumulator += feature_deviation as u128;

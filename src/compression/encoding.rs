@@ -188,11 +188,11 @@ fn encode_data<B: BaseBit + ?Sized>(bit_data: &BitDataSet, base_bit_groups: &B) 
 
     for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;
-        let chunk = bit_data.get_chunk(row);
+        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
 
         for bit_pos in 0..chunk_size {
-            if !base_bit_mask[bit_pos] {
-                encoded_bit_stream.push(chunk[bit_pos]);
+            if !unsafe { *base_bit_mask.get_unchecked(bit_pos) } {
+                encoded_bit_stream.push(unsafe { *chunk.get_unchecked(bit_pos) });
             }
         }
 
@@ -319,7 +319,9 @@ fn symbol_slice(
     row: usize,
 ) -> &crate::BitView {
     let start = row * symbol_width;
-    &symbol_stream[start..start + symbol_width]
+    let end = start + symbol_width;
+    debug_assert!(end <= symbol_stream.len());
+    unsafe { symbol_stream.get_unchecked(start..end) }
 }
 
 #[cfg(test)]

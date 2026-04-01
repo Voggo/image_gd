@@ -164,14 +164,19 @@ fn append_reconstructed_chunk(
     }
 
     let base_pattern = &base_table[base_id].0;
-    for bit_pos in 0..chunk_size.min(base_pattern.len()) {
-        chunk.set(bit_pos, base_pattern[bit_pos]);
+    let base_len = chunk_size.min(base_pattern.len());
+    for bit_pos in 0..base_len {
+        chunk.set(bit_pos, unsafe { *base_pattern.get_unchecked(bit_pos) });
     }
 
     let mut deviation_bit_idx = 0;
     for bit_pos in 0..chunk_size {
-        if !base_bit_mask[bit_pos] && deviation_bit_idx < deviation_bits.len() {
-            chunk.set(bit_pos, deviation_bits[deviation_bit_idx]);
+        if !unsafe { *base_bit_mask.get_unchecked(bit_pos) }
+            && deviation_bit_idx < deviation_bits.len()
+        {
+            chunk.set(bit_pos, unsafe {
+                *deviation_bits.get_unchecked(deviation_bit_idx)
+            });
             deviation_bit_idx += 1;
         }
     }
@@ -229,7 +234,7 @@ pub fn write_bitdata_as_csv<P: AsRef<Path>>(
     for row in 0..bit_data.data.num_rows {
         let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
         for feature in 0..bit_data.info.num_features() {
-            let feature_bits = bit_data.get_feature(row, feature);
+            let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
             let spec = bit_data.info.feature_spec(feature);
             let formatted = match decode_value_from_bits(feature_bits, spec) {
                 DataValue::Unsigned(v) => v.to_string(),
@@ -289,7 +294,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         let group_x = row % grouped_width;
         let mut decoded_channels = Vec::with_capacity(channels);
         for feature in 0..channels {
-            let feature_bits = bit_data.get_feature(row, feature);
+            let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
             decoded_channels.push(decode_grouped_feature(
                 feature_bits,
                 pixel_grouping,
