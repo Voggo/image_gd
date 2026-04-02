@@ -9,6 +9,8 @@ use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
 const MAX_DECIMAL_SCALE: u8 = 9;
+const WORD_ALIGNMENT_BITS: usize = 64;
+pub const DEFAULT_BITDATA_ROW_PADDING: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatScalingMode {
@@ -50,7 +52,18 @@ impl Filter for InferFeatureSpecs {
 }
 
 /// Filter for building BitDataSet from a Dataset with feature specifications.
-pub struct BuildBitDataSet;
+#[derive(Debug, Clone, Copy)]
+pub struct BuildBitDataSet {
+    pub pad_rows_to_word: bool,
+}
+
+impl Default for BuildBitDataSet {
+    fn default() -> Self {
+        Self {
+            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+        }
+    }
+}
 
 impl Filter for BuildBitDataSet {
     type Input = (Dataset, Vec<FeatureSpec>);
@@ -58,7 +71,19 @@ impl Filter for BuildBitDataSet {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let (dataset, features) = input;
-        BitDataSet::from_dataset_with_schema(&dataset, features)
+        BitDataSet::from_dataset_with_schema_and_row_padding(
+            &dataset,
+            features,
+            self.pad_rows_to_word,
+        )
+    }
+}
+
+pub(crate) fn aligned_stride(chunk_size: usize, pad_rows_to_word: bool) -> usize {
+    if pad_rows_to_word {
+        chunk_size.next_multiple_of(WORD_ALIGNMENT_BITS)
+    } else {
+        chunk_size
     }
 }
 
@@ -789,13 +814,42 @@ pub struct BitDataSet {
 impl BitDataSet {
     /// Create BitDataSet from a Dataset using column data types to derive the schema.
     pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
-        Self::from_dataset_with_options(dataset, PreprocessOptions::default())
+        Self::from_dataset_with_options_and_row_padding(
+            dataset,
+            PreprocessOptions::default(),
+            DEFAULT_BITDATA_ROW_PADDING,
+        )
+    }
+
+    /// Create BitDataSet from a Dataset with configurable row/chunk padding behavior.
+    pub fn from_dataset_with_row_padding(
+        dataset: &Dataset,
+        pad_rows_to_word: bool,
+    ) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_options_and_row_padding(
+            dataset,
+            PreprocessOptions::default(),
+            pad_rows_to_word,
+        )
     }
 
     /// Create BitDataSet from a Dataset using configurable preprocessing options.
     pub fn from_dataset_with_options(
         dataset: &Dataset,
         options: PreprocessOptions,
+    ) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_options_and_row_padding(
+            dataset,
+            options,
+            DEFAULT_BITDATA_ROW_PADDING,
+        )
+    }
+
+    /// Create BitDataSet from a Dataset using configurable preprocessing options and row/chunk padding behavior.
+    pub fn from_dataset_with_options_and_row_padding(
+        dataset: &Dataset,
+        options: PreprocessOptions,
+        pad_rows_to_word: bool,
     ) -> Result<Self, EntroGdError> {
         let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
         let num_features = dataset.num_columns();
@@ -805,7 +859,7 @@ impl BitDataSet {
             "starting dataset preprocessing"
         );
         let features = infer_feature_specs(dataset, options);
-        Self::from_dataset_with_schema(dataset, features)
+        Self::from_dataset_with_schema_and_row_padding(dataset, features, pad_rows_to_word)
     }
 
     /// Load data via a DataLoader and build BitDataSet using column data types.
@@ -851,6 +905,19 @@ impl BitDataSet {
         dataset: &Dataset,
         features: Vec<FeatureSpec>,
     ) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_schema_and_row_padding(
+            dataset,
+            features,
+            DEFAULT_BITDATA_ROW_PADDING,
+        )
+    }
+
+    /// Create BitDataSet from a Dataset using per-feature schema and configurable row/chunk padding behavior.
+    pub fn from_dataset_with_schema_and_row_padding(
+        dataset: &Dataset,
+        features: Vec<FeatureSpec>,
+        pad_rows_to_word: bool,
+    ) -> Result<Self, EntroGdError> {
         let num_features = dataset.num_columns();
         debug!(
             rows = dataset.num_rows(),
@@ -894,8 +961,9 @@ impl BitDataSet {
         }
         let info = BitDataInfo::new(features, 0)?;
         let chunk_size = info.chunk_size();
+        let stride = aligned_stride(chunk_size, pad_rows_to_word);
         let num_rows = dataset.num_rows();
-        let total_bits = chunk_size * num_rows;
+        let total_bits = stride * num_rows;
 
         debug!(
             chunk_size_bits = chunk_size,
@@ -930,13 +998,11 @@ impl BitDataSet {
                 push_bits(&mut data, bits, spec.bits);
             }
             // Add word-alignment padding
-            let stride = chunk_size.next_multiple_of(64);
             for _ in chunk_size..stride {
                 data.push(false);
             }
         }
 
-        let stride = chunk_size.next_multiple_of(64);
         let data = BitData {
             data,
             chunk_size,
@@ -950,6 +1016,7 @@ impl BitDataSet {
             features = info.num_features(),
             chunk_size_bits = chunk_size,
             stride_bits = stride,
+            pad_rows_to_word,
             total_logical_bits = chunk_size * num_rows,
             "BitDataSet preprocessing complete"
         );
@@ -1412,5 +1479,29 @@ mod tests {
             spec.transform,
             FeatureTransform::ScaledSignedInt { .. }
         ));
+    }
+
+    #[test]
+    fn test_build_bitdataset_filter_respects_row_padding_flag() {
+        let dataset = Dataset::from_columns(vec![ColumnData::Unsigned(vec![1, 2])]).unwrap();
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
+
+        let compact = BuildBitDataSet {
+            pad_rows_to_word: false,
+        }
+        .process((dataset.clone(), features.clone()))
+        .unwrap();
+        assert_eq!(compact.chunk_size(), 8);
+        assert_eq!(compact.data.stride, 8);
+        assert_eq!(compact.data.raw().len(), 16);
+
+        let padded = BuildBitDataSet {
+            pad_rows_to_word: true,
+        }
+        .process((dataset, features))
+        .unwrap();
+        assert_eq!(padded.chunk_size(), 8);
+        assert_eq!(padded.data.stride, 64);
+        assert_eq!(padded.data.raw().len(), 128);
     }
 }

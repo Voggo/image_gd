@@ -8,6 +8,7 @@ use criterion::Criterion;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 
+use entro_gd::compression::preprocessor::DEFAULT_BITDATA_ROW_PADDING;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{BitDataSet, CompressedData, CondensedSamples, Dataset, EntroGdError, FeatureSpec};
@@ -52,7 +53,7 @@ impl BuildBitDataSetImpl {
 
     fn process(self, input: (Dataset, Vec<FeatureSpec>)) -> Result<BitDataSet, EntroGdError> {
         match self {
-            BuildBitDataSetImpl::Current => BuildBitDataSet {}.process(input),
+            BuildBitDataSetImpl::Current => BuildBitDataSet::default().process(input),
         }
     }
 }
@@ -89,6 +90,7 @@ impl BuildImageBitDataSetImpl {
                 color_model,
                 pixel_grouping,
                 grouping_transform,
+                pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
             }
             .process(input),
             (BuildImageBitDataSetImpl::Current, StepBenchInput::Csv { .. }) => {
@@ -410,31 +412,6 @@ impl DecompressAnalyticsImpl {
     }
 }
 
-#[allow(unused)]
-#[derive(Clone, Copy)]
-enum ChainImpl {
-    EntropyOptimizedThenGenCondensed,
-}
-
-impl ChainImpl {
-    fn label(self) -> &'static str {
-        match self {
-            ChainImpl::EntropyOptimizedThenGenCondensed => "entropy_optimized_then_gen_condensed",
-        }
-    }
-
-    fn process(
-        self,
-        input: BitDataSet,
-        m_max: usize,
-    ) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
-        match self {
-            ChainImpl::EntropyOptimizedThenGenCondensed => EntropyOptimized {}
-                .then(GenCondensedSamples { m_max })
-                .process(input),
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 struct StepBenchCase {
@@ -535,7 +512,6 @@ const LOAD_IGD_IMPLS: [LoadIgdImpl; 1] = [LoadIgdImpl::Current];
 const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 1] = [DecompressRowsImpl::Current];
 const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 1] = [DecompressFileImpl::Current];
 const DECOMPRESS_ANALYTICS_IMPLS: [DecompressAnalyticsImpl; 1] = [DecompressAnalyticsImpl::Current];
-const CHAIN_IMPLS: [ChainImpl; 1] = [ChainImpl::EntropyOptimizedThenGenCondensed];
 
 fn dataset_label(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
@@ -613,6 +589,7 @@ fn build_bit_data_seed(case: StepBenchCase, dataset_seed: Option<&Dataset>) -> B
             color_model,
             pixel_grouping,
             grouping_transform,
+            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
         }
         .process(PathBuf::from(case.data_file_path))
         .unwrap(),
@@ -992,18 +969,6 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         DecompressAnalyticsImpl::label,
         |case| case.compressed_seed.clone(),
         |implementation, input, _case| implementation.process(input),
-        |_| true,
-        |_, _| true,
-    );
-
-    bench_step_group(
-        c,
-        "Step/Chain.process",
-        &prepared_cases,
-        &CHAIN_IMPLS,
-        ChainImpl::label,
-        |case| case.bit_data_seed.clone(),
-        |implementation, input, case| implementation.process(input, case.m_max),
         |_| true,
         |_, _| true,
     );

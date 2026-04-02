@@ -1,5 +1,6 @@
 use entro_gd::ImageColorModel;
 use entro_gd::ScopedTimer;
+use entro_gd::compression::preprocessor::DEFAULT_BITDATA_ROW_PADDING;
 use entro_gd::prelude::*;
 use entro_gd::{EntroGdError, decompress_igd_to_image, init_logging};
 use std::env;
@@ -67,6 +68,7 @@ fn main() -> Result<(), EntroGdError> {
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping: 3,
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
     }
     .then(EntropyOptimized {})
     .then(GenCondensedSamples { m_max: 0 })

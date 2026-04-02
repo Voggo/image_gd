@@ -78,6 +78,7 @@ fn test_image_roundtrip_compression() {
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping: 3,
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pad_rows_to_word: true,
     }
     .then(EntropyOptimized {})
     .then(GenCondensedSamples { m_max: 0 })
