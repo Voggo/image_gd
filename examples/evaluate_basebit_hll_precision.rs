@@ -1,5 +1,6 @@
 use entro_gd::compression::BaseBitBatchGroups;
 use entro_gd::compression::base_bits::BaseBitHyperLogLogCount;
+use entro_gd::compression::preprocessor::DEFAULT_BITDATA_ROW_PADDING;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader};
 use entro_gd::{
     BitDataSet, BuildImageBitDataSet, EntroGdError, Filter, ImageColorModel, ImageColorSpace,
@@ -163,6 +164,7 @@ fn load_bit_data(options: &CliOptions) -> Result<BitDataSet, EntroGdError> {
             color_model: ImageColorModel::YCoCgR,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
         }
         .process(options.input.clone()),
         InputKind::Auto => unreachable!("auto input kind should be resolved before load"),
