@@ -8,7 +8,7 @@ use criterion::Criterion;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 
-use entro_gd::compression::preprocessor::DEFAULT_BITDATA_ROW_PADDING;
+use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{BitDataSet, CompressedData, CondensedSamples, Dataset, EntroGdError, FeatureSpec};
@@ -90,7 +90,7 @@ impl BuildImageBitDataSetImpl {
                 color_model,
                 pixel_grouping,
                 grouping_transform,
-                pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+                pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
             }
             .process(input),
             (BuildImageBitDataSetImpl::Current, StepBenchInput::Csv { .. }) => {
@@ -412,7 +412,6 @@ impl DecompressAnalyticsImpl {
     }
 }
 
-
 #[derive(Clone, Copy)]
 struct StepBenchCase {
     data_file_path: &'static str,
@@ -589,7 +588,7 @@ fn build_bit_data_seed(case: StepBenchCase, dataset_seed: Option<&Dataset>) -> B
             color_model,
             pixel_grouping,
             grouping_transform,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
         .process(PathBuf::from(case.data_file_path))
         .unwrap(),

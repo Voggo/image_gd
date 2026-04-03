@@ -3,7 +3,7 @@ use crate::compression::base_bits::BaseBit;
 use crate::compression::compress::{CompressedData, EncodedData};
 use crate::compression::image_preprocessor::BuildImageBitDataSet;
 use crate::compression::preprocessor::{
-    BuildBitDataSet, DEFAULT_BITDATA_ROW_PADDING, InferFeatureSpecs,
+    BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, InferFeatureSpecs,
 };
 use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
@@ -362,7 +362,7 @@ fn run_image_profile(
         color_model: profile.build.color_model,
         pixel_grouping: profile.build.pixel_grouping,
         grouping_transform: profile.build.grouping_transform,
-        pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+        pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .process(file.to_path_buf())?;
     let load_ms = load_t0.elapsed().as_secs_f64() * 1_000.0;
