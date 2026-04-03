@@ -8,7 +8,7 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use std::hint::black_box;
 
-use entro_gd::compression::preprocessor::DEFAULT_BITDATA_ROW_PADDING;
+use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRowsData};
@@ -151,9 +151,14 @@ fn compressed_output_path(case: RoundtripCase) -> PathBuf {
 
 fn build_loader(case: RoundtripCase) -> CsvDataLoader {
     match case.input {
-        RoundtripInput::Csv { float_storage } => CsvDataLoader::new(true).with_float_storage(float_storage),
+        RoundtripInput::Csv { float_storage } => {
+            CsvDataLoader::new(true).with_float_storage(float_storage)
+        }
         RoundtripInput::Image { .. } => {
-            panic!("build_loader called for image case: {}", case.data_file_path)
+            panic!(
+                "build_loader called for image case: {}",
+                case.data_file_path
+            )
         }
     }
 }
@@ -170,7 +175,7 @@ fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
             color_model,
             pixel_grouping,
             grouping_transform,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
         .process(path)
         .unwrap(),
@@ -286,8 +291,9 @@ fn benchmark_preprocess_to_bitdata(c: &mut Criterion) {
 
     for prepared in &prepared_cases {
         group.throughput(Throughput::Bytes(prepared.source_size));
-        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
-            match prepared.case.input {
+        group.bench_function(
+            BenchmarkId::from_parameter(&prepared.name),
+            |b| match prepared.case.input {
                 RoundtripInput::Csv { .. } => b.iter_batched(
                     || prepared.dataset_seed.clone().unwrap(),
                     |dataset| {
@@ -304,8 +310,8 @@ fn benchmark_preprocess_to_bitdata(c: &mut Criterion) {
                     },
                     BatchSize::SmallInput,
                 ),
-            }
-        });
+            },
+        );
     }
 
     group.finish();

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
 
 use crate::compression::preprocessor::{
-    BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_BITDATA_ROW_PADDING,
-    FeatureSpec, ImageReconstructionInfo, aligned_stride,
+    BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD,
+    FeatureSpec, ImageReconstructionInfo, aligned_stride, append_row_padding,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -59,7 +59,7 @@ impl Default for BuildImageBitDataSet {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
     }
 }
@@ -195,17 +195,19 @@ fn build_image_bitdataset(
                 message: "image chunk size overflow".to_string(),
             })?;
     let stride = aligned_stride(chunk_size, pad_rows_to_word);
-    let logical_total_bits = rows
-        .checked_mul(chunk_size)
-        .ok_or_else(|| EntroGdError::InvalidMetadata {
-            message: "image logical bitdata size overflow".to_string(),
-        })?;
+    let logical_total_bits =
+        rows.checked_mul(chunk_size)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "image logical bitdata size overflow".to_string(),
+            })?;
     let storage_bits = rows
         .checked_mul(stride)
         .ok_or_else(|| EntroGdError::InvalidMetadata {
             message: "image padded bitdata size overflow".to_string(),
         })?;
-    let info = BitDataInfo::new_with_reconstruction_info(features, logical_total_bits, reconstruction)?;
+    let info =
+        BitDataInfo::new_with_reconstruction_info(features, logical_total_bits, reconstruction)?
+            .with_original_size_bits_and_row_stride(logical_total_bits, stride);
 
     let encoded_raw = match color_model {
         ImageColorModel::Rgb => raw,
@@ -231,9 +233,7 @@ fn build_image_bitdataset(
                 );
                 encode_grouped_channel(&mut bitstream, &grouped_values, grouping_transform);
             }
-            for _ in chunk_size..stride {
-                bitstream.push(false);
-            }
+            append_row_padding(&mut bitstream, stride.saturating_sub(chunk_size));
         }
     }
 
@@ -448,7 +448,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -485,7 +485,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -580,7 +580,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -643,7 +643,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -692,7 +692,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForMin,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -750,7 +750,7 @@ mod tests {
             color_model: ImageColorModel::YCoCg,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -801,7 +801,7 @@ mod tests {
             color_model: ImageColorModel::YCoCg,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -848,7 +848,7 @@ mod tests {
             color_model: ImageColorModel::YCoCgR,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -906,7 +906,7 @@ mod tests {
             color_model: ImageColorModel::YCoCgR,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_BITDATA_ROW_PADDING,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
