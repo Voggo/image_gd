@@ -28,7 +28,7 @@ pub use encoding::{
     EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
-    EntropyNaive, EntropyOptimized, EntropyStrideSampled, calculate_entropy,
+    EntropyNaive, EntropyBatched, EntropyStrideSampled, EntropyStrideSampledBatched, calculate_entropy,
     calculate_entropy_stride_sampled,
 };
 pub use file_format::{

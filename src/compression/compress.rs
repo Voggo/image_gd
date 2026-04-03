@@ -257,7 +257,7 @@ mod tests {
         DecompressRowsData, decompress_analytics, decompress_file,
     };
     use crate::compression::encoding::{EncodeData, EncodeDataRLE};
-    use crate::compression::entropy::EntropyOptimized;
+    use crate::compression::entropy::EntropyBatched;
     use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
@@ -270,14 +270,14 @@ mod tests {
     }
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyOptimized {}
+        EntropyBatched {}
             .then(GenCondensedSamples { m_max: 50 })
             .then(SelectBases { patience: 10 })
             .then(EncodeData {})
     }
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyOptimized {}
+        EntropyBatched {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(EncodeDataRLE {})

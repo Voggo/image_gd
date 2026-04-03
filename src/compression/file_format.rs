@@ -22,7 +22,7 @@ mod tests {
     use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
-    use crate::compression::entropy::EntropyOptimized;
+    use crate::compression::entropy::EntropyBatched;
     use crate::compression::preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
         ImageGroupingTransform, ImageReconstructionInfo,
@@ -31,14 +31,14 @@ mod tests {
     use crate::filter_pipeline::{Filter, FilterExt};
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyOptimized {}
+        EntropyBatched {}
             .then(GenCondensedSamples { m_max: 50 })
             .then(SelectBases { patience: 10 })
             .then(EncodeData {})
     }
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyOptimized {}
+        EntropyBatched {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(EncodeDataRLE {})
@@ -46,7 +46,7 @@ mod tests {
 
     fn get_huffman_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData>
     {
-        EntropyOptimized {}
+        EntropyBatched {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(EncodeDataHuffman {})

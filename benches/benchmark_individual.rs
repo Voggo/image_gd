@@ -104,16 +104,18 @@ impl BuildImageBitDataSetImpl {
 #[derive(Clone, Copy)]
 enum EntropyImpl {
     Naive,
-    Optimized,
-    StrideSampled,
+    Batched,
+    StrideSampledNaive,
+    StrideSampledBatched,
 }
 
 impl EntropyImpl {
     fn label(self) -> &'static str {
         match self {
             EntropyImpl::Naive => "naive",
-            EntropyImpl::Optimized => "optimized",
-            EntropyImpl::StrideSampled => "stride_sampled",
+            EntropyImpl::Batched => "batched",
+            EntropyImpl::StrideSampledNaive => "stride_sampled_naive",
+            EntropyImpl::StrideSampledBatched => "stride_sampled_batched",
         }
     }
 
@@ -123,8 +125,9 @@ impl EntropyImpl {
     ) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
         match self {
             EntropyImpl::Naive => EntropyNaive {}.process(bit_data),
-            EntropyImpl::Optimized => EntropyOptimized {}.process(bit_data),
-            EntropyImpl::StrideSampled => EntropyStrideSampled { skip_rows: 1 }.process(bit_data),
+            EntropyImpl::Batched => EntropyBatched {}.process(bit_data),
+            EntropyImpl::StrideSampledNaive => EntropyStrideSampled { skip_rows: 1 }.process(bit_data),
+            EntropyImpl::StrideSampledBatched => EntropyStrideSampledBatched { skip_rows: 1 }.process(bit_data),
         }
     }
 }
@@ -479,10 +482,11 @@ const INFER_FEATURE_SPECS_IMPLS: [InferFeatureSpecsImpl; 1] = [InferFeatureSpecs
 const BUILD_BIT_DATA_SET_IMPLS: [BuildBitDataSetImpl; 1] = [BuildBitDataSetImpl::Current];
 const BUILD_IMAGE_BIT_DATA_SET_IMPLS: [BuildImageBitDataSetImpl; 1] =
     [BuildImageBitDataSetImpl::Current];
-const ENTROPY_IMPLS: [EntropyImpl; 3] = [
+const ENTROPY_IMPLS: [EntropyImpl; 4] = [
     EntropyImpl::Naive,
-    EntropyImpl::Optimized,
-    EntropyImpl::StrideSampled,
+    EntropyImpl::Batched,
+    EntropyImpl::StrideSampledNaive,
+    EntropyImpl::StrideSampledBatched,
 ];
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
 const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
@@ -646,8 +650,6 @@ fn encode_impl_supported(implementation: EncodeImpl, case: &PreparedCase) -> boo
 }
 
 fn prepare_case(case: StepBenchCase) -> PreparedCase {
-    let source_size = std::fs::metadata(case.data_file_path).unwrap().len() as u64;
-
     let dataset_seed = match case.input {
         StepBenchInput::Csv { .. } => Some(build_csv_dataset_seed(case)),
         StepBenchInput::Image { .. } => None,
@@ -655,7 +657,8 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     let inferred_feature_specs_seed = dataset_seed.as_ref().map(infer_feature_specs_seed);
 
     let bit_data_seed = build_bit_data_seed(case, dataset_seed.as_ref());
-    let entropy_seed = EntropyOptimized {}.process(bit_data_seed.clone()).unwrap();
+    let source_size = (bit_data_seed.data.num_rows * bit_data_seed.data.chunk_size / 8) as u64;
+    let entropy_seed = EntropyBatched {}.process(bit_data_seed.clone()).unwrap();
     let condensed_seed = GenCondensedSamples { m_max: case.m_max }
         .process(entropy_seed.clone())
         .unwrap();

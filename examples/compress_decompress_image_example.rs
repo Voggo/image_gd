@@ -70,7 +70,7 @@ fn main() -> Result<(), EntroGdError> {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .then(EntropyOptimized {})
+    .then(EntropyBatched {})
     .then(GenCondensedSamples { m_max: 0 })
     .then(SelectBasesDebug {
         patience: 10,

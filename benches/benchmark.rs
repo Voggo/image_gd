@@ -190,7 +190,7 @@ fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
 
 fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> CompressedData {
     match case.variant {
-        CompressionVariant::BaselineV1 => EntropyOptimized {}
+        CompressionVariant::BaselineV1 => EntropyBatched {}
             .then(GenCondensedSamples { m_max: case.m_max })
             .then(SelectBases {
                 patience: case.patience,
