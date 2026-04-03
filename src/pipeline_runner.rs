@@ -2,7 +2,9 @@ use crate::BitDataSet;
 use crate::compression::base_bits::BaseBit;
 use crate::compression::compress::{CompressedData, EncodedData};
 use crate::compression::image_preprocessor::BuildImageBitDataSet;
-use crate::compression::preprocessor::{BuildBitDataSet, InferFeatureSpecs};
+use crate::compression::preprocessor::{
+    BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, InferFeatureSpecs,
+};
 use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -287,7 +289,7 @@ fn run_csv_profile(
         options: profile.preprocess,
     }
     .process(loaded.dataset)?;
-    let bit_data = BuildBitDataSet.process((dataset, features))?;
+    let bit_data = BuildBitDataSet::default().process((dataset, features))?;
     let preprocess_ms = preprocess_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let entropy_t0 = Instant::now();
@@ -360,6 +362,7 @@ fn run_image_profile(
         color_model: profile.build.color_model,
         pixel_grouping: profile.build.pixel_grouping,
         grouping_transform: profile.build.grouping_transform,
+        pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .process(file.to_path_buf())?;
     let load_ms = load_t0.elapsed().as_secs_f64() * 1_000.0;

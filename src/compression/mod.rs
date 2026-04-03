@@ -28,7 +28,7 @@ pub use encoding::{
     EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
-    EntropyNaive, EntropyOptimized, EntropyStrideSampled, calculate_entropy,
+    EntropyNaive, EntropyBatched, EntropyStrideSampled, EntropyStrideSampledBatched, calculate_entropy,
     calculate_entropy_stride_sampled,
 };
 pub use file_format::{
@@ -41,6 +41,6 @@ pub use image_preprocessor::{
 };
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    BuildBitDataSet, FeatureSpec, FeatureTransform, FloatScalingMode, ImageReconstructionInfo,
-    InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
+    BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, FeatureSpec, FeatureTransform, FloatScalingMode,
+    ImageReconstructionInfo, InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
 };

@@ -1,7 +1,7 @@
 use crate::compression::compress::{CompressedData, CondensedSamples, build_base_bit_mask};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
-    decode_value_from_bits,
+    append_row_padding, decode_value_from_bits,
 };
 use crate::data_loader::DataValue;
 use crate::error::EntroGdError;
@@ -35,6 +35,8 @@ pub(crate) fn decompress_samples_batch(
     let data_info = &compressed.metadata;
     let num_features = data_info.num_features();
     let chunk_size = data_info.chunk_size();
+    let stride = data_info.row_stride();
+    let row_padding_bits = stride.saturating_sub(chunk_size);
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     if num_features == 0 {
         return Err(EntroGdError::InvalidMetadata {
@@ -47,32 +49,55 @@ pub(crate) fn decompress_samples_batch(
     let base_bit_positions = &compressed.base_bit_positions;
     let base_bit_mask = build_base_bit_mask(chunk_size, base_bit_positions);
 
-    let mut reconstructed_bits = crate::BitStream::with_capacity(chunk_size * indices.len());
+    let mut reconstructed_bits = crate::BitStream::with_capacity(stride * indices.len());
 
-    for &sample_idx in indices {
-        let sample = match compressed.encoded_data.get_sample(sample_idx) {
-            Some(s) => s,
-            None => {
-                return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
-            }
-        };
+    if row_padding_bits == 0 {
+        for &sample_idx in indices {
+            let sample = match compressed.encoded_data.get_sample(sample_idx) {
+                Some(s) => s,
+                None => {
+                    return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
+                }
+            };
 
-        append_reconstructed_chunk(
-            &mut reconstructed_bits,
-            &base_bit_mask,
-            &compressed.base_table,
-            chunk_size,
-            sample.deviation.as_bitslice(),
-            sample.id.as_bitslice(),
-        )?;
+            append_reconstructed_chunk(
+                &mut reconstructed_bits,
+                &base_bit_mask,
+                &compressed.base_table,
+                chunk_size,
+                sample.deviation.as_bitslice(),
+                sample.id.as_bitslice(),
+            )?;
+        }
+    } else {
+        for &sample_idx in indices {
+            let sample = match compressed.encoded_data.get_sample(sample_idx) {
+                Some(s) => s,
+                None => {
+                    return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
+                }
+            };
+
+            append_reconstructed_chunk(
+                &mut reconstructed_bits,
+                &base_bit_mask,
+                &compressed.base_table,
+                chunk_size,
+                sample.deviation.as_bitslice(),
+                sample.id.as_bitslice(),
+            )?;
+
+            append_row_padding(&mut reconstructed_bits, row_padding_bits);
+        }
     }
 
     let data = BitData {
         data: reconstructed_bits,
         chunk_size,
+        stride,
         num_rows: indices.len(),
     };
-    let info = data_info.with_original_size_bits(chunk_size * indices.len());
+    let info = data_info.with_original_size_bits_and_row_stride(chunk_size * indices.len(), stride);
     Ok(BitDataSet { data, info })
 }
 
@@ -91,27 +116,52 @@ impl Filter for DecompressFileData {
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
     let data_info = &compressed.metadata;
     let chunk_size = data_info.chunk_size();
+    let stride = data_info.row_stride();
+    let row_padding_bits = stride.saturating_sub(chunk_size);
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let base_bit_mask = build_base_bit_mask(chunk_size, &compressed.base_bit_positions);
-    let mut reconstructed_bits = crate::BitStream::with_capacity(chunk_size * original_num_rows);
+    let mut reconstructed_bits = crate::BitStream::with_capacity(stride * original_num_rows);
     let mut decoded_rows = 0usize;
 
-    compressed.encoded_data.for_each_sample(|sample| {
-        if decoded_rows >= original_num_rows {
-            return Ok(());
-        }
+    if row_padding_bits == 0 {
+        compressed.encoded_data.for_each_sample(|sample| {
+            if decoded_rows >= original_num_rows {
+                return Ok(());
+            }
 
-        append_reconstructed_chunk(
-            &mut reconstructed_bits,
-            &base_bit_mask,
-            &compressed.base_table,
-            chunk_size,
-            sample.deviation,
-            sample.id,
-        )?;
-        decoded_rows += 1;
-        Ok(())
-    })?;
+            append_reconstructed_chunk(
+                &mut reconstructed_bits,
+                &base_bit_mask,
+                &compressed.base_table,
+                chunk_size,
+                sample.deviation,
+                sample.id,
+            )?;
+
+            decoded_rows += 1;
+            Ok(())
+        })?;
+    } else {
+        compressed.encoded_data.for_each_sample(|sample| {
+            if decoded_rows >= original_num_rows {
+                return Ok(());
+            }
+
+            append_reconstructed_chunk(
+                &mut reconstructed_bits,
+                &base_bit_mask,
+                &compressed.base_table,
+                chunk_size,
+                sample.deviation,
+                sample.id,
+            )?;
+
+            append_row_padding(&mut reconstructed_bits, row_padding_bits);
+
+            decoded_rows += 1;
+            Ok(())
+        })?;
+    }
 
     if decoded_rows != original_num_rows {
         return Err(EntroGdError::InvalidMetadata {
@@ -125,9 +175,11 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let data = BitData {
         data: reconstructed_bits,
         chunk_size,
+        stride,
         num_rows: original_num_rows,
     };
-    let info = data_info.with_original_size_bits(chunk_size * original_num_rows);
+    let info =
+        data_info.with_original_size_bits_and_row_stride(chunk_size * original_num_rows, stride);
     Ok(BitDataSet { data, info })
 }
 
@@ -149,14 +201,19 @@ fn append_reconstructed_chunk(
     }
 
     let base_pattern = &base_table[base_id].0;
-    for bit_pos in 0..chunk_size.min(base_pattern.len()) {
-        chunk.set(bit_pos, base_pattern[bit_pos]);
+    let base_len = chunk_size.min(base_pattern.len());
+    for bit_pos in 0..base_len {
+        chunk.set(bit_pos, unsafe { *base_pattern.get_unchecked(bit_pos) });
     }
 
     let mut deviation_bit_idx = 0;
     for bit_pos in 0..chunk_size {
-        if !base_bit_mask[bit_pos] && deviation_bit_idx < deviation_bits.len() {
-            chunk.set(bit_pos, deviation_bits[deviation_bit_idx]);
+        if !unsafe { *base_bit_mask.get_unchecked(bit_pos) }
+            && deviation_bit_idx < deviation_bits.len()
+        {
+            chunk.set(bit_pos, unsafe {
+                *deviation_bits.get_unchecked(deviation_bit_idx)
+            });
             deviation_bit_idx += 1;
         }
     }
@@ -214,7 +271,7 @@ pub fn write_bitdata_as_csv<P: AsRef<Path>>(
     for row in 0..bit_data.data.num_rows {
         let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
         for feature in 0..bit_data.info.num_features() {
-            let feature_bits = bit_data.get_feature(row, feature);
+            let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
             let spec = bit_data.info.feature_spec(feature);
             let formatted = match decode_value_from_bits(feature_bits, spec) {
                 DataValue::Unsigned(v) => v.to_string(),
@@ -274,7 +331,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         let group_x = row % grouped_width;
         let mut decoded_channels = Vec::with_capacity(channels);
         for feature in 0..channels {
-            let feature_bits = bit_data.get_feature(row, feature);
+            let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
             decoded_channels.push(decode_grouped_feature(
                 feature_bits,
                 pixel_grouping,

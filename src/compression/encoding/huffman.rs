@@ -91,9 +91,10 @@ pub(super) fn encode_data_huffman_base_id_only(
 
         let row_start = row_idx * row_width;
         for sample_idx in row_start..row_start + row_width {
-            let chunk = bit_data.get_chunk(sample_idx);
+            let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
             for &(start, end) in &context.deviation_ranges {
-                raw_deviation_bit_stream.extend_from_bitslice(&chunk[start..end]);
+                raw_deviation_bit_stream
+                    .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
             }
 
             let symbol = context.row_to_group_id[sample_idx] as u64;
@@ -107,9 +108,10 @@ pub(super) fn encode_data_huffman_base_id_only(
     }
 
     for sample_idx in original_num_samples..bit_data.num_rows() {
-        let chunk = bit_data.get_chunk(sample_idx);
+        let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
         for &(start, end) in &context.deviation_ranges {
-            raw_deviation_bit_stream.extend_from_bitslice(&chunk[start..end]);
+            raw_deviation_bit_stream
+                .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
         }
 
         let symbol = context.row_to_group_id[sample_idx] as u64;
@@ -189,10 +191,10 @@ fn symbol_for_row(
         });
     }
 
-    let chunk = bit_data.get_chunk(row);
+    let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
     let mut deviation = 0u64;
     for &(start, end) in &context.deviation_ranges {
-        for bit in &chunk[start..end] {
+        for bit in unsafe { chunk.get_unchecked(start..end) } {
             deviation = (deviation << 1) | (*bit as u64);
         }
     }

@@ -9,6 +9,7 @@ use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
 const MAX_DECIMAL_SCALE: u8 = 9;
+pub const DEFAULT_ALIGN_ROWS_TO_WORD: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatScalingMode {
@@ -50,7 +51,18 @@ impl Filter for InferFeatureSpecs {
 }
 
 /// Filter for building BitDataSet from a Dataset with feature specifications.
-pub struct BuildBitDataSet;
+#[derive(Debug, Clone, Copy)]
+pub struct BuildBitDataSet {
+    pub pad_rows_to_word: bool,
+}
+
+impl Default for BuildBitDataSet {
+    fn default() -> Self {
+        Self {
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
+        }
+    }
+}
 
 impl Filter for BuildBitDataSet {
     type Input = (Dataset, Vec<FeatureSpec>);
@@ -58,7 +70,26 @@ impl Filter for BuildBitDataSet {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let (dataset, features) = input;
-        BitDataSet::from_dataset_with_schema(&dataset, features)
+        BitDataSet::from_dataset_with_schema_and_row_padding(
+            &dataset,
+            features,
+            self.pad_rows_to_word,
+        )
+    }
+}
+
+pub(crate) fn aligned_stride(chunk_size: usize, pad_rows_to_word: bool) -> usize {
+    if pad_rows_to_word {
+        chunk_size.next_multiple_of(usize::BITS as usize)
+    } else {
+        chunk_size
+    }
+}
+
+#[inline]
+pub(crate) fn append_row_padding(stream: &mut crate::BitStream, padding_bits: usize) {
+    if padding_bits > 0 {
+        stream.resize(stream.len() + padding_bits, false);
     }
 }
 
@@ -428,6 +459,7 @@ pub struct BitDataCompressionInfo {
     pub m_condensed_sample_weights: Option<Vec<usize>>,
     feature_offsets: Vec<usize>,
     chunk_size: usize,
+    row_stride_bits: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -635,6 +667,7 @@ impl BitDataInfo {
             m_condensed_sample_weights: None,
             feature_offsets: offsets,
             chunk_size: running,
+            row_stride_bits: running,
         };
 
         let info = BitDataInfo {
@@ -688,6 +721,14 @@ impl BitDataInfo {
         self.compression.chunk_size
     }
 
+    pub fn row_stride(&self) -> usize {
+        self.compression.row_stride_bits
+    }
+
+    pub fn is_row_padded_to_word(&self) -> bool {
+        self.compression.row_stride_bits > self.compression.chunk_size
+    }
+
     pub fn feature_bits(&self, feature_idx: usize) -> usize {
         self.compression.features[feature_idx].bits
     }
@@ -708,7 +749,16 @@ impl BitDataInfo {
     }
 
     pub fn with_original_size_bits(&self, original_size_bits: usize) -> Self {
+        self.with_original_size_bits_and_row_stride(original_size_bits, self.row_stride())
+    }
+
+    pub fn with_original_size_bits_and_row_stride(
+        &self,
+        original_size_bits: usize,
+        row_stride_bits: usize,
+    ) -> Self {
         let chunk_size = self.compression.chunk_size;
+        let row_stride_bits = row_stride_bits.max(chunk_size);
         BitDataInfo {
             compression: BitDataCompressionInfo {
                 features: self.compression.features.clone(),
@@ -718,6 +768,7 @@ impl BitDataInfo {
                 m_condensed_sample_weights: self.compression.m_condensed_sample_weights.clone(),
                 feature_offsets: self.compression.feature_offsets.clone(),
                 chunk_size,
+                row_stride_bits,
             },
             reconstruction: self.reconstruction.clone(),
         }
@@ -729,8 +780,10 @@ impl BitDataInfo {
 pub struct BitData {
     /// The underlying bit storage - all chunks stored contiguously
     pub data: crate::BitStream,
-    /// Total bits per chunk
+    /// Logical bits per chunk (what algorithms see)
     pub chunk_size: usize,
+    /// Physical bits per chunk including word-alignment padding
+    pub stride: usize,
     /// Number of rows/chunks (number of records)
     pub num_rows: usize,
 }
@@ -745,21 +798,52 @@ impl BitData {
             });
         }
         self.data.extend(bits);
+        append_row_padding(&mut self.data, self.stride.saturating_sub(self.chunk_size));
         self.num_rows += 1; // Treat the new bits as an additional row/chunk
         Ok(())
     }
 
     /// Get a slice of bits for a specific row/chunk
+    #[inline(always)]
     pub fn get_chunk(&self, row: usize) -> &crate::BitView {
-        let start = row * self.chunk_size;
+        let start = row * self.stride;
         let end = start + self.chunk_size;
         &self.data[start..end]
     }
 
+    /// Get a specific bit by linear bit index without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `bit_idx < self.data.len()`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_bit_linear_unchecked(&self, bit_idx: usize) -> bool {
+        debug_assert!(bit_idx < self.data.len());
+        let word_bits = usize::BITS as usize;
+        let word_idx = bit_idx / word_bits;
+        let bit_in_word = bit_idx % word_bits;
+        let raw_word = unsafe { *self.data.as_raw_slice().get_unchecked(word_idx) };
+        ((raw_word >> bit_in_word) & 1) == 1
+    }
+
     /// Get a specific bit by row and bit position within the chunk
+    #[inline(always)]
     pub fn get_bit(&self, row: usize, bit_in_chunk: usize) -> bool {
-        let idx = row * self.chunk_size + bit_in_chunk;
+        let idx = row * self.stride + bit_in_chunk;
         self.data[idx]
+    }
+
+    /// Get a specific bit by row and bit position within the chunk without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.num_rows` and `bit_in_chunk < self.chunk_size`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_bit_unchecked(&self, row: usize, bit_in_chunk: usize) -> bool {
+        debug_assert!(row < self.num_rows);
+        debug_assert!(bit_in_chunk < self.chunk_size);
+        let idx = row * self.stride + bit_in_chunk;
+        unsafe { self.get_bit_linear_unchecked(idx) }
     }
 
     /// Get raw access to the underlying bit vector
@@ -769,7 +853,7 @@ impl BitData {
 
     /// Get the total number of bits stored
     pub fn total_bits(&self) -> usize {
-        self.data.len()
+        self.chunk_size * self.num_rows
     }
 }
 
@@ -783,13 +867,42 @@ pub struct BitDataSet {
 impl BitDataSet {
     /// Create BitDataSet from a Dataset using column data types to derive the schema.
     pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
-        Self::from_dataset_with_options(dataset, PreprocessOptions::default())
+        Self::from_dataset_with_options_and_row_padding(
+            dataset,
+            PreprocessOptions::default(),
+            DEFAULT_ALIGN_ROWS_TO_WORD,
+        )
+    }
+
+    /// Create BitDataSet from a Dataset with configurable row/chunk padding behavior.
+    pub fn from_dataset_with_row_padding(
+        dataset: &Dataset,
+        pad_rows_to_word: bool,
+    ) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_options_and_row_padding(
+            dataset,
+            PreprocessOptions::default(),
+            pad_rows_to_word,
+        )
     }
 
     /// Create BitDataSet from a Dataset using configurable preprocessing options.
     pub fn from_dataset_with_options(
         dataset: &Dataset,
         options: PreprocessOptions,
+    ) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_options_and_row_padding(
+            dataset,
+            options,
+            DEFAULT_ALIGN_ROWS_TO_WORD,
+        )
+    }
+
+    /// Create BitDataSet from a Dataset using configurable preprocessing options and row/chunk padding behavior.
+    pub fn from_dataset_with_options_and_row_padding(
+        dataset: &Dataset,
+        options: PreprocessOptions,
+        pad_rows_to_word: bool,
     ) -> Result<Self, EntroGdError> {
         let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
         let num_features = dataset.num_columns();
@@ -799,7 +912,7 @@ impl BitDataSet {
             "starting dataset preprocessing"
         );
         let features = infer_feature_specs(dataset, options);
-        Self::from_dataset_with_schema(dataset, features)
+        Self::from_dataset_with_schema_and_row_padding(dataset, features, pad_rows_to_word)
     }
 
     /// Load data via a DataLoader and build BitDataSet using column data types.
@@ -845,6 +958,19 @@ impl BitDataSet {
         dataset: &Dataset,
         features: Vec<FeatureSpec>,
     ) -> Result<Self, EntroGdError> {
+        Self::from_dataset_with_schema_and_row_padding(
+            dataset,
+            features,
+            DEFAULT_ALIGN_ROWS_TO_WORD,
+        )
+    }
+
+    /// Create BitDataSet from a Dataset using per-feature schema and configurable row/chunk padding behavior.
+    pub fn from_dataset_with_schema_and_row_padding(
+        dataset: &Dataset,
+        features: Vec<FeatureSpec>,
+        pad_rows_to_word: bool,
+    ) -> Result<Self, EntroGdError> {
         let num_features = dataset.num_columns();
         debug!(
             rows = dataset.num_rows(),
@@ -888,8 +1014,10 @@ impl BitDataSet {
         }
         let info = BitDataInfo::new(features, 0)?;
         let chunk_size = info.chunk_size();
+        let stride = aligned_stride(chunk_size, pad_rows_to_word);
         let num_rows = dataset.num_rows();
-        let total_bits = chunk_size * num_rows;
+        let total_bits = stride * num_rows;
+        let row_padding_bits = stride.saturating_sub(chunk_size);
 
         debug!(
             chunk_size_bits = chunk_size,
@@ -899,44 +1027,32 @@ impl BitDataSet {
         );
 
         let mut data = crate::BitStream::with_capacity(total_bits);
-        for row_idx in 0..num_rows {
-            for col_idx in 0..num_features {
-                let spec = info.feature_spec(col_idx);
-                let value = dataset.value_at(row_idx, col_idx).ok_or_else(|| {
-                    EntroGdError::InvalidFeatureSpec {
-                        message: format!(
-                            "dataset value missing at row {}, column {}",
-                            row_idx, col_idx
-                        ),
-                    }
-                })?;
-                let bits = value_to_bits(value, spec);
-                if row_idx < 2 {
-                    trace!(
-                        row_idx,
-                        feature_idx = col_idx,
-                        value = ?value,
-                        bits = spec.bits,
-                        transform = ?spec.transform,
-                        "packed feature value into bitstream"
-                    );
-                }
-                push_bits(&mut data, bits, spec.bits);
+        if row_padding_bits == 0 {
+            for row_idx in 0..num_rows {
+                append_dataset_row_bits(&mut data, dataset, &info, row_idx, num_features)?;
+            }
+        } else {
+            for row_idx in 0..num_rows {
+                append_dataset_row_bits(&mut data, dataset, &info, row_idx, num_features)?;
+                append_row_padding(&mut data, row_padding_bits);
             }
         }
 
         let data = BitData {
             data,
             chunk_size,
+            stride,
             num_rows,
         };
-        let info = info.with_original_size_bits(chunk_size * num_rows);
+        let info = info.with_original_size_bits_and_row_stride(chunk_size * num_rows, stride);
 
         debug!(
             rows = num_rows,
             features = info.num_features(),
             chunk_size_bits = chunk_size,
-            total_bits = chunk_size * num_rows,
+            stride_bits = stride,
+            pad_rows_to_word,
+            total_logical_bits = chunk_size * num_rows,
             "BitDataSet preprocessing complete"
         );
 
@@ -944,17 +1060,66 @@ impl BitDataSet {
     }
 
     /// Get a slice of bits for a specific feature within a row
+    #[inline(always)]
     pub fn get_feature(&self, row: usize, feature: usize) -> &crate::BitView {
-        let chunk_start = row * self.data.chunk_size;
+        let chunk_start = row * self.data.stride;
         let feat_start = chunk_start + self.info.feature_offset(feature);
         let feat_end = feat_start + self.info.feature_bits(feature);
         &self.data.data[feat_start..feat_end]
     }
 
     /// Get a specific bit by row, feature, and bit index within the feature
+    #[inline(always)]
     pub fn get_bit_by_feature(&self, row: usize, feature: usize, bit: usize) -> bool {
-        let idx = row * self.data.chunk_size + self.info.feature_offset(feature) + bit;
+        let idx = row * self.data.stride + self.info.feature_offset(feature) + bit;
         self.data.data[idx]
+    }
+
+    /// Get a feature slice without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.data.num_rows` and `feature < self.info.num_features()`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_feature_unchecked(
+        &self,
+        row: usize,
+        feature: usize,
+    ) -> &crate::BitView {
+        debug_assert!(row < self.data.num_rows);
+        debug_assert!(feature < self.info.num_features());
+        let chunk_start = row * self.data.stride;
+        let feature_offset =
+            unsafe { *self.info.compression.feature_offsets.get_unchecked(feature) };
+        let feature_bits = unsafe { self.info.compression.features.get_unchecked(feature).bits };
+        let feat_start = chunk_start + feature_offset;
+        let feat_end = feat_start + feature_bits;
+        unsafe { self.data.data.get_unchecked(feat_start..feat_end) }
+    }
+
+    /// Get a chunk without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.data.num_rows`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_chunk_unchecked(&self, row: usize) -> &crate::BitView {
+        debug_assert!(row < self.data.num_rows);
+        let start = row * self.data.stride;
+        let end = start + self.data.chunk_size;
+        unsafe { self.data.data.get_unchecked(start..end) }
+    }
+
+    /// Get a bit without bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `row < self.data.num_rows` and `bit_in_chunk < self.data.chunk_size`.
+    #[inline(always)]
+    pub(crate) unsafe fn get_bit_unchecked(&self, row: usize, bit_in_chunk: usize) -> bool {
+        debug_assert!(row < self.data.num_rows);
+        debug_assert!(bit_in_chunk < self.data.chunk_size);
+        unsafe { self.data.get_bit_unchecked(row, bit_in_chunk) }
     }
 
     pub fn num_rows(&self) -> usize {
@@ -1073,6 +1238,41 @@ fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
         },
         _ => unreachable!("feature type mismatch when packing bits"),
     }
+}
+
+fn append_dataset_row_bits(
+    out: &mut crate::BitStream,
+    dataset: &Dataset,
+    info: &BitDataInfo,
+    row_idx: usize,
+    num_features: usize,
+) -> Result<(), EntroGdError> {
+    for col_idx in 0..num_features {
+        let spec = info.feature_spec(col_idx);
+        let value =
+            dataset
+                .value_at(row_idx, col_idx)
+                .ok_or_else(|| EntroGdError::InvalidFeatureSpec {
+                    message: format!(
+                        "dataset value missing at row {}, column {}",
+                        row_idx, col_idx
+                    ),
+                })?;
+        let bits = value_to_bits(value, spec);
+        if row_idx < 2 {
+            trace!(
+                row_idx,
+                feature_idx = col_idx,
+                value = ?value,
+                bits = spec.bits,
+                transform = ?spec.transform,
+                "packed feature value into bitstream"
+            );
+        }
+        push_bits(out, bits, spec.bits);
+    }
+
+    Ok(())
 }
 
 pub fn decode_value_from_bits(bits: &crate::BitView, spec: &FeatureSpec) -> DataValue {
@@ -1267,15 +1467,17 @@ mod tests {
         let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
 
         let raw = bit_data.data.raw();
-        assert_eq!(raw.len(), bit_data.data.total_bits());
+        // Since we now have padding, the raw length is num_rows * stride
+        assert_eq!(raw.len(), bit_data.data.num_rows * bit_data.data.stride);
 
         let feature_bits = bit_data.info.feature_bits(0);
-        for i in 0..100 {
-            let row = i / bit_data.data.chunk_size;
-            let within_chunk = i % bit_data.data.chunk_size;
-            let feat = within_chunk / feature_bits;
-            let bit = within_chunk % feature_bits;
-            assert_eq!(raw[i], bit_data.get_bit_by_feature(row, feat, bit));
+        for row in 0..10 {
+            for within_chunk in 0..bit_data.data.chunk_size {
+                let i = row * bit_data.data.stride + within_chunk;
+                let feat = within_chunk / feature_bits;
+                let bit = within_chunk % feature_bits;
+                assert_eq!(raw[i], bit_data.get_bit_by_feature(row, feat, bit));
+            }
         }
     }
 
@@ -1396,5 +1598,29 @@ mod tests {
             spec.transform,
             FeatureTransform::ScaledSignedInt { .. }
         ));
+    }
+
+    #[test]
+    fn test_build_bitdataset_filter_respects_row_padding_flag() {
+        let dataset = Dataset::from_columns(vec![ColumnData::Unsigned(vec![1, 2])]).unwrap();
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
+
+        let compact = BuildBitDataSet {
+            pad_rows_to_word: false,
+        }
+        .process((dataset.clone(), features.clone()))
+        .unwrap();
+        assert_eq!(compact.chunk_size(), 8);
+        assert_eq!(compact.data.stride, 8);
+        assert_eq!(compact.data.raw().len(), 16);
+
+        let padded = BuildBitDataSet {
+            pad_rows_to_word: true,
+        }
+        .process((dataset, features))
+        .unwrap();
+        assert_eq!(padded.chunk_size(), 8);
+        assert_eq!(padded.data.stride, 64);
+        assert_eq!(padded.data.raw().len(), 128);
     }
 }

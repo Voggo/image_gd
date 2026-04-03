@@ -24,6 +24,14 @@ serde_json = { version = "1.0.149", optional = true }
 criterion = "0.8.2"
 pretty_assertions = "1.4.1"
 
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
+[profile.bench]
+codegen-units = 1
+lto = "fat"
+
 [[bench]]
 name = "benchmark"
 harness = false

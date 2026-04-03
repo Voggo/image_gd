@@ -1,30 +1,121 @@
+use std::hint::black_box;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use criterion::BatchSize;
 use criterion::BenchmarkId;
 use criterion::Criterion;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
-use std::hint::black_box;
 
+use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
-use entro_gd::{BitDataSet, CompressedData, DecompressRowsData, EntroGdError};
+use entro_gd::{BitDataSet, CompressedData, CondensedSamples, Dataset, EntroGdError, FeatureSpec};
 
 type DynBaseBit = Box<dyn entro_gd::compression::base_bits::BaseBit>;
 
+#[allow(unused)]
+#[derive(Clone, Copy)]
+enum InferFeatureSpecsImpl {
+    Current,
+}
+
+impl InferFeatureSpecsImpl {
+    fn label(self) -> &'static str {
+        match self {
+            InferFeatureSpecsImpl::Current => "current",
+        }
+    }
+
+    fn process(self, input: Dataset) -> Result<(Dataset, Vec<FeatureSpec>), EntroGdError> {
+        match self {
+            InferFeatureSpecsImpl::Current => InferFeatureSpecs {
+                options: PreprocessOptions::default(),
+            }
+            .process(input),
+        }
+    }
+}
+
+#[allow(unused)]
+#[derive(Clone, Copy)]
+enum BuildBitDataSetImpl {
+    Current,
+}
+
+impl BuildBitDataSetImpl {
+    fn label(self) -> &'static str {
+        match self {
+            BuildBitDataSetImpl::Current => "current",
+        }
+    }
+
+    fn process(self, input: (Dataset, Vec<FeatureSpec>)) -> Result<BitDataSet, EntroGdError> {
+        match self {
+            BuildBitDataSetImpl::Current => BuildBitDataSet::default().process(input),
+        }
+    }
+}
+
+#[allow(unused)]
+#[derive(Clone, Copy)]
+enum BuildImageBitDataSetImpl {
+    Current,
+}
+
+impl BuildImageBitDataSetImpl {
+    fn label(self) -> &'static str {
+        match self {
+            BuildImageBitDataSetImpl::Current => "current",
+        }
+    }
+
+    fn process(
+        self,
+        input: PathBuf,
+        image_input: StepBenchInput,
+    ) -> Result<BitDataSet, EntroGdError> {
+        match (self, image_input) {
+            (
+                BuildImageBitDataSetImpl::Current,
+                StepBenchInput::Image {
+                    colorspace,
+                    color_model,
+                    pixel_grouping,
+                    grouping_transform,
+                },
+            ) => BuildImageBitDataSet {
+                colorspace,
+                color_model,
+                pixel_grouping,
+                grouping_transform,
+                pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
+            }
+            .process(input),
+            (BuildImageBitDataSetImpl::Current, StepBenchInput::Csv { .. }) => {
+                panic!("BuildImageBitDataSet.process called with csv case")
+            }
+        }
+    }
+}
+
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum EntropyImpl {
     Naive,
-    Optimized,
+    Batched,
+    StrideSampledNaive,
+    StrideSampledBatched,
 }
 
 impl EntropyImpl {
     fn label(self) -> &'static str {
         match self {
             EntropyImpl::Naive => "naive",
-            EntropyImpl::Optimized => "optimized",
+            EntropyImpl::Batched => "batched",
+            EntropyImpl::StrideSampledNaive => "stride_sampled_naive",
+            EntropyImpl::StrideSampledBatched => "stride_sampled_batched",
         }
     }
 
@@ -34,11 +125,14 @@ impl EntropyImpl {
     ) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
         match self {
             EntropyImpl::Naive => EntropyNaive {}.process(bit_data),
-            EntropyImpl::Optimized => EntropyOptimized {}.process(bit_data),
+            EntropyImpl::Batched => EntropyBatched {}.process(bit_data),
+            EntropyImpl::StrideSampledNaive => EntropyStrideSampled { skip_rows: 1 }.process(bit_data),
+            EntropyImpl::StrideSampledBatched => EntropyStrideSampledBatched { skip_rows: 1 }.process(bit_data),
         }
     }
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum GenCondensedImpl {
     Current,
@@ -62,14 +156,19 @@ impl GenCondensedImpl {
     }
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum SelectBasesImpl {
+    Current,
     ProfileAllBits(BaseBitImpl),
+    DebugNoCsv,
+    Optimized(BaseBitImpl),
 }
 
 impl SelectBasesImpl {
     fn label(self) -> &'static str {
         match self {
+            SelectBasesImpl::Current => "current",
             SelectBasesImpl::ProfileAllBits(BaseBitImpl::Naive) => "profile_all_bits_naive",
             SelectBasesImpl::ProfileAllBits(BaseBitImpl::BatchGroups) => {
                 "profile_all_bits_batch_groups"
@@ -83,6 +182,18 @@ impl SelectBasesImpl {
             SelectBasesImpl::ProfileAllBits(BaseBitImpl::HyperLogLogCount) => {
                 "profile_all_bits_hyper_log_log_count"
             }
+            SelectBasesImpl::DebugNoCsv => "debug_no_csv",
+            SelectBasesImpl::Optimized(BaseBitImpl::Naive) => "optimized_naive",
+            SelectBasesImpl::Optimized(BaseBitImpl::BatchGroups) => "optimized_batch_groups",
+            SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups) => {
+                "optimized_inc_signature_groups"
+            }
+            SelectBasesImpl::Optimized(BaseBitImpl::SignatureGroups) => {
+                "optimized_signature_groups"
+            }
+            SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount) => {
+                "optimized_hyper_log_log_count"
+            }
         }
     }
 
@@ -92,8 +203,19 @@ impl SelectBasesImpl {
         patience: usize,
     ) -> Result<(BitDataSet, DynBaseBit), EntroGdError> {
         match self {
+            SelectBasesImpl::Current => SelectBases { patience }.process(input),
             SelectBasesImpl::ProfileAllBits(base_bit_impl) => SelectBasesProfileAllBits {
                 split_into_batches: patience,
+                base_bit_impl,
+            }
+            .process(input),
+            SelectBasesImpl::DebugNoCsv => SelectBasesDebug {
+                patience,
+                debug_csv_paths: Mutex::new(Vec::new()),
+            }
+            .process(input),
+            SelectBasesImpl::Optimized(base_bit_impl) => SelectBasesOptimized {
+                patience,
                 base_bit_impl,
             }
             .process(input),
@@ -101,11 +223,15 @@ impl SelectBasesImpl {
     }
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum EncodeImpl {
     Naive,
     Optimized,
+    Rle,
     FusedDictionary,
+    Huffman,
+    HuffmanBaseIdOnly,
 }
 
 impl EncodeImpl {
@@ -113,7 +239,10 @@ impl EncodeImpl {
         match self {
             EncodeImpl::Naive => "naive",
             EncodeImpl::Optimized => "optimized",
+            EncodeImpl::Rle => "rle",
             EncodeImpl::FusedDictionary => "fused_dictionary",
+            EncodeImpl::Huffman => "huffman",
+            EncodeImpl::HuffmanBaseIdOnly => "huffman_base_id_only",
         }
     }
 
@@ -121,11 +250,32 @@ impl EncodeImpl {
         match self {
             EncodeImpl::Naive => EncodeData {}.process(input),
             EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
+            EncodeImpl::Rle => EncodeDataRLE {}.process(input),
             EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
+            EncodeImpl::Huffman => EncodeDataHuffman {}.process(input),
+            EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffmanBaseIdOnly {}.process(input),
         }
     }
 }
 
+fn id_bits_needed(num_bases: usize) -> usize {
+    if num_bases <= 1 {
+        1
+    } else {
+        usize::BITS as usize - (num_bases - 1).leading_zeros() as usize
+    }
+}
+
+fn huffman_symbol_width(input: &(BitDataSet, DynBaseBit)) -> usize {
+    let chunk_size = input.0.chunk_size();
+    let base_bits = input.1.get_num_bits_per_base();
+    let num_bases = input.1.get_num_bases();
+    let num_deviation_bits = chunk_size.saturating_sub(base_bits);
+    let num_id_bits = id_bits_needed(num_bases);
+    num_deviation_bits + num_id_bits
+}
+
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum SaveImpl {
     Current,
@@ -145,6 +295,27 @@ impl SaveImpl {
     }
 }
 
+#[allow(unused)]
+#[derive(Clone, Copy)]
+enum SaveIgdImpl {
+    Current,
+}
+
+impl SaveIgdImpl {
+    fn label(self) -> &'static str {
+        match self {
+            SaveIgdImpl::Current => "current",
+        }
+    }
+
+    fn process(self, input: CompressedData, output_path: PathBuf) -> Result<PathBuf, EntroGdError> {
+        match self {
+            SaveIgdImpl::Current => SaveIgdFile { output_path }.process(input),
+        }
+    }
+}
+
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum LoadImpl {
     Current,
@@ -164,6 +335,27 @@ impl LoadImpl {
     }
 }
 
+#[allow(unused)]
+#[derive(Clone, Copy)]
+enum LoadIgdImpl {
+    Current,
+}
+
+impl LoadIgdImpl {
+    fn label(self) -> &'static str {
+        match self {
+            LoadIgdImpl::Current => "current",
+        }
+    }
+
+    fn process(self, input: PathBuf) -> Result<CompressedData, EntroGdError> {
+        match self {
+            LoadIgdImpl::Current => LoadIgdFile {}.process(input),
+        }
+    }
+}
+
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum DecompressRowsImpl {
     Current,
@@ -183,6 +375,7 @@ impl DecompressRowsImpl {
     }
 }
 
+#[allow(unused)]
 #[derive(Clone, Copy)]
 enum DecompressFileImpl {
     Current,
@@ -198,6 +391,26 @@ impl DecompressFileImpl {
     fn process(self, input: CompressedData) -> Result<BitDataSet, EntroGdError> {
         match self {
             DecompressFileImpl::Current => DecompressFileData {}.process(input),
+        }
+    }
+}
+
+#[allow(unused)]
+#[derive(Clone, Copy)]
+enum DecompressAnalyticsImpl {
+    Current,
+}
+
+impl DecompressAnalyticsImpl {
+    fn label(self) -> &'static str {
+        match self {
+            DecompressAnalyticsImpl::Current => "current",
+        }
+    }
+
+    fn process(self, input: CompressedData) -> Result<Option<CondensedSamples>, EntroGdError> {
+        match self {
+            DecompressAnalyticsImpl::Current => DecompressAnalytics {}.process(input),
         }
     }
 }
@@ -265,23 +478,43 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
     ]
 }
 
-const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Optimized];
+const INFER_FEATURE_SPECS_IMPLS: [InferFeatureSpecsImpl; 1] = [InferFeatureSpecsImpl::Current];
+const BUILD_BIT_DATA_SET_IMPLS: [BuildBitDataSetImpl; 1] = [BuildBitDataSetImpl::Current];
+const BUILD_IMAGE_BIT_DATA_SET_IMPLS: [BuildImageBitDataSetImpl; 1] =
+    [BuildImageBitDataSetImpl::Current];
+const ENTROPY_IMPLS: [EntropyImpl; 4] = [
+    EntropyImpl::Naive,
+    EntropyImpl::Batched,
+    EntropyImpl::StrideSampledNaive,
+    EntropyImpl::StrideSampledBatched,
+];
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
-const SELECT_BASES_IMPLS: [SelectBasesImpl; 4] = [
+const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
+    SelectBasesImpl::Current,
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::Naive),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::BatchGroups),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::IncSignatureGroups),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::HyperLogLogCount),
+    SelectBasesImpl::Optimized(BaseBitImpl::Naive),
+    SelectBasesImpl::Optimized(BaseBitImpl::BatchGroups),
+    SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups),
+    SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount),
 ];
-const ENCODE_IMPLS: [EncodeImpl; 3] = [
+const ENCODE_IMPLS: [EncodeImpl; 6] = [
     EncodeImpl::Naive,
     EncodeImpl::Optimized,
+    EncodeImpl::Rle,
     EncodeImpl::FusedDictionary,
+    EncodeImpl::Huffman,
+    EncodeImpl::HuffmanBaseIdOnly,
 ];
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
+const SAVE_IGD_IMPLS: [SaveIgdImpl; 1] = [SaveIgdImpl::Current];
 const LOAD_IMPLS: [LoadImpl; 1] = [LoadImpl::Current];
+const LOAD_IGD_IMPLS: [LoadIgdImpl; 1] = [LoadIgdImpl::Current];
 const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 1] = [DecompressRowsImpl::Current];
 const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 1] = [DecompressFileImpl::Current];
+const DECOMPRESS_ANALYTICS_IMPLS: [DecompressAnalyticsImpl; 1] = [DecompressAnalyticsImpl::Current];
 
 fn dataset_label(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
@@ -296,9 +529,18 @@ fn case_label(case: StepBenchCase) -> String {
     )
 }
 
-fn output_path(case: StepBenchCase) -> PathBuf {
+fn output_egd_path(case: StepBenchCase) -> PathBuf {
     PathBuf::from(format!(
         "target/bench-artifacts/{}-m{}-p{}.egd",
+        dataset_label(case.data_file_path),
+        case.m_max,
+        case.patience,
+    ))
+}
+
+fn output_igd_path(case: StepBenchCase) -> PathBuf {
+    PathBuf::from(format!(
+        "target/bench-artifacts/{}-m{}-p{}.igd",
         dataset_label(case.data_file_path),
         case.m_max,
         case.patience,
@@ -318,13 +560,28 @@ fn build_loader(case: StepBenchCase) -> CsvDataLoader {
     CsvDataLoader::new(true).with_float_storage(float_storage)
 }
 
-fn build_bit_data_seed(case: StepBenchCase) -> BitDataSet {
+fn build_csv_dataset_seed(case: StepBenchCase) -> Dataset {
     match case.input {
         StepBenchInput::Csv { .. } => {
             let loader = build_loader(case);
-            let loaded = loader.load(case.data_file_path).unwrap();
-            BitDataSet::from_dataset(&loaded.dataset).unwrap()
+            loader.load(case.data_file_path).unwrap().dataset
         }
+        StepBenchInput::Image { .. } => {
+            panic!(
+                "build_csv_dataset_seed called for image case: {}",
+                case.data_file_path
+            )
+        }
+    }
+}
+
+fn build_bit_data_seed(case: StepBenchCase, dataset_seed: Option<&Dataset>) -> BitDataSet {
+    match case.input {
+        StepBenchInput::Csv { .. } => BitDataSet::from_dataset(
+            dataset_seed
+                .expect("dataset seed should be available for csv case when building bit data"),
+        )
+        .unwrap(),
         StepBenchInput::Image {
             colorspace,
             color_model,
@@ -335,31 +592,73 @@ fn build_bit_data_seed(case: StepBenchCase) -> BitDataSet {
             color_model,
             pixel_grouping,
             grouping_transform,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
         .process(PathBuf::from(case.data_file_path))
         .unwrap(),
     }
 }
 
+fn infer_feature_specs_seed(dataset: &Dataset) -> Vec<FeatureSpec> {
+    InferFeatureSpecs {
+        options: PreprocessOptions::default(),
+    }
+    .process(dataset.clone())
+    .unwrap()
+    .1
+}
+
 struct PreparedCase {
     name: String,
+    data_file_path: &'static str,
+    input: StepBenchInput,
     source_size: u64,
     m_max: usize,
     patience: usize,
+    dataset_seed: Option<Dataset>,
+    inferred_feature_specs_seed: Option<Vec<FeatureSpec>>,
     bit_data_seed: BitDataSet,
     entropy_seed: (BitDataSet, Vec<(usize, f64)>),
     condensed_seed: (BitDataSet, Vec<(usize, f64)>),
+    huffman_symbol_width_seed: usize,
     compressed_seed: CompressedData,
     loaded_compressed_seed: CompressedData,
     egd_path: PathBuf,
+    igd_path: Option<PathBuf>,
     rows_input_seed: (Arc<CompressedData>, Vec<usize>),
 }
 
-fn prepare_case(case: StepBenchCase) -> PreparedCase {
-    let source_size = std::fs::metadata(case.data_file_path).unwrap().len() as u64;
+impl PreparedCase {
+    fn is_csv(&self) -> bool {
+        matches!(self.input, StepBenchInput::Csv { .. })
+    }
 
-    let bit_data_seed = build_bit_data_seed(case);
-    let entropy_seed = EntropyOptimized {}.process(bit_data_seed.clone()).unwrap();
+    fn is_image(&self) -> bool {
+        matches!(self.input, StepBenchInput::Image { .. })
+    }
+
+    fn supports_huffman_encoding(&self) -> bool {
+        self.huffman_symbol_width_seed <= 64
+    }
+}
+
+fn encode_impl_supported(implementation: EncodeImpl, case: &PreparedCase) -> bool {
+    match implementation {
+        EncodeImpl::Huffman | EncodeImpl::HuffmanBaseIdOnly => case.supports_huffman_encoding(),
+        _ => true,
+    }
+}
+
+fn prepare_case(case: StepBenchCase) -> PreparedCase {
+    let dataset_seed = match case.input {
+        StepBenchInput::Csv { .. } => Some(build_csv_dataset_seed(case)),
+        StepBenchInput::Image { .. } => None,
+    };
+    let inferred_feature_specs_seed = dataset_seed.as_ref().map(infer_feature_specs_seed);
+
+    let bit_data_seed = build_bit_data_seed(case, dataset_seed.as_ref());
+    let source_size = (bit_data_seed.data.num_rows * bit_data_seed.data.chunk_size / 8) as u64;
+    let entropy_seed = EntropyBatched {}.process(bit_data_seed.clone()).unwrap();
     let condensed_seed = GenCondensedSamples { m_max: case.m_max }
         .process(entropy_seed.clone())
         .unwrap();
@@ -369,34 +668,55 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     }
     .process(condensed_seed.clone())
     .unwrap();
+    let huffman_symbol_width_seed = huffman_symbol_width(&selected_seed);
     let compressed_seed = EncodeDataOptimized {}.process(selected_seed).unwrap();
 
-    let egd_path = output_path(case);
+    let egd_path = output_egd_path(case);
     let _saved_once = SaveEgdFile {
         output_path: egd_path.clone(),
     }
     .process(compressed_seed.clone())
     .unwrap();
     let loaded_compressed_seed = LoadEgdFile {}.process(egd_path.clone()).unwrap();
+
+    let igd_path = match case.input {
+        StepBenchInput::Image { .. } => {
+            let path = output_igd_path(case);
+            let _saved_once = SaveIgdFile {
+                output_path: path.clone(),
+            }
+            .process(compressed_seed.clone())
+            .unwrap();
+            Some(path)
+        }
+        StepBenchInput::Csv { .. } => None,
+    };
+
     let rows_seed = (0..bit_data_seed.data.num_rows).collect::<Vec<usize>>();
     let rows_input_seed = (Arc::new(loaded_compressed_seed.clone()), rows_seed);
 
     PreparedCase {
         name: case_label(case),
+        data_file_path: case.data_file_path,
+        input: case.input,
         source_size,
         m_max: case.m_max,
         patience: case.patience,
+        dataset_seed,
+        inferred_feature_specs_seed,
         bit_data_seed,
         entropy_seed,
         condensed_seed,
+        huffman_symbol_width_seed,
         compressed_seed,
         loaded_compressed_seed,
         egd_path,
+        igd_path,
         rows_input_seed,
     }
 }
 
-fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn>(
+fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, CaseFilter, ImplCaseFilter>(
     c: &mut Criterion,
     group_name: &str,
     prepared_cases: &[PreparedCase],
@@ -404,16 +724,26 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn>(
     impl_label: LabelFn,
     make_input: InputFn,
     run_impl: RunFn,
+    case_filter: CaseFilter,
+    impl_case_filter: ImplCaseFilter,
 ) where
     ImplType: Copy,
     LabelFn: Fn(ImplType) -> &'static str + Copy,
     InputFn: Fn(&PreparedCase) -> Input + Copy,
     RunFn: Fn(ImplType, Input, &PreparedCase) -> Result<Output, EntroGdError> + Copy,
+    CaseFilter: Fn(&PreparedCase) -> bool + Copy,
+    ImplCaseFilter: Fn(ImplType, &PreparedCase) -> bool + Copy,
 {
     let mut group = c.benchmark_group(group_name);
     for case in prepared_cases {
+        if !case_filter(case) {
+            continue;
+        }
         group.throughput(Throughput::Bytes(case.source_size));
         for implementation in implementations.iter().copied() {
+            if !impl_case_filter(implementation, case) {
+                continue;
+            }
             group.bench_function(
                 BenchmarkId::from_parameter(format!(
                     "{}/{}",
@@ -443,12 +773,63 @@ fn benchmark_filter_steps(c: &mut Criterion) {
 
     bench_step_group(
         c,
+        "Step/InferFeatureSpecs.process",
+        &prepared_cases,
+        &INFER_FEATURE_SPECS_IMPLS,
+        InferFeatureSpecsImpl::label,
+        |case| {
+            case.dataset_seed
+                .clone()
+                .expect("dataset seed should be available for csv cases")
+        },
+        |implementation, input, _case| implementation.process(input),
+        PreparedCase::is_csv,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/BuildBitDataSet.process",
+        &prepared_cases,
+        &BUILD_BIT_DATA_SET_IMPLS,
+        BuildBitDataSetImpl::label,
+        |case| {
+            (
+                case.dataset_seed
+                    .clone()
+                    .expect("dataset seed should be available for csv cases"),
+                case.inferred_feature_specs_seed
+                    .clone()
+                    .expect("inferred feature specs should be available for csv cases"),
+            )
+        },
+        |implementation, input, _case| implementation.process(input),
+        PreparedCase::is_csv,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/BuildImageBitDataSet.process",
+        &prepared_cases,
+        &BUILD_IMAGE_BIT_DATA_SET_IMPLS,
+        BuildImageBitDataSetImpl::label,
+        |case| PathBuf::from(case.data_file_path),
+        |implementation, input, case| implementation.process(input, case.input),
+        PreparedCase::is_image,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
         "Step/Entropy.process",
         &prepared_cases,
         &ENTROPY_IMPLS,
         EntropyImpl::label,
         |case| case.bit_data_seed.clone(),
         |implementation, input, _case| implementation.entropy(input),
+        |_| true,
+        |_, _| true,
     );
 
     bench_step_group(
@@ -459,6 +840,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         GenCondensedImpl::label,
         |case| case.entropy_seed.clone(),
         |implementation, input, case| implementation.process(input, case.m_max),
+        |_| true,
+        |_, _| true,
     );
 
     bench_step_group(
@@ -469,6 +852,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         SelectBasesImpl::label,
         |case| case.condensed_seed.clone(),
         |implementation, input, case| implementation.process(input, case.patience),
+        |_| true,
+        |_, _| true,
     );
 
     bench_step_group(
@@ -486,6 +871,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
             .unwrap()
         },
         |implementation, input, _case| implementation.process(input),
+        |_| true,
+        encode_impl_supported,
     );
 
     bench_step_group(
@@ -496,6 +883,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         SaveImpl::label,
         |case| case.compressed_seed.clone(),
         |implementation, input, case| implementation.process(input, case.egd_path.clone()),
+        |_| true,
+        |_, _| true,
     );
 
     bench_step_group(
@@ -506,6 +895,43 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         LoadImpl::label,
         |case| case.egd_path.clone(),
         |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/SaveIgdFile.process",
+        &prepared_cases,
+        &SAVE_IGD_IMPLS,
+        SaveIgdImpl::label,
+        |case| case.compressed_seed.clone(),
+        |implementation, input, case| {
+            implementation.process(
+                input,
+                case.igd_path
+                    .clone()
+                    .expect("igd path should be available for image cases"),
+            )
+        },
+        PreparedCase::is_image,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/LoadIgdFile.process",
+        &prepared_cases,
+        &LOAD_IGD_IMPLS,
+        LoadIgdImpl::label,
+        |case| {
+            case.igd_path
+                .clone()
+                .expect("igd path should be available for image cases")
+        },
+        |implementation, input, _case| implementation.process(input),
+        PreparedCase::is_image,
+        |_, _| true,
     );
 
     bench_step_group(
@@ -521,6 +947,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
             )
         },
         |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
     );
 
     bench_step_group(
@@ -531,6 +959,20 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         DecompressFileImpl::label,
         |case| case.loaded_compressed_seed.clone(),
         |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/DecompressAnalytics.process",
+        &prepared_cases,
+        &DECOMPRESS_ANALYTICS_IMPLS,
+        DecompressAnalyticsImpl::label,
+        |case| case.compressed_seed.clone(),
+        |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
     );
 }
 

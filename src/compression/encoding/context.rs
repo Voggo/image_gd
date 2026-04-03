@@ -94,10 +94,10 @@ pub(super) fn encode_rows_as_symbol_stream(
 
     for (row, id_ref) in context.row_to_group_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;
-        let chunk = bit_data.get_chunk(row);
+        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
 
         for &(start, end) in &context.deviation_ranges {
-            symbol_stream.extend_from_bitslice(&chunk[start..end]);
+            symbol_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
         }
 
         if context.l_id > 0 {

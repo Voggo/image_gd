@@ -14,7 +14,7 @@ fn test_csv_roundtrip_compression() {
 
     let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
 
-    let compression_pipeline = EntropyOptimized {}
+    let compression_pipeline = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesOptimized {
             patience: 10,
@@ -78,8 +78,9 @@ fn test_image_roundtrip_compression() {
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping: 3,
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pad_rows_to_word: true,
     }
-    .then(EntropyOptimized {})
+    .then(EntropyBatched {})
     .then(GenCondensedSamples { m_max: 0 })
     .then(SelectBasesOptimized {
         patience: 10,

@@ -8,6 +8,7 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use std::hint::black_box;
 
+use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRowsData};
@@ -15,12 +16,14 @@ use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRowsData};
 #[derive(Clone, Copy)]
 enum CompressionVariant {
     BaselineV1,
+    ImageBaselineV1,
 }
 
 impl CompressionVariant {
     fn label(self) -> &'static str {
         match self {
             CompressionVariant::BaselineV1 => "baseline-v1",
+            CompressionVariant::ImageBaselineV1 => "image-baseline-v1",
         }
     }
 }
@@ -29,19 +32,96 @@ impl CompressionVariant {
 struct RoundtripCase {
     data_file_path: &'static str,
     variant: CompressionVariant,
-    float_storage: FloatStorage,
+    input: RoundtripInput,
     m_max: usize,
     patience: usize,
 }
 
+#[derive(Clone, Copy)]
+enum RoundtripInput {
+    Csv {
+        float_storage: FloatStorage,
+    },
+    Image {
+        colorspace: ImageColorSpace,
+        color_model: ImageColorModel,
+        pixel_grouping: u32,
+        grouping_transform: ImageGroupingTransform,
+    },
+}
+
+impl RoundtripCase {
+    fn csv(
+        data_file_path: &'static str,
+        variant: CompressionVariant,
+        float_storage: FloatStorage,
+        m_max: usize,
+        patience: usize,
+    ) -> Self {
+        Self {
+            data_file_path,
+            variant,
+            input: RoundtripInput::Csv { float_storage },
+            m_max,
+            patience,
+        }
+    }
+
+    fn image(
+        data_file_path: &'static str,
+        variant: CompressionVariant,
+        m_max: usize,
+        patience: usize,
+    ) -> Self {
+        Self {
+            data_file_path,
+            variant,
+            input: RoundtripInput::Image {
+                colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+                color_model: ImageColorModel::YCoCgR,
+                pixel_grouping: 1,
+                grouping_transform: ImageGroupingTransform::Raw,
+            },
+            m_max,
+            patience,
+        }
+    }
+
+    fn is_csv(self) -> bool {
+        matches!(self.input, RoundtripInput::Csv { .. })
+    }
+
+    fn file_extension(self) -> &'static str {
+        match self.input {
+            RoundtripInput::Csv { .. } => "egd",
+            RoundtripInput::Image { .. } => "igd",
+        }
+    }
+
+    fn input_label(self) -> &'static str {
+        match self.input {
+            RoundtripInput::Csv { .. } => "csv",
+            RoundtripInput::Image { .. } => "image",
+        }
+    }
+}
+
 fn roundtrip_cases() -> Vec<RoundtripCase> {
-    vec![RoundtripCase {
-        data_file_path: "data/tabular/aarhus-citylab.csv",
-        variant: CompressionVariant::BaselineV1,
-        float_storage: FloatStorage::F32,
-        m_max: 50,
-        patience: 10,
-    }]
+    vec![
+        RoundtripCase::csv(
+            "data/tabular/aarhus-citylab.csv",
+            CompressionVariant::BaselineV1,
+            FloatStorage::F32,
+            50,
+            10,
+        ),
+        RoundtripCase::image(
+            "data/images/kodim10.png",
+            CompressionVariant::ImageBaselineV1,
+            0,
+            10,
+        ),
+    ]
 }
 
 fn dataset_label(path: &str) -> &str {
@@ -50,8 +130,9 @@ fn dataset_label(path: &str) -> &str {
 
 fn benchmark_label(case: RoundtripCase) -> String {
     format!(
-        "{}/{}-m{}-p{}",
+        "{}/{}/{}-m{}-p{}",
         case.variant.label(),
+        case.input_label(),
         dataset_label(case.data_file_path),
         case.m_max,
         case.patience
@@ -60,21 +141,64 @@ fn benchmark_label(case: RoundtripCase) -> String {
 
 fn compressed_output_path(case: RoundtripCase) -> PathBuf {
     format!(
-        "target/bench-artifacts/{}.{}.egd",
+        "target/bench-artifacts/{}.{}.{}",
         dataset_label(case.data_file_path),
-        case.variant.label()
+        case.variant.label(),
+        case.file_extension(),
     )
     .into()
 }
 
 fn build_loader(case: RoundtripCase) -> CsvDataLoader {
-    CsvDataLoader::new(true).with_float_storage(case.float_storage)
+    match case.input {
+        RoundtripInput::Csv { float_storage } => {
+            CsvDataLoader::new(true).with_float_storage(float_storage)
+        }
+        RoundtripInput::Image { .. } => {
+            panic!(
+                "build_loader called for image case: {}",
+                case.data_file_path
+            )
+        }
+    }
+}
+
+fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
+    match case.input {
+        RoundtripInput::Image {
+            colorspace,
+            color_model,
+            pixel_grouping,
+            grouping_transform,
+        } => BuildImageBitDataSet {
+            colorspace,
+            color_model,
+            pixel_grouping,
+            grouping_transform,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
+        }
+        .process(path)
+        .unwrap(),
+        RoundtripInput::Csv { .. } => {
+            panic!(
+                "build_image_bit_data called for csv case: {}",
+                case.data_file_path
+            )
+        }
+    }
 }
 
 fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> CompressedData {
     match case.variant {
-        CompressionVariant::BaselineV1 => EntropyOptimized {}
+        CompressionVariant::BaselineV1 => EntropyBatched {}
             .then(GenCondensedSamples { m_max: case.m_max })
+            .then(SelectBases {
+                patience: case.patience,
+            })
+            .then(EncodeDataOptimized {})
+            .process(bit_data)
+            .unwrap(),
+        CompressionVariant::ImageBaselineV1 => EntropyNaive {}
             .then(SelectBases {
                 patience: case.patience,
             })
@@ -88,7 +212,7 @@ struct PreparedRoundtripCase {
     case: RoundtripCase,
     name: String,
     source_size: u64,
-    dataset_seed: Dataset,
+    dataset_seed: Option<Dataset>,
     bit_data_seed: BitDataSet,
     compressed_seed: CompressedData,
     compressed_path: PathBuf,
@@ -97,18 +221,31 @@ struct PreparedRoundtripCase {
 
 fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
     let _ = std::fs::create_dir_all("target/bench-artifacts");
-    let loader = build_loader(case);
-    let loaded = loader.load(case.data_file_path).unwrap();
-    let dataset_seed = loaded.dataset;
     let source_size = std::fs::metadata(case.data_file_path).unwrap().len() as u64;
-    let bit_data_seed = BitDataSet::from_dataset(&dataset_seed).unwrap();
+    let dataset_seed = if case.is_csv() {
+        let loader = build_loader(case);
+        Some(loader.load(case.data_file_path).unwrap().dataset)
+    } else {
+        None
+    };
+    let bit_data_seed = match &dataset_seed {
+        Some(dataset) => BitDataSet::from_dataset(dataset).unwrap(),
+        None => build_image_bit_data(case, PathBuf::from(case.data_file_path)),
+    };
     let compressed_seed = run_compression_core(case, bit_data_seed.clone());
-    let compressed_path = SaveEgdFile {
-        output_path: compressed_output_path(case),
-    }
-    .process(compressed_seed.clone())
-    .unwrap();
-    let row_indices = (0..dataset_seed.num_rows()).collect::<Vec<usize>>();
+    let compressed_path = match case.input {
+        RoundtripInput::Csv { .. } => SaveEgdFile {
+            output_path: compressed_output_path(case),
+        }
+        .process(compressed_seed.clone())
+        .unwrap(),
+        RoundtripInput::Image { .. } => SaveIgdFile {
+            output_path: compressed_output_path(case),
+        }
+        .process(compressed_seed.clone())
+        .unwrap(),
+    };
+    let row_indices = (0..bit_data_seed.num_rows()).collect::<Vec<usize>>();
 
     PreparedRoundtripCase {
         case,
@@ -126,6 +263,9 @@ fn benchmark_load_csv(c: &mut Criterion) {
     let mut group = c.benchmark_group("LoadCsv");
 
     for case in roundtrip_cases() {
+        if !case.is_csv() {
+            continue;
+        }
         group.throughput(Throughput::Bytes(
             std::fs::metadata(case.data_file_path).unwrap().len() as u64,
         ));
@@ -151,16 +291,27 @@ fn benchmark_preprocess_to_bitdata(c: &mut Criterion) {
 
     for prepared in &prepared_cases {
         group.throughput(Throughput::Bytes(prepared.source_size));
-        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
-            b.iter_batched(
-                || prepared.dataset_seed.clone(),
-                |dataset| {
-                    let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
-                    black_box(bit_data);
-                },
-                BatchSize::SmallInput,
-            );
-        });
+        group.bench_function(
+            BenchmarkId::from_parameter(&prepared.name),
+            |b| match prepared.case.input {
+                RoundtripInput::Csv { .. } => b.iter_batched(
+                    || prepared.dataset_seed.clone().unwrap(),
+                    |dataset| {
+                        let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
+                        black_box(bit_data);
+                    },
+                    BatchSize::SmallInput,
+                ),
+                RoundtripInput::Image { .. } => b.iter_batched(
+                    || PathBuf::from(prepared.case.data_file_path),
+                    |path| {
+                        let bit_data = build_image_bit_data(prepared.case, path);
+                        black_box(bit_data);
+                    },
+                    BatchSize::SmallInput,
+                ),
+            },
+        );
     }
 
     group.finish();
@@ -190,12 +341,12 @@ fn benchmark_compression_core(c: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_save_egd(c: &mut Criterion) {
+fn benchmark_save_compressed(c: &mut Criterion) {
     let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
         .into_iter()
         .map(prepare_roundtrip_case)
         .collect();
-    let mut group = c.benchmark_group("SaveEgdFile");
+    let mut group = c.benchmark_group("SaveCompressedFile");
 
     for prepared in &prepared_cases {
         group.throughput(Throughput::Bytes(prepared.source_size));
@@ -203,11 +354,18 @@ fn benchmark_save_egd(c: &mut Criterion) {
             b.iter_batched(
                 || prepared.compressed_seed.clone(),
                 |compressed| {
-                    let path = SaveEgdFile {
-                        output_path: prepared.compressed_path.clone(),
-                    }
-                    .process(compressed)
-                    .unwrap();
+                    let path = match prepared.case.input {
+                        RoundtripInput::Csv { .. } => SaveEgdFile {
+                            output_path: prepared.compressed_path.clone(),
+                        }
+                        .process(compressed)
+                        .unwrap(),
+                        RoundtripInput::Image { .. } => SaveIgdFile {
+                            output_path: prepared.compressed_path.clone(),
+                        }
+                        .process(compressed)
+                        .unwrap(),
+                    };
                     black_box(path);
                 },
                 BatchSize::SmallInput,
@@ -282,9 +440,14 @@ fn benchmark_decompression_cold(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(prepared.source_size));
         group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
             b.iter(|| {
-                let loaded_compressed = LoadEgdFile {}
-                    .process(prepared.compressed_path.clone())
-                    .unwrap();
+                let loaded_compressed = match prepared.case.input {
+                    RoundtripInput::Csv { .. } => LoadEgdFile {}
+                        .process(prepared.compressed_path.clone())
+                        .unwrap(),
+                    RoundtripInput::Image { .. } => LoadIgdFile {}
+                        .process(prepared.compressed_path.clone())
+                        .unwrap(),
+                };
                 let decompressed = DecompressRowsData {}
                     .process((Arc::new(loaded_compressed), prepared.row_indices.clone()))
                     .unwrap();
@@ -307,9 +470,14 @@ fn benchmark_decompress_file_cold(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(prepared.source_size));
         group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
             b.iter(|| {
-                let loaded_compressed = LoadEgdFile {}
-                    .process(prepared.compressed_path.clone())
-                    .unwrap();
+                let loaded_compressed = match prepared.case.input {
+                    RoundtripInput::Csv { .. } => LoadEgdFile {}
+                        .process(prepared.compressed_path.clone())
+                        .unwrap(),
+                    RoundtripInput::Image { .. } => LoadIgdFile {}
+                        .process(prepared.compressed_path.clone())
+                        .unwrap(),
+                };
                 let decompressed = DecompressFileData {}.process(loaded_compressed).unwrap();
                 black_box(decompressed);
             });
@@ -324,7 +492,7 @@ criterion_group!(
     benchmark_load_csv,
     benchmark_preprocess_to_bitdata,
     benchmark_compression_core,
-    benchmark_save_egd,
+    benchmark_save_compressed,
     benchmark_decompression_warm,
     benchmark_decompress_file_warm,
     benchmark_decompression_cold,

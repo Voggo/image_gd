@@ -4,8 +4,8 @@ use std::path::PathBuf;
 pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
 
 use crate::compression::preprocessor::{
-    BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec,
-    ImageReconstructionInfo,
+    BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD,
+    FeatureSpec, ImageReconstructionInfo, aligned_stride, append_row_padding,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -32,6 +32,7 @@ pub struct BuildImageBitDataSet {
     pub color_model: ImageColorModel,
     pub pixel_grouping: u32,
     pub grouping_transform: ImageGroupingTransform,
+    pub pad_rows_to_word: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +49,7 @@ struct ImageBuildOptions {
     color_model: ImageColorModel,
     pixel_grouping: u32,
     grouping_transform: ImageGroupingTransform,
+    pad_rows_to_word: bool,
 }
 
 impl Default for BuildImageBitDataSet {
@@ -57,6 +59,7 @@ impl Default for BuildImageBitDataSet {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
     }
 }
@@ -80,6 +83,7 @@ impl Filter for BuildImageBitDataSet {
                     color_model: self.color_model,
                     pixel_grouping: self.pixel_grouping,
                     grouping_transform: self.grouping_transform,
+                    pad_rows_to_word: self.pad_rows_to_word,
                 },
             ),
             DynamicImage::ImageRgba8(img) => build_image_bitdataset(
@@ -94,6 +98,7 @@ impl Filter for BuildImageBitDataSet {
                     color_model: self.color_model,
                     pixel_grouping: self.pixel_grouping,
                     grouping_transform: self.grouping_transform,
+                    pad_rows_to_word: self.pad_rows_to_word,
                 },
             ),
             other => Err(EntroGdError::InvalidMetadata {
@@ -121,6 +126,7 @@ fn build_image_bitdataset(
         color_model,
         pixel_grouping,
         grouping_transform,
+        pad_rows_to_word,
     } = options;
 
     if !matches!(channels, 3 | 4) {
@@ -188,12 +194,20 @@ fn build_image_bitdataset(
             .ok_or_else(|| EntroGdError::InvalidMetadata {
                 message: "image chunk size overflow".to_string(),
             })?;
-    let total_bits = rows
-        .checked_mul(chunk_size)
+    let stride = aligned_stride(chunk_size, pad_rows_to_word);
+    let logical_total_bits =
+        rows.checked_mul(chunk_size)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "image logical bitdata size overflow".to_string(),
+            })?;
+    let storage_bits = rows
+        .checked_mul(stride)
         .ok_or_else(|| EntroGdError::InvalidMetadata {
-            message: "image bitdata size overflow".to_string(),
+            message: "image padded bitdata size overflow".to_string(),
         })?;
-    let info = BitDataInfo::new_with_reconstruction_info(features, total_bits, reconstruction)?;
+    let info =
+        BitDataInfo::new_with_reconstruction_info(features, logical_total_bits, reconstruction)?
+            .with_original_size_bits_and_row_stride(logical_total_bits, stride);
 
     let encoded_raw = match color_model {
         ImageColorModel::Rgb => raw,
@@ -201,7 +215,7 @@ fn build_image_bitdataset(
         ImageColorModel::YCoCgR => convert_rgb_to_ycocg_r_channels(&raw, channels_usize),
     };
 
-    let mut bitstream = crate::BitStream::with_capacity(total_bits);
+    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
 
     let width_usize = width as usize;
     let height_usize = height as usize;
@@ -219,12 +233,14 @@ fn build_image_bitdataset(
                 );
                 encode_grouped_channel(&mut bitstream, &grouped_values, grouping_transform);
             }
+            append_row_padding(&mut bitstream, stride.saturating_sub(chunk_size));
         }
     }
 
     let data = BitData {
         data: bitstream,
         chunk_size,
+        stride,
         num_rows: rows,
     };
 
@@ -432,6 +448,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -468,6 +485,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -562,6 +580,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -624,6 +643,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -672,6 +692,7 @@ mod tests {
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForMin,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -729,6 +750,7 @@ mod tests {
             color_model: ImageColorModel::YCoCg,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -779,6 +801,7 @@ mod tests {
             color_model: ImageColorModel::YCoCg,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -825,6 +848,7 @@ mod tests {
             color_model: ImageColorModel::YCoCgR,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -882,6 +906,7 @@ mod tests {
             color_model: ImageColorModel::YCoCgR,
             pixel_grouping: 1,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
         let bit_data = filter.process(path.clone()).unwrap();
 
@@ -893,6 +918,41 @@ mod tests {
             ),
             vec![130]
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn honors_row_padding_flag_for_image_bitdata() {
+        let path = unique_tmp_path("entro_gd_alignment_image");
+        let mut img = RgbImage::new(2, 1);
+        img.put_pixel(0, 0, Rgb([1, 2, 3]));
+        img.put_pixel(1, 0, Rgb([4, 5, 6]));
+        img.save(&path).unwrap();
+
+        let compact = BuildImageBitDataSet {
+            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+            color_model: ImageColorModel::Rgb,
+            pixel_grouping: 1,
+            grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: false,
+        }
+        .process(path.clone())
+        .unwrap();
+        assert_eq!(compact.chunk_size(), 24);
+        assert_eq!(compact.data.stride, 24);
+
+        let padded = BuildImageBitDataSet {
+            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+            color_model: ImageColorModel::Rgb,
+            pixel_grouping: 1,
+            grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            pad_rows_to_word: true,
+        }
+        .process(path.clone())
+        .unwrap();
+        assert_eq!(padded.chunk_size(), 24);
+        assert_eq!(padded.data.stride, 64);
 
         let _ = std::fs::remove_file(path);
     }
