@@ -8,7 +8,7 @@ use criterion::Criterion;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
 use image::GenericImageView;
-use png::{BitDepth, ColorType, Compression, Decoder, Encoder, FilterType};
+use png::{BitDepth, ColorType, Compression, Decoder, Encoder};
 use std::hint::black_box;
 
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
@@ -243,8 +243,8 @@ fn encode_png_bytes(raw: &RawImageData) -> Vec<u8> {
     let mut encoder = Encoder::new(&mut output, raw.width, raw.height);
     encoder.set_color(ColorType::Rgba);
     encoder.set_depth(BitDepth::Eight);
-    encoder.set_compression(Compression::Default);
-    encoder.set_filter(FilterType::Sub);
+    encoder.set_compression(Compression::Balanced);
+    encoder.set_filter(png::Filter::Adaptive);
 
     let mut writer = encoder.write_header().unwrap();
     writer.write_image_data(&raw.rgba).unwrap();
@@ -255,7 +255,7 @@ fn encode_png_bytes(raw: &RawImageData) -> Vec<u8> {
 fn decode_png_bytes(input: &[u8]) -> RawImageData {
     let decoder = Decoder::new(Cursor::new(input));
     let mut reader = decoder.read_info().unwrap();
-    let mut buffer = vec![0; reader.output_buffer_size()];
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap_or_default()];
     let info = reader.next_frame(&mut buffer).unwrap();
     buffer.truncate(info.buffer_size());
 
