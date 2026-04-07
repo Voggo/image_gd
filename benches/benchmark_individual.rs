@@ -1,6 +1,7 @@
 use std::hint::black_box;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use criterion::BatchSize;
 use criterion::BenchmarkId;
@@ -126,8 +127,12 @@ impl EntropyImpl {
         match self {
             EntropyImpl::Naive => EntropyNaive {}.process(bit_data),
             EntropyImpl::Batched => EntropyBatched {}.process(bit_data),
-            EntropyImpl::StrideSampledNaive => EntropyStrideSampled { skip_rows: 1 }.process(bit_data),
-            EntropyImpl::StrideSampledBatched => EntropyStrideSampledBatched { skip_rows: 1 }.process(bit_data),
+            EntropyImpl::StrideSampledNaive => {
+                EntropyStrideSampled { skip_rows: 1 }.process(bit_data)
+            }
+            EntropyImpl::StrideSampledBatched => {
+                EntropyStrideSampledBatched { skip_rows: 1 }.process(bit_data)
+            }
         }
     }
 }
@@ -735,6 +740,7 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, CaseFilter
     ImplCaseFilter: Fn(ImplType, &PreparedCase) -> bool + Copy,
 {
     let mut group = c.benchmark_group(group_name);
+    group.sample_size(10).warm_up_time(Duration::from_secs(1));
     for case in prepared_cases {
         if !case_filter(case) {
             continue;

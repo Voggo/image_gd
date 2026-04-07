@@ -154,17 +154,16 @@ fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<(u
     }
     let stride = stride.max(1);
 
-    let mut sampled_rows = 0usize;
     let mut ones_count = vec![0usize; chunk_size];
 
+    // Trying to minimize bounds checks by using iterators
     for row in (0..num_rows).step_by(stride) {
         let row_bits = unsafe { bit_data.get_chunk_unchecked(row) };
-        sampled_rows += 1;
-        for bit_index in row_bits.iter_ones() {
-            ones_count[bit_index] += 1;
+        for (count, bit) in ones_count.iter_mut().zip(row_bits.iter()) {
+            *count += *bit as usize;
         }
     }
-
+    let sampled_rows = (num_rows + stride - 1) / stride;
     let inv_rows = 1.0 / sampled_rows as f64;
     ones_count
         .into_iter()

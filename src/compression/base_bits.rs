@@ -319,9 +319,10 @@ impl BaseBitBatchGroups {
         }
 
         let bucket_count = 1usize << new_bit_positions.len();
-        let mut counts = vec![0usize; bucket_count];
-        let mut offsets = vec![0usize; bucket_count];
-        let mut write_positions = vec![0usize; bucket_count];
+        const MAX_BUCKETS: usize = 1usize << BIT_LIMIT;
+        let mut counts = [0usize; MAX_BUCKETS];
+        let mut offsets = [0usize; MAX_BUCKETS];
+        let mut write_positions = [0usize; MAX_BUCKETS];
         let mut scratch_rows: Vec<usize> = Vec::new();
         let mut scratch_bucket_ids: Vec<usize> = Vec::new();
 
@@ -337,21 +338,24 @@ impl BaseBitBatchGroups {
                 continue;
             }
 
-            counts.fill(0);
+            counts[..bucket_count].fill(0);
 
             if scratch_bucket_ids.len() < group.len() {
                 scratch_bucket_ids.resize(group.len(), 0);
             }
+            let bucket_ids = &mut scratch_bucket_ids[..group.len()];
 
-            for (idx, &row) in group.iter().enumerate() {
+            for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
                 let mut bucket_id = 0usize;
                 for (bit_idx, &bit_position) in new_bit_positions.iter().enumerate() {
                     bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) }
                         as usize)
                         << bit_idx;
                 }
-                scratch_bucket_ids[idx] = bucket_id;
-                counts[bucket_id] += 1;
+                *bucket_id_slot = bucket_id;
+                unsafe {
+                    *counts.get_unchecked_mut(bucket_id) += 1;
+                }
             }
 
             let mut running = 0usize;
@@ -364,13 +368,14 @@ impl BaseBitBatchGroups {
                 scratch_rows.resize(group.len(), 0);
             }
 
-            write_positions.copy_from_slice(&offsets);
+            write_positions[..bucket_count].copy_from_slice(&offsets[..bucket_count]);
 
-            for (idx, &row) in group.iter().enumerate() {
-                let bucket_id = scratch_bucket_ids[idx];
-                let write_idx = write_positions[bucket_id];
+            for (&row, &bucket_id) in group.iter().zip(bucket_ids.iter()) {
+                let write_idx = unsafe { *write_positions.get_unchecked(bucket_id) };
                 scratch_rows[write_idx] = row;
-                write_positions[bucket_id] += 1;
+                unsafe {
+                    *write_positions.get_unchecked_mut(bucket_id) = write_idx + 1;
+                }
             }
 
             for bucket_id in 0..bucket_count {
@@ -541,18 +546,24 @@ impl BaseBitIncSignatureGroups {
             Default::default(),
         );
 
-        for row in 0..self.row_signatures.len() {
-            let old_signature = self.row_signatures[row];
+        let mut mini_signatures = vec![0u64; self.row_signatures.len()];
 
+        for row in 0..self.row_signatures.len() {
             let mut mini_signature = 0u64;
             for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
-                let bit = if unsafe { bit_data.get_bit_unchecked(row, bit_position) } {
-                    1
-                } else {
-                    0
-                };
+                let bit = unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u64;
                 mini_signature |= bit << i;
             }
+
+            mini_signatures[row] = mini_signature;
+        }
+
+        for (row_signature, mini_signature) in self
+            .row_signatures
+            .iter_mut()
+            .zip(mini_signatures.into_iter())
+        {
+            let old_signature = *row_signature;
 
             let transition_key = ((old_signature as u128) << 64) | (mini_signature as u128);
             let transition_entry = transitions.entry(transition_key).or_insert_with(|| {
@@ -565,7 +576,7 @@ impl BaseBitIncSignatureGroups {
             });
             transition_entry.1 += 1;
 
-            self.row_signatures[row] = transition_entry.0;
+            *row_signature = transition_entry.0;
         }
 
         // Apply count deltas in aggregate to avoid per-row hash-map churn.
@@ -861,16 +872,24 @@ impl BaseBitHyperLogLogCount {
         self.registers.fill(0);
         let bucket_shift = 64 - Self::HLL_PRECISION as usize;
 
-        for (row, row_hash) in self.row_hashes.iter_mut().enumerate() {
+        debug_assert_eq!(self.row_hashes.len(), bit_data.num_rows());
+        debug_assert_eq!(self.bit_hash_words.len(), bit_data.chunk_size());
+        debug_assert_eq!(self.registers.len(), 1usize << Self::HLL_PRECISION);
+
+        let new_bit_positions = new_bit_positions.as_slice();
+
+        for row in 0..self.row_hashes.len() {
             let row_start = row * stride;
-            for &bit_position in &new_bit_positions {
-                if unsafe {
-                    bit_data
-                        .data
-                        .get_bit_linear_unchecked(row_start + bit_position)
-                } {
-                    *row_hash ^= self.bit_hash_words[bit_position];
-                }
+
+            let row_hash = unsafe { self.row_hashes.get_unchecked_mut(row) };
+
+            for &bit_position in new_bit_positions {
+                let bit =
+                    unsafe { bit_data.data.get_bit_linear_unchecked(row_start + bit_position) }
+                        as u64;
+                let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
+                let bit_mask = 0u64.wrapping_sub(bit);
+                *row_hash ^= hash_word & bit_mask;
             }
 
             let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
@@ -880,7 +899,8 @@ impl BaseBitHyperLogLogCount {
             let rank = (suffix.leading_zeros() as usize + 1)
                 .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
 
-            self.registers[bucket] = self.registers[bucket].max(rank);
+            let register = unsafe { self.registers.get_unchecked_mut(bucket) };
+            *register = (*register).max(rank);
         }
 
         self.num_bases_estimate =

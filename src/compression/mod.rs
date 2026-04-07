@@ -28,8 +28,8 @@ pub use encoding::{
     EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
-    EntropyNaive, EntropyBatched, EntropyStrideSampled, EntropyStrideSampledBatched, calculate_entropy,
-    calculate_entropy_stride_sampled,
+    EntropyBatched, EntropyNaive, EntropyStrideSampled, EntropyStrideSampledBatched,
+    calculate_entropy, calculate_entropy_stride_sampled,
 };
 pub use file_format::{
     EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,
