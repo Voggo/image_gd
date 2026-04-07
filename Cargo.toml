@@ -23,6 +23,7 @@ serde_json = { version = "1.0.149", optional = true }
 [dev-dependencies]
 criterion = "0.8.2"
 pretty_assertions = "1.4.1"
+png = "0.17.16"
 
 [profile.release]
 codegen-units = 1

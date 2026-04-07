@@ -1,3 +1,4 @@
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,6 +7,8 @@ use criterion::BenchmarkId;
 use criterion::Criterion;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main};
+use image::GenericImageView;
+use png::{BitDepth, ColorType, Compression, Decoder, Encoder, FilterType};
 use std::hint::black_box;
 
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
@@ -149,6 +152,15 @@ fn compressed_output_path(case: RoundtripCase) -> PathBuf {
     .into()
 }
 
+fn png_output_path(case: RoundtripCase) -> PathBuf {
+    format!(
+        "target/bench-artifacts/{}.{}.png",
+        dataset_label(case.data_file_path),
+        case.variant.label(),
+    )
+    .into()
+}
+
 fn build_loader(case: RoundtripCase) -> CsvDataLoader {
     match case.input {
         RoundtripInput::Csv { float_storage } => {
@@ -208,6 +220,52 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
     }
 }
 
+#[derive(Clone)]
+struct RawImageData {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+fn load_raw_image_rgba(path: &str) -> RawImageData {
+    let image = image::open(path).unwrap();
+    let (width, height) = image.dimensions();
+    let rgba = image.to_rgba8().into_raw();
+    RawImageData {
+        width,
+        height,
+        rgba,
+    }
+}
+
+fn encode_png_bytes(raw: &RawImageData) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut encoder = Encoder::new(&mut output, raw.width, raw.height);
+    encoder.set_color(ColorType::Rgba);
+    encoder.set_depth(BitDepth::Eight);
+    encoder.set_compression(Compression::Default);
+    encoder.set_filter(FilterType::Sub);
+
+    let mut writer = encoder.write_header().unwrap();
+    writer.write_image_data(&raw.rgba).unwrap();
+    drop(writer);
+    output
+}
+
+fn decode_png_bytes(input: &[u8]) -> RawImageData {
+    let decoder = Decoder::new(Cursor::new(input));
+    let mut reader = decoder.read_info().unwrap();
+    let mut buffer = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buffer).unwrap();
+    buffer.truncate(info.buffer_size());
+
+    RawImageData {
+        width: info.width,
+        height: info.height,
+        rgba: buffer,
+    }
+}
+
 struct PreparedRoundtripCase {
     case: RoundtripCase,
     name: String,
@@ -217,6 +275,9 @@ struct PreparedRoundtripCase {
     compressed_seed: CompressedData,
     compressed_path: PathBuf,
     row_indices: Vec<usize>,
+    raw_image_seed: Option<RawImageData>,
+    png_bytes_seed: Option<Vec<u8>>,
+    png_path: Option<PathBuf>,
 }
 
 fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
@@ -246,6 +307,16 @@ fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
         .unwrap(),
     };
     let row_indices = (0..bit_data_seed.num_rows()).collect::<Vec<usize>>();
+    let (raw_image_seed, png_bytes_seed, png_path) = match case.input {
+        RoundtripInput::Image { .. } => {
+            let raw_image = load_raw_image_rgba(case.data_file_path);
+            let png_bytes = encode_png_bytes(&raw_image);
+            let png_path = png_output_path(case);
+            std::fs::write(&png_path, &png_bytes).unwrap();
+            (Some(raw_image), Some(png_bytes), Some(png_path))
+        }
+        RoundtripInput::Csv { .. } => (None, None, None),
+    };
 
     PreparedRoundtripCase {
         case,
@@ -256,6 +327,9 @@ fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
         compressed_seed,
         compressed_path,
         row_indices,
+        raw_image_seed,
+        png_bytes_seed,
+        png_path,
     }
 }
 
@@ -487,6 +561,87 @@ fn benchmark_decompress_file_cold(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_png_compress_file_warm(c: &mut Criterion) {
+    let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
+        .into_iter()
+        .map(prepare_roundtrip_case)
+        .collect();
+    let mut group = c.benchmark_group("PngCompressFileWarm");
+
+    for prepared in &prepared_cases {
+        let Some(raw_image_seed) = &prepared.raw_image_seed else {
+            continue;
+        };
+
+        group.throughput(Throughput::Bytes(prepared.source_size));
+        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
+            b.iter_batched(
+                || raw_image_seed.clone(),
+                |raw_image| {
+                    let encoded = encode_png_bytes(&raw_image);
+                    black_box(encoded);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
+fn benchmark_png_decompress_file_warm(c: &mut Criterion) {
+    let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
+        .into_iter()
+        .map(prepare_roundtrip_case)
+        .collect();
+    let mut group = c.benchmark_group("PngDecompressFileWarm");
+
+    for prepared in &prepared_cases {
+        let Some(png_bytes_seed) = &prepared.png_bytes_seed else {
+            continue;
+        };
+
+        group.throughput(Throughput::Bytes(prepared.source_size));
+        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
+            b.iter_batched(
+                || png_bytes_seed.clone(),
+                |png_bytes| {
+                    let decoded = decode_png_bytes(&png_bytes);
+                    black_box(decoded);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
+fn benchmark_png_decompress_file_cold(c: &mut Criterion) {
+    let prepared_cases: Vec<PreparedRoundtripCase> = roundtrip_cases()
+        .into_iter()
+        .map(prepare_roundtrip_case)
+        .collect();
+    let mut group = c.benchmark_group("PngDecompressFileCold");
+
+    for prepared in &prepared_cases {
+        let Some(png_path) = &prepared.png_path else {
+            continue;
+        };
+
+        group.throughput(Throughput::Bytes(prepared.source_size));
+        group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
+            b.iter(|| {
+                let png_bytes = std::fs::read(png_path).unwrap();
+                let decoded = decode_png_bytes(&png_bytes);
+                black_box(decoded);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_load_csv,
@@ -496,6 +651,9 @@ criterion_group!(
     benchmark_decompression_warm,
     benchmark_decompress_file_warm,
     benchmark_decompression_cold,
-    benchmark_decompress_file_cold
+    benchmark_decompress_file_cold,
+    benchmark_png_compress_file_warm,
+    benchmark_png_decompress_file_warm,
+    benchmark_png_decompress_file_cold
 );
 criterion_main!(benches);
