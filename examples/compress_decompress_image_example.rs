@@ -70,13 +70,12 @@ fn main() -> Result<(), EntroGdError> {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .then(EntropyBatched {})
-    .then(GenCondensedSamples { m_max: 0 })
-    .then(SelectBasesDebug {
-        patience: 10,
-        debug_csv_paths: Mutex::new(base_selection_debug_csv_paths.collect()),
+    .then(EntropyNaive {})
+    .then(SelectBasesProfileAllBits {
+        split_into_batches: 1,
+        base_bit_impl: BaseBitImpl::Naive,
     })
-    .then(EncodeDataHuffmanBaseIdOnly {});
+    .then(EncodeDataFusedDictionary {});
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());
