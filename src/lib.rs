@@ -122,8 +122,7 @@ pub fn init_logging() -> Option<LogHandle> {
             let file_layer = fmt::layer().with_ansi(false).with_writer(file_writer);
             let stderr_layer = fmt::layer()
                 .with_ansi(true)
-                .with_writer(std::io::stderr)
-                .with_filter(LevelFilter::WARN);
+                .with_writer(std::io::stderr);
             tracing::subscriber::set_global_default(
                 tracing_subscriber::registry()
                     .with(env_filter)

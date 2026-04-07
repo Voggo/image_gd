@@ -8,6 +8,10 @@ use std::env;
 use std::path::Path;
 
 fn main() -> Result<(), EntroGdError> {
+    unsafe {
+        env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
+        env::set_var("RUST_LOG", "trace");
+    }
     let _log_handle = init_logging();
 
     let _timer = ScopedTimer::info("Total compression-decompression process");

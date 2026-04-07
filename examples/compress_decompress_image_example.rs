@@ -6,9 +6,12 @@ use entro_gd::{EntroGdError, decompress_igd_to_image, init_logging};
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
 
 fn main() -> Result<(), EntroGdError> {
+    unsafe {
+        env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
+        env::set_var("RUST_LOG", "trace");
+    }
     let _log_handle = init_logging();
     let _timer =
         ScopedTimer::info("Total processing time for compressing and decompressing image(s)");
@@ -52,7 +55,7 @@ fn main() -> Result<(), EntroGdError> {
     let compressed_folder = data_folder.join("compressed");
     let decompressed_folder = data_folder.join("decompressed");
     let base_debug_folder = data_folder.join("base_selection_debug");
-    let base_selection_debug_csv_paths = files_to_process.iter().map(|file| {
+    let _base_selection_debug_csv_paths = files_to_process.iter().map(|file| {
         let stem = file
             .file_stem()
             .and_then(|s| s.to_str())
