@@ -310,15 +310,6 @@ impl BaseBitBatchGroups {
         }
 
         const BIT_LIMIT: usize = 8;
-
-        // Process in recursive batches, but ensure this frame only handles <= BIT_LIMIT bits.
-        if new_bit_positions.len() > BIT_LIMIT {
-            let (head, tail) = new_bit_positions.split_at(BIT_LIMIT);
-            self.add_bit_positions(bit_data, head);
-            return self.add_bit_positions(bit_data, tail);
-        }
-
-        let bucket_count = 1usize << new_bit_positions.len();
         const MAX_BUCKETS: usize = 1usize << BIT_LIMIT;
         let mut counts = [0usize; MAX_BUCKETS];
         let mut offsets = [0usize; MAX_BUCKETS];
@@ -326,77 +317,81 @@ impl BaseBitBatchGroups {
         let mut scratch_rows: Vec<usize> = Vec::new();
         let mut scratch_bucket_ids: Vec<usize> = Vec::new();
 
-        let mut next_groups: Vec<Vec<usize>> = Vec::with_capacity(self.groups.len());
+        for bit_chunk in new_bit_positions.chunks(BIT_LIMIT) {
+            let bucket_count = 1usize << bit_chunk.len();
+            let mut next_groups: Vec<Vec<usize>> = Vec::with_capacity(self.groups.len());
 
-        for group in &self.groups {
-            if group.is_empty() {
-                continue;
-            }
-
-            if group.len() <= 1 {
-                next_groups.push(group.clone());
-                continue;
-            }
-
-            counts[..bucket_count].fill(0);
-
-            if scratch_bucket_ids.len() < group.len() {
-                scratch_bucket_ids.resize(group.len(), 0);
-            }
-            let bucket_ids = &mut scratch_bucket_ids[..group.len()];
-
-            for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
-                let mut bucket_id = 0usize;
-                for (bit_idx, &bit_position) in new_bit_positions.iter().enumerate() {
-                    bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) }
-                        as usize)
-                        << bit_idx;
-                }
-                *bucket_id_slot = bucket_id;
-                unsafe {
-                    *counts.get_unchecked_mut(bucket_id) += 1;
-                }
-            }
-
-            let mut running = 0usize;
-            for bucket_id in 0..bucket_count {
-                offsets[bucket_id] = running;
-                running += counts[bucket_id];
-            }
-
-            if scratch_rows.len() < group.len() {
-                scratch_rows.resize(group.len(), 0);
-            }
-
-            write_positions[..bucket_count].copy_from_slice(&offsets[..bucket_count]);
-
-            for (&row, &bucket_id) in group.iter().zip(bucket_ids.iter()) {
-                let write_idx = unsafe { *write_positions.get_unchecked(bucket_id) };
-                scratch_rows[write_idx] = row;
-                unsafe {
-                    *write_positions.get_unchecked_mut(bucket_id) = write_idx + 1;
-                }
-            }
-
-            for bucket_id in 0..bucket_count {
-                let count = counts[bucket_id];
-                if count == 0 {
+            for group in &self.groups {
+                if group.is_empty() {
                     continue;
                 }
-                let start = offsets[bucket_id];
-                let end = start + count;
-                next_groups.push(scratch_rows[start..end].to_vec());
+
+                if group.len() <= 1 {
+                    next_groups.push(group.clone());
+                    continue;
+                }
+
+                counts[..bucket_count].fill(0);
+
+                if scratch_bucket_ids.len() < group.len() {
+                    scratch_bucket_ids.resize(group.len(), 0);
+                }
+                let bucket_ids = &mut scratch_bucket_ids[..group.len()];
+
+                for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
+                    let mut bucket_id = 0usize;
+                    for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
+                        bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) }
+                            as usize)
+                            << bit_idx;
+                    }
+                    *bucket_id_slot = bucket_id;
+                    unsafe {
+                        *counts.get_unchecked_mut(bucket_id) += 1;
+                    }
+                }
+
+                let mut running = 0usize;
+                for bucket_id in 0..bucket_count {
+                    offsets[bucket_id] = running;
+                    running += counts[bucket_id];
+                }
+
+                if scratch_rows.len() < group.len() {
+                    scratch_rows.resize(group.len(), 0);
+                }
+
+                write_positions[..bucket_count].copy_from_slice(&offsets[..bucket_count]);
+
+                for (&row, &bucket_id) in group.iter().zip(bucket_ids.iter()) {
+                    let write_idx = unsafe { *write_positions.get_unchecked(bucket_id) };
+                    scratch_rows[write_idx] = row;
+                    unsafe {
+                        *write_positions.get_unchecked_mut(bucket_id) = write_idx + 1;
+                    }
+                }
+
+                for bucket_id in 0..bucket_count {
+                    let count = counts[bucket_id];
+                    if count == 0 {
+                        continue;
+                    }
+                    let start = offsets[bucket_id];
+                    let end = start + count;
+                    next_groups.push(scratch_rows[start..end].to_vec());
+                }
             }
+
+            let added_count = apply_selected_bit_positions(
+                &mut self.base_bit_mask,
+                &mut self.base_bit_positions,
+                bit_chunk,
+            );
+            self.num_bits_per_base += added_count;
+            self.groups = next_groups;
+            self.num_bases = count_non_empty_groups(&self.groups);
         }
 
-        let added_count = apply_selected_bit_positions(
-            &mut self.base_bit_mask,
-            &mut self.base_bit_positions,
-            &new_bit_positions,
-        );
-        self.num_bits_per_base += added_count;
-        self.groups = next_groups;
-        self.num_bases = count_non_empty_groups(&self.groups);
         self.num_bases
     }
 
@@ -884,9 +879,11 @@ impl BaseBitHyperLogLogCount {
             let row_hash = unsafe { self.row_hashes.get_unchecked_mut(row) };
 
             for &bit_position in new_bit_positions {
-                let bit =
-                    unsafe { bit_data.data.get_bit_linear_unchecked(row_start + bit_position) }
-                        as u64;
+                let bit = unsafe {
+                    bit_data
+                        .data
+                        .get_bit_linear_unchecked(row_start + bit_position)
+                } as u64;
                 let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
                 let bit_mask = 0u64.wrapping_sub(bit);
                 *row_hash ^= hash_word & bit_mask;
