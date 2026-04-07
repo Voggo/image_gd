@@ -23,8 +23,8 @@ pub trait BaseBit {
     fn get_base_bit_positions(&self) -> &[usize];
 }
 
-fn initial_groups(num_rows: usize) -> Vec<Vec<usize>> {
-    vec![(0..num_rows).collect()]
+fn initial_groups(num_rows: usize, step: usize) -> Vec<Vec<usize>> {
+    vec![(0..num_rows).step_by(step).collect()]
 }
 
 fn count_non_empty_groups(groups: &[Vec<usize>]) -> usize {
@@ -132,7 +132,7 @@ impl std::fmt::Debug for BaseBitGroups {
 
 impl BaseBitGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups = initial_groups(num_rows);
+        let groups = initial_groups(num_rows, 1);
         let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
@@ -288,7 +288,7 @@ impl std::fmt::Debug for BaseBitBatchGroups {
 
 impl BaseBitBatchGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups = initial_groups(num_rows);
+        let groups = initial_groups(num_rows, 1);
         let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
@@ -1004,7 +1004,7 @@ impl std::fmt::Debug for BaseBitSignatureGroups {
 
 impl BaseBitSignatureGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups = initial_groups(num_rows);
+        let groups = initial_groups(num_rows, 1);
         let base_bit_mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
         let base_bit_positions = Vec::new();
         let num_bits_per_base = 0;
