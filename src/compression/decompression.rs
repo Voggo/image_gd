@@ -7,7 +7,7 @@ use crate::data_loader::DataValue;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
-use crate::utils::{min_position_bits, signed_half_wrapped};
+use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
 use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::fs::File;
@@ -435,8 +435,8 @@ fn decode_grouped_feature(
             for offset in 0..pixel_grouping.saturating_sub(1) {
                 let start = 8 + offset * 9;
                 let end = start + 9;
-                let biased = bits_to_u16(&bits[start..end])? as i16;
-                let value = anchor + biased - 255;
+                let encoded = bits_to_u16(&bits[start..end])?;
+                let value = anchor + zigzag_decode_i16(encoded);
                 if !(0..=255).contains(&value) {
                     return Err(EntroGdError::InvalidMetadata {
                         message: format!("decoded grouped image byte out of range: {}", value),
@@ -486,8 +486,8 @@ fn decode_grouped_feature(
                     continue;
                 }
 
-                let biased = bits_to_u16(&bits[residual_cursor..residual_cursor + 9])? as i16;
-                let value = anchor as i16 + biased - 255;
+                let encoded = bits_to_u16(&bits[residual_cursor..residual_cursor + 9])?;
+                let value = anchor as i16 + zigzag_decode_i16(encoded);
                 if !(0..=255).contains(&value) {
                     return Err(EntroGdError::InvalidMetadata {
                         message: format!("decoded grouped image byte out of range: {}", value),

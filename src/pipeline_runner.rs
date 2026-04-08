@@ -15,7 +15,7 @@ use crate::pipeline_profiles::{
 use crate::prelude::*;
 use crate::utils::bits_needed_nonzero;
 use std::fs;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -98,6 +98,130 @@ pub struct ExperimentReport {
     pub records: Vec<ExperimentRecord>,
 }
 
+struct TerminalProgress {
+    enabled: bool,
+    start: Instant,
+    total_files: usize,
+    total_runs: usize,
+    completed_runs: usize,
+    spinner_index: usize,
+}
+
+impl TerminalProgress {
+    const SPINNER_FRAMES: [&'static str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+
+    fn new(total_files: usize, total_runs: usize) -> Self {
+        Self {
+            enabled: std::io::stderr().is_terminal(),
+            start: Instant::now(),
+            total_files,
+            total_runs,
+            completed_runs: 0,
+            spinner_index: 0,
+        }
+    }
+
+    fn begin(&mut self) {
+        if self.enabled {
+            let _ = write!(
+                std::io::stderr(),
+                "\x1b[2K\r🚀 Starting experiment run • files: {} • jobs: {}",
+                self.total_files,
+                self.total_runs,
+            );
+            let _ = std::io::stderr().flush();
+        }
+    }
+
+    fn file_started(&mut self, file_idx: usize, path: &Path, kind: InputKind, profile_count: usize) {
+        if self.enabled {
+            let _ = write!(
+                std::io::stderr(),
+                "\x1b[2K\r📂 File {}/{} [{:?}] {} • profiles: {}",
+                file_idx,
+                self.total_files,
+                kind,
+                path.display(),
+                profile_count,
+            );
+            let _ = std::io::stderr().flush();
+        }
+    }
+
+    fn job_finished(&mut self, file_idx: usize, profile_name: &str, stage_total_ms: f64) {
+        self.completed_runs += 1;
+        if !self.enabled {
+            return;
+        }
+
+        self.spinner_index = (self.spinner_index + 1) % Self::SPINNER_FRAMES.len();
+        let spinner = Self::SPINNER_FRAMES[self.spinner_index];
+
+        let percent = if self.total_runs == 0 {
+            100.0
+        } else {
+            (self.completed_runs as f64 / self.total_runs as f64) * 100.0
+        };
+
+        let bar_width = 24usize;
+        let filled = if self.total_runs == 0 {
+            bar_width
+        } else {
+            (self.completed_runs * bar_width) / self.total_runs
+        }
+        .min(bar_width);
+        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(bar_width - filled));
+
+        let elapsed = self.start.elapsed().as_secs_f64();
+        let rate = if elapsed > 0.0 {
+            self.completed_runs as f64 / elapsed
+        } else {
+            0.0
+        };
+        let remaining = self.total_runs.saturating_sub(self.completed_runs) as f64;
+        let eta_seconds = if rate > 0.0 {
+            (remaining / rate).max(0.0)
+        } else {
+            0.0
+        };
+        let eta_mins = (eta_seconds as u64) / 60;
+        let eta_secs = (eta_seconds as u64) % 60;
+
+        let _ = write!(
+            std::io::stderr(),
+            "\x1b[2K\r{} [{}] {}/{} ({:>5.1}%) • file {}/{} • {} • {:.1} it/s • η {:02}:{:02} • last {:.1} ms",
+            spinner,
+            bar,
+            self.completed_runs,
+            self.total_runs,
+            percent,
+            file_idx,
+            self.total_files,
+            profile_name,
+            rate,
+            eta_mins,
+            eta_secs,
+            stage_total_ms,
+        );
+        let _ = std::io::stderr().flush();
+    }
+
+    fn finished(&mut self, skipped_files: usize) {
+        if !self.enabled {
+            return;
+        }
+
+        let elapsed = self.start.elapsed().as_secs_f64();
+        let _ = writeln!(
+            std::io::stderr(),
+            "\x1b[2K\r✅ Completed {} jobs in {:.2}s • skipped files: {}",
+            self.completed_runs,
+            elapsed,
+            skipped_files,
+        );
+    }
+}
+
 pub fn detect_input_kind(path: &Path) -> InputKind {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return InputKind::Unsupported;
@@ -146,24 +270,41 @@ pub fn run_experiments_on_path(
     options: ExperimentRunOptions,
 ) -> Result<ExperimentReport, EntroGdError> {
     let files = collect_input_files(path, options.recursive)?;
+    let total_runs = files
+        .iter()
+        .map(|file| match detect_input_kind(file) {
+            InputKind::Csv => profiles.csv.len(),
+            InputKind::Image => profiles.image.len(),
+            InputKind::Unsupported => 0,
+        })
+        .sum::<usize>();
+
+    let mut progress = TerminalProgress::new(files.len(), total_runs);
+    progress.begin();
+
     let mut records = Vec::new();
     let mut skipped_files = Vec::new();
 
-    for file in &files {
+    for (file_idx, file) in files.iter().enumerate() {
+        let display_idx = file_idx + 1;
         let kind = detect_input_kind(file);
         match kind {
             InputKind::Csv => {
+                progress.file_started(display_idx, file, kind, profiles.csv.len());
                 let mut file_records = Vec::new();
                 for profile in &profiles.csv {
                     let record = run_csv_profile(file, profile)?;
+                    progress.job_finished(display_idx, &profile.name, record.stage_ms.total);
                     file_records.push(record);
                 }
                 records.extend(file_records);
             }
             InputKind::Image => {
+                progress.file_started(display_idx, file, kind, profiles.image.len());
                 let mut file_records = Vec::new();
                 for profile in &profiles.image {
                     let record = run_image_profile(file, profile)?;
+                    progress.job_finished(display_idx, &profile.name, record.stage_ms.total);
                     file_records.push(record);
                 }
                 records.extend(file_records);
@@ -171,6 +312,8 @@ pub fn run_experiments_on_path(
             InputKind::Unsupported => skipped_files.push(file.clone()),
         }
     }
+
+    progress.finished(skipped_files.len());
 
     Ok(ExperimentReport {
         discovered_files: files.len(),
@@ -293,7 +436,7 @@ fn run_csv_profile(
     let preprocess_ms = preprocess_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let entropy_t0 = Instant::now();
-    let entropy_out = EntropyOptimized {}.process(bit_data)?;
+    let entropy_out = EntropyNaive {}.process(bit_data)?;
     let entropy_ms = entropy_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let condensed_t0 = Instant::now();
@@ -368,7 +511,7 @@ fn run_image_profile(
     let load_ms = load_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let entropy_t0 = Instant::now();
-    let entropy_out = EntropyOptimized {}.process(bit_data)?;
+    let entropy_out = EntropyNaive {}.process(bit_data)?;
     let entropy_ms = entropy_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let condensed_t0 = Instant::now();

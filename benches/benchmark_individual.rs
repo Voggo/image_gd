@@ -456,14 +456,21 @@ impl StepBenchCase {
         }
     }
 
-    fn image(data_file_path: &'static str, m_max: usize, patience: usize) -> Self {
+    fn image_with_transform(
+        data_file_path: &'static str,
+        color_model: ImageColorModel,
+        pixel_grouping: u32,
+        grouping_transform: ImageGroupingTransform,
+        m_max: usize,
+        patience: usize,
+    ) -> Self {
         Self {
             data_file_path,
             input: StepBenchInput::Image {
                 colorspace: ImageColorSpace::SrgbWithLinearAlpha,
-                color_model: ImageColorModel::YCoCgR,
-                pixel_grouping: 3,
-                grouping_transform: ImageGroupingTransform::ForFirstPixel,
+                color_model,
+                pixel_grouping,
+                grouping_transform,
             },
             m_max,
             patience,
@@ -479,7 +486,38 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             50,
             10,
         ),
-        StepBenchCase::image("data/images/kodim10.png", 0, 10),
+        StepBenchCase::image_with_transform(
+            "data/images/kodim10.png",
+            ImageColorModel::Rgb,
+            1,
+            ImageGroupingTransform::Raw,
+            0,
+            10,
+        ),
+        StepBenchCase::image_with_transform(
+            "data/images/kodim10.png",
+            ImageColorModel::Rgb,
+            4,
+            ImageGroupingTransform::Raw,
+            0,
+            10,
+        ),
+        StepBenchCase::image_with_transform(
+            "data/images/kodim10.png",
+            ImageColorModel::Rgb,
+            4,
+            ImageGroupingTransform::ForFirstPixel,
+            0,
+            10,
+        ),
+        StepBenchCase::image_with_transform(
+            "data/images/kodim10.png",
+            ImageColorModel::Rgb,
+            4,
+            ImageGroupingTransform::ForMin,
+            0,
+            10,
+        ),
     ]
 }
 
@@ -526,9 +564,22 @@ fn dataset_label(path: &str) -> &str {
 }
 
 fn case_label(case: StepBenchCase) -> String {
+    let input_label = match case.input {
+        StepBenchInput::Csv { .. } => "csv".to_string(),
+        StepBenchInput::Image {
+            color_model,
+            pixel_grouping,
+            grouping_transform,
+            ..
+        } => format!(
+            "img-{:?}-g{}-{:?}",
+            color_model, pixel_grouping, grouping_transform
+        ),
+    };
     format!(
-        "{}-m{}-p{}",
+        "{}-{}-m{}-p{}",
         dataset_label(case.data_file_path),
+        input_label,
         case.m_max,
         case.patience
     )

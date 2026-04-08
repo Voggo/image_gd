@@ -466,9 +466,9 @@ pub struct BitDataCompressionInfo {
 pub enum ImageGroupingTransform {
     /// Store grouped channel bytes directly.
     Raw = 0,
-    /// Store the first byte, then biased residuals relative to it.
+    /// Store the first byte, then zig-zag encoded residuals relative to it.
     ForFirstPixel = 1,
-    /// Store the minimum byte, then biased residuals relative to it.
+    /// Store the minimum byte, then zig-zag encoded residuals relative to it.
     ForMin = 2,
 }
 

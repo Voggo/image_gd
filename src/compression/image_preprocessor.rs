@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
 
+use crate::ScopedTimer;
 use crate::compression::preprocessor::{
     BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD,
     FeatureSpec, ImageReconstructionInfo, aligned_stride, append_row_padding,
@@ -10,7 +11,7 @@ use crate::compression::preprocessor::{
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
-use crate::utils::{min_position_bits, signed_half_wrapped};
+use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_encode_i16};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageColorSpace {
@@ -58,7 +59,7 @@ impl Default for BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
             pixel_grouping: 1,
-            grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            grouping_transform: ImageGroupingTransform::Raw,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
     }
@@ -69,7 +70,10 @@ impl Filter for BuildImageBitDataSet {
     type Output = BitDataSet;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::debug(format!("BuildImageBitDataSet for {}", input.display()));
+        let _decode_timer = ScopedTimer::trace("Decoding image file via Image::open");
         let decoded = image::open(&input)?;
+        drop(_decode_timer);
         match decoded {
             DynamicImage::ImageRgb8(img) => build_image_bitdataset(
                 ImageBuildInput {
@@ -120,7 +124,7 @@ fn build_image_bitdataset(
         height,
         channels,
         colorspace,
-        raw,
+        mut raw,
     } = input;
     let ImageBuildOptions {
         color_model,
@@ -209,33 +213,54 @@ fn build_image_bitdataset(
         BitDataInfo::new_with_reconstruction_info(features, logical_total_bits, reconstruction)?
             .with_original_size_bits_and_row_stride(logical_total_bits, stride);
 
-    let encoded_raw = match color_model {
-        ImageColorModel::Rgb => raw,
-        ImageColorModel::YCoCg => convert_rgb_to_ycocg_channels(&raw, channels_usize),
-        ImageColorModel::YCoCgR => convert_rgb_to_ycocg_r_channels(&raw, channels_usize),
-    };
-
-    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
-
+    let _timer = ScopedTimer::trace("Encoding image into color model");
+    match color_model {
+        ImageColorModel::Rgb => {}
+        ImageColorModel::YCoCg => convert_rgb_to_ycocg_channels(&mut raw, channels_usize),
+        ImageColorModel::YCoCgR => convert_rgb_to_ycocg_r_channels(&mut raw, channels_usize),
+    }
+    drop(_timer);
     let width_usize = width as usize;
     let height_usize = height as usize;
-    for y in 0..height_usize {
-        for group_x in 0..grouped_width {
-            for channel in 0..channels_usize {
-                let grouped_values = grouped_channel_values(
-                    &encoded_raw,
-                    width_usize,
-                    channels_usize,
-                    y,
-                    group_x,
-                    channel,
-                    pixels_per_group,
-                );
-                encode_grouped_channel(&mut bitstream, &grouped_values, grouping_transform);
-            }
-            append_row_padding(&mut bitstream, stride.saturating_sub(chunk_size));
+    let _timer = ScopedTimer::trace("Encoding grouped/transformed pixel data into bitstream");
+    let bitstream = match grouping_transform {
+        ImageGroupingTransform::Raw => build_raw_transform_bitstream_from_raw(
+            &raw,
+            width_usize,
+            height_usize,
+            channels_usize,
+            grouped_width,
+            pixels_per_group,
+            chunk_size,
+            stride,
+            storage_bits,
+        ),
+        ImageGroupingTransform::ForFirstPixel => {
+            build_for_first_pixel_transform_bitstream_from_raw(
+                &raw,
+                width_usize,
+                height_usize,
+                channels_usize,
+                grouped_width,
+                pixels_per_group,
+                chunk_size,
+                stride,
+                storage_bits,
+            )
         }
-    }
+        ImageGroupingTransform::ForMin => build_grouped_transform_bitstream_from_raw(
+            &raw,
+            width_usize,
+            height_usize,
+            channels_usize,
+            grouped_width,
+            pixels_per_group,
+            grouping_transform,
+            chunk_size,
+            stride,
+            storage_bits,
+        ),
+    };
 
     let data = BitData {
         data: bitstream,
@@ -256,6 +281,204 @@ fn push_bits_u8(out: &mut crate::BitStream, value: u8) {
 fn push_bits_u16(out: &mut crate::BitStream, value: u16, bit_count: usize) {
     for shift in (0..bit_count).rev() {
         out.push(((value >> shift) & 1) == 1);
+    }
+}
+
+fn build_raw_transform_bitstream_from_raw(
+    raw: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    grouped_width: usize,
+    pixels_per_group: usize,
+    chunk_size: usize,
+    stride: usize,
+    storage_bits: usize,
+) -> crate::BitStream {
+    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
+    bitstream.resize(storage_bits, false);
+
+    let full_groups = width / pixels_per_group;
+    let trailing_pixels = width % pixels_per_group;
+    debug_assert_eq!(
+        grouped_width,
+        full_groups + usize::from(trailing_pixels > 0)
+    );
+    let row_stride_values = width * channels;
+    let row_padding_bits = stride.saturating_sub(chunk_size);
+
+    let mut bit_cursor = 0usize;
+    for y in 0..height {
+        let row_start = y * row_stride_values;
+
+        for group_x in 0..full_groups {
+            let group_start = row_start + group_x * pixels_per_group * channels;
+            for channel in 0..channels {
+                let mut raw_index = group_start + channel;
+                for _ in 0..pixels_per_group {
+                    store_u8_be_at(&mut bitstream, bit_cursor, raw[raw_index]);
+                    bit_cursor += 8;
+                    raw_index += channels;
+                }
+            }
+            bit_cursor += row_padding_bits;
+        }
+
+        if trailing_pixels > 0 {
+            let group_start = row_start + full_groups * pixels_per_group * channels;
+            for channel in 0..channels {
+                let mut raw_index = group_start + channel;
+                for _ in 0..trailing_pixels {
+                    store_u8_be_at(&mut bitstream, bit_cursor, raw[raw_index]);
+                    bit_cursor += 8;
+                    raw_index += channels;
+                }
+                for _ in trailing_pixels..pixels_per_group {
+                    store_u8_be_at(&mut bitstream, bit_cursor, 0);
+                    bit_cursor += 8;
+                }
+            }
+            bit_cursor += row_padding_bits;
+        }
+    }
+
+    debug_assert_eq!(bit_cursor, storage_bits);
+    bitstream
+}
+
+fn build_for_first_pixel_transform_bitstream_from_raw(
+    raw: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    grouped_width: usize,
+    pixels_per_group: usize,
+    chunk_size: usize,
+    stride: usize,
+    storage_bits: usize,
+) -> crate::BitStream {
+    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
+    bitstream.resize(storage_bits, false);
+
+    let full_groups = width / pixels_per_group;
+    let trailing_pixels = width % pixels_per_group;
+    debug_assert_eq!(
+        grouped_width,
+        full_groups + usize::from(trailing_pixels > 0)
+    );
+    let row_stride_values = width * channels;
+    let row_padding_bits = stride.saturating_sub(chunk_size);
+
+    let mut bit_cursor = 0usize;
+    for y in 0..height {
+        let row_start = y * row_stride_values;
+
+        for group_x in 0..full_groups {
+            let group_start = row_start + group_x * pixels_per_group * channels;
+            for channel in 0..channels {
+                let mut raw_index = group_start + channel;
+                let anchor = raw[raw_index];
+                store_u8_be_at(&mut bitstream, bit_cursor, anchor);
+                bit_cursor += 8;
+
+                raw_index += channels;
+                for _ in 1..pixels_per_group {
+                    let value = raw[raw_index];
+                    let delta = value as i16 - anchor as i16;
+                    let encoded = zigzag_encode_i16(delta);
+                    store_u16_be_at(&mut bitstream, bit_cursor, encoded, 9);
+                    bit_cursor += 9;
+                    raw_index += channels;
+                }
+            }
+
+            bit_cursor += row_padding_bits;
+        }
+
+        if trailing_pixels > 0 {
+            let group_start = row_start + full_groups * pixels_per_group * channels;
+            for channel in 0..channels {
+                let anchor = raw[group_start + channel];
+                store_u8_be_at(&mut bitstream, bit_cursor, anchor);
+                bit_cursor += 8;
+
+                let mut raw_index = group_start + channel + channels;
+                for _ in 1..trailing_pixels {
+                    let value = raw[raw_index];
+                    let delta = value as i16 - anchor as i16;
+                    let encoded = zigzag_encode_i16(delta);
+                    store_u16_be_at(&mut bitstream, bit_cursor, encoded, 9);
+                    bit_cursor += 9;
+                    raw_index += channels;
+                }
+
+                let zero_encoded = zigzag_encode_i16(-(anchor as i16));
+                for _ in trailing_pixels..pixels_per_group {
+                    store_u16_be_at(&mut bitstream, bit_cursor, zero_encoded, 9);
+                    bit_cursor += 9;
+                }
+            }
+
+            bit_cursor += row_padding_bits;
+        }
+    }
+
+    debug_assert_eq!(bit_cursor, storage_bits);
+    bitstream
+}
+
+fn build_grouped_transform_bitstream_from_raw(
+    raw: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    grouped_width: usize,
+    pixels_per_group: usize,
+    grouping_transform: ImageGroupingTransform,
+    chunk_size: usize,
+    stride: usize,
+    storage_bits: usize,
+) -> crate::BitStream {
+    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
+    let mut grouped_values = vec![0u8; pixels_per_group];
+    let row_padding_bits = stride.saturating_sub(chunk_size);
+
+    for y in 0..height {
+        for group_x in 0..grouped_width {
+            for channel in 0..channels {
+                grouped_channel_values_into(
+                    raw,
+                    width,
+                    channels,
+                    y,
+                    group_x,
+                    channel,
+                    pixels_per_group,
+                    &mut grouped_values,
+                );
+                encode_grouped_channel(&mut bitstream, &grouped_values, grouping_transform);
+            }
+            append_row_padding(&mut bitstream, row_padding_bits);
+        }
+    }
+
+    bitstream
+}
+
+#[inline(always)]
+fn store_u8_be_at(out: &mut crate::BitStream, bit_cursor: usize, value: u8) {
+    for shift in (0..8).rev() {
+        out.set(bit_cursor + (7 - shift), ((value >> shift) & 1) == 1);
+    }
+}
+
+#[inline(always)]
+fn store_u16_be_at(out: &mut crate::BitStream, bit_cursor: usize, value: u16, bit_count: usize) {
+    for shift in (0..bit_count).rev() {
+        out.set(
+            bit_cursor + (bit_count - 1 - shift),
+            ((value >> shift) & 1) == 1,
+        );
     }
 }
 
@@ -314,7 +537,8 @@ fn feature_bits_for_grouping(
     }
 }
 
-fn grouped_channel_values(
+#[inline(always)]
+fn grouped_channel_values_into(
     raw: &[u8],
     width: usize,
     channels: usize,
@@ -322,19 +546,19 @@ fn grouped_channel_values(
     group_x: usize,
     channel: usize,
     pixels_per_group: usize,
-) -> Vec<u8> {
-    let mut values = Vec::with_capacity(pixels_per_group);
-    for offset in 0..pixels_per_group {
+    out: &mut [u8],
+) {
+    debug_assert_eq!(out.len(), pixels_per_group);
+    for (offset, value) in out.iter_mut().enumerate() {
         let pixel_x = group_x * pixels_per_group + offset;
         if pixel_x < width {
             let pixel_index = y * width + pixel_x;
             let raw_index = pixel_index * channels + channel;
-            values.push(raw[raw_index]);
+            *value = raw[raw_index];
         } else {
-            values.push(0);
+            *value = 0;
         }
     }
-    values
 }
 
 fn encode_grouped_channel(
@@ -367,8 +591,8 @@ fn encode_grouped_channel(
                     continue;
                 }
                 let delta = value as i16 - anchor as i16;
-                let biased = (delta + 255) as u16;
-                push_bits_u16(out, biased, 9);
+                let encoded = zigzag_encode_i16(delta);
+                push_bits_u16(out, encoded, 9);
             }
         }
     }
@@ -378,15 +602,14 @@ fn encode_for_anchor(out: &mut crate::BitStream, values: &[u8], anchor: u8) {
     push_bits_u8(out, anchor);
     for &value in values.iter().skip(1) {
         let delta = value as i16 - anchor as i16;
-        let biased = (delta + 255) as u16;
-        push_bits_u16(out, biased, 9);
+        let encoded = zigzag_encode_i16(delta);
+        push_bits_u16(out, encoded, 9);
     }
 }
 
-fn convert_rgb_to_ycocg_channels(raw: &[u8], channels: usize) -> Vec<u8> {
+fn convert_rgb_to_ycocg_channels(raw: &mut [u8], channels: usize) {
     tracing::warn!("By using the YCoCg color model, When converting back to RGB is lossy!");
-    let mut out = raw.to_vec();
-    for pixel in out.chunks_exact_mut(channels) {
+    for pixel in raw.chunks_exact_mut(channels) {
         let r = pixel[0];
         let g = pixel[1];
         let b = pixel[2];
@@ -399,12 +622,10 @@ fn convert_rgb_to_ycocg_channels(raw: &[u8], channels: usize) -> Vec<u8> {
         pixel[1] = co;
         pixel[2] = cg;
     }
-    out
 }
 
-fn convert_rgb_to_ycocg_r_channels(raw: &[u8], channels: usize) -> Vec<u8> {
-    let mut out = raw.to_vec();
-    for pixel in out.chunks_exact_mut(channels) {
+fn convert_rgb_to_ycocg_r_channels(raw: &mut [u8], channels: usize) {
+    for pixel in raw.chunks_exact_mut(channels) {
         let r = pixel[0];
         let g = pixel[1];
         let b = pixel[2];
@@ -418,7 +639,6 @@ fn convert_rgb_to_ycocg_r_channels(raw: &[u8], channels: usize) -> Vec<u8> {
         pixel[1] = co.wrapping_add(128);
         pixel[2] = cg.wrapping_add(128);
     }
-    out
 }
 
 #[cfg(test)]
@@ -426,6 +646,8 @@ mod tests {
     use super::*;
     use image::{Rgb, RgbImage, Rgba, RgbaImage};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::utils::zigzag_decode_i16;
 
     fn unique_tmp_path(name: &str) -> PathBuf {
         let ts = SystemTime::now()
@@ -535,8 +757,8 @@ mod tests {
                 for offset in 0..pixel_grouping.saturating_sub(1) {
                     let start = 8 + offset * 9;
                     let end = start + 9;
-                    let biased = bits_to_u16(&bits[start..end]) as i16;
-                    values.push((anchor + biased - 255) as u8);
+                    let encoded = bits_to_u16(&bits[start..end]);
+                    values.push((anchor + zigzag_decode_i16(encoded)) as u8);
                 }
                 values
             }
@@ -554,15 +776,33 @@ mod tests {
                     if idx == min_position {
                         values.push(anchor as u8);
                     } else {
-                        let biased =
-                            bits_to_u16(&bits[residual_cursor..residual_cursor + 9]) as i16;
-                        values.push((anchor + biased - 255) as u8);
+                        let encoded = bits_to_u16(&bits[residual_cursor..residual_cursor + 9]);
+                        values.push((anchor + zigzag_decode_i16(encoded)) as u8);
                         residual_cursor += 9;
                     }
                 }
                 values
             }
         }
+    }
+
+    #[test]
+    fn zigzag_encoding_matches_expected_mapping() {
+        assert_eq!(zigzag_encode_i16(0), 0);
+        assert_eq!(zigzag_encode_i16(-1), 1);
+        assert_eq!(zigzag_encode_i16(1), 2);
+        assert_eq!(zigzag_encode_i16(-2), 3);
+        assert_eq!(zigzag_encode_i16(2), 4);
+        assert_eq!(zigzag_encode_i16(-3), 5);
+        assert_eq!(zigzag_encode_i16(3), 6);
+
+        assert_eq!(zigzag_decode_i16(0), 0);
+        assert_eq!(zigzag_decode_i16(1), -1);
+        assert_eq!(zigzag_decode_i16(2), 1);
+        assert_eq!(zigzag_decode_i16(3), -2);
+        assert_eq!(zigzag_decode_i16(4), 2);
+        assert_eq!(zigzag_decode_i16(5), -3);
+        assert_eq!(zigzag_decode_i16(6), 3);
     }
 
     #[test]
@@ -885,10 +1125,11 @@ mod tests {
         for r in (0u8..=255).step_by(17) {
             for g in (0u8..=255).step_by(17) {
                 for b in (0u8..=255).step_by(17) {
-                    let raw = vec![r, g, b];
-                    let transformed = convert_rgb_to_ycocg_r_channels(&raw, 3);
+                    let original = vec![r, g, b];
+                    let mut transformed = original.clone();
+                    convert_rgb_to_ycocg_r_channels(&mut transformed, 3);
                     let recovered = convert_ycocg_r_to_rgb_channels(&transformed, 3);
-                    assert_eq!(recovered, raw);
+                    assert_eq!(recovered, original);
                 }
             }
         }
