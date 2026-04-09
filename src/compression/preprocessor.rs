@@ -819,11 +819,7 @@ impl BitData {
     #[inline(always)]
     pub(crate) unsafe fn get_bit_linear_unchecked(&self, bit_idx: usize) -> bool {
         debug_assert!(bit_idx < self.data.len());
-        let word_bits = usize::BITS as usize;
-        let word_idx = bit_idx / word_bits;
-        let bit_in_word = bit_idx % word_bits;
-        let raw_word = unsafe { *self.data.as_raw_slice().get_unchecked(word_idx) };
-        ((raw_word >> bit_in_word) & 1) == 1
+        unsafe { *self.data.get_unchecked(bit_idx) }
     }
 
     /// Get a specific bit by row and bit position within the chunk
@@ -1089,11 +1085,11 @@ impl BitDataSet {
         debug_assert!(row < self.data.num_rows);
         debug_assert!(feature < self.info.num_features());
         let chunk_start = row * self.data.stride;
-        let feature_offset =
-            unsafe { *self.info.compression.feature_offsets.get_unchecked(feature) };
-        let feature_bits = unsafe { self.info.compression.features.get_unchecked(feature).bits };
+        let feature_offset = self.info.feature_offset(feature);
+        let feature_bits = self.info.feature_bits(feature);
         let feat_start = chunk_start + feature_offset;
         let feat_end = feat_start + feature_bits;
+        debug_assert!(feat_end <= self.data.data.len());
         unsafe { self.data.data.get_unchecked(feat_start..feat_end) }
     }
 
