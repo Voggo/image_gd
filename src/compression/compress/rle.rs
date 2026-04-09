@@ -123,15 +123,25 @@ impl RleDeviationData {
         self.symbol_bit_stream.len() + self.rm_control_stream.len()
     }
 
-    pub(crate) fn for_each_sample(
+    pub(crate) fn for_each_sample_n(
         &self,
+        limit: usize,
         mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
     ) -> Result<(), EntroGdError> {
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let capped_limit = limit.min(self.num_samples);
+        if capped_limit == 0 {
+            return Ok(());
+        }
+
         let mut symbol_cursor = 0usize;
         let mut decoded_samples = 0usize;
 
         for &(r_encoded, m_count) in &self.rm_values {
+            if decoded_samples >= capped_limit {
+                break;
+            }
+
             if r_encoded > 0 {
                 let run_len = (r_encoded as usize) + 1;
                 if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
@@ -148,18 +158,28 @@ impl RleDeviationData {
                     deviation: unsafe { run_symbol.get_unchecked(..self.num_deviation_bits) },
                     id: unsafe { run_symbol.get_unchecked(self.num_deviation_bits..) },
                 };
-                for _ in 0..run_len {
+
+                let remaining = capped_limit - decoded_samples;
+                let to_emit = run_len.min(remaining);
+                for _ in 0..to_emit {
                     f(DeviationSampleRef {
                         deviation: sample.deviation,
                         id: sample.id,
                     })?;
                 }
+
+                decoded_samples += to_emit;
                 symbol_cursor += symbol_width;
-                decoded_samples += run_len;
+            }
+
+            if decoded_samples >= capped_limit {
+                break;
             }
 
             let literal_count = m_count as usize;
-            for _ in 0..literal_count {
+            let remaining = capped_limit - decoded_samples;
+            let to_emit = literal_count.min(remaining);
+            for _ in 0..to_emit {
                 if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
                     return Err(EntroGdError::InvalidMetadata {
                         message: "RLE literal symbol exceeds symbol stream length".to_string(),
@@ -176,26 +196,7 @@ impl RleDeviationData {
                 })?;
                 symbol_cursor += symbol_width;
             }
-            decoded_samples += literal_count;
-        }
-
-        if decoded_samples != self.num_samples {
-            return Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "RLE decoded sample count mismatch: expected {}, got {}",
-                    self.num_samples, decoded_samples
-                ),
-            });
-        }
-
-        if symbol_cursor != self.symbol_bit_stream.len() {
-            return Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "RLE symbol stream not fully consumed: consumed {} of {} bits",
-                    symbol_cursor,
-                    self.symbol_bit_stream.len()
-                ),
-            });
+            decoded_samples += to_emit;
         }
 
         Ok(())

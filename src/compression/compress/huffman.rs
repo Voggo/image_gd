@@ -367,17 +367,50 @@ impl HuffmanDeviationData {
             + self.pixel_bit_stream.len()
     }
 
-    pub(crate) fn for_each_sample(
+    pub(crate) fn for_each_sample_n(
         &self,
+        limit: usize,
         mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
     ) -> Result<(), EntroGdError> {
-        let raw = self.to_deviation_data()?;
-        raw.for_each_sample(|sample| {
+        let capped_limit = limit.min(self.num_samples);
+        if capped_limit == 0 {
+            return Ok(());
+        }
+
+        let mut bit_pos = 0usize;
+        let mut id_bits_buffer = crate::BitStream::with_capacity(self.num_id_bits);
+        let mut deviation_bits_buffer = crate::BitStream::with_capacity(self.num_deviation_bits);
+
+        for sample_idx in 0..capped_limit {
+            let (symbol, consumed_bits) = self.decode_one(bit_pos)?;
+            bit_pos += consumed_bits;
+
+            let deviation_bits = if let Some(raw_deviation) = &self.raw_deviation_bit_stream {
+                let deviation_start = sample_idx * self.num_deviation_bits;
+                let deviation_end = deviation_start + self.num_deviation_bits;
+                unsafe { raw_deviation.get_unchecked(deviation_start..deviation_end) }
+            } else {
+                deviation_bits_buffer.clear();
+                let deviation_value = symbol & bit_mask(self.num_deviation_bits);
+                append_symbol_bits(
+                    &mut deviation_bits_buffer,
+                    deviation_value,
+                    self.num_deviation_bits,
+                );
+                deviation_bits_buffer.as_bitslice()
+            };
+
+            id_bits_buffer.clear();
+            let id_value = symbol >> self.huffman_symbol_num_deviation_bits;
+            append_symbol_bits(&mut id_bits_buffer, id_value, self.num_id_bits);
+
             f(DeviationSampleRef {
-                deviation: sample.deviation,
-                id: sample.id,
-            })
-        })
+                deviation: deviation_bits,
+                id: id_bits_buffer.as_bitslice(),
+            })?;
+        }
+
+        Ok(())
     }
 
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {

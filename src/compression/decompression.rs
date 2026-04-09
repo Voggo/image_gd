@@ -8,7 +8,6 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
-use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::fs::File;
 use std::io::Write;
@@ -48,6 +47,9 @@ pub(crate) fn decompress_samples_batch(
     }
     let base_bit_positions = &compressed.base_bit_positions;
     let base_bit_mask = build_base_bit_mask(chunk_size, base_bit_positions);
+    let non_base_positions = (0..chunk_size)
+        .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
+        .collect::<Vec<_>>();
 
     let mut reconstructed_bits = crate::BitStream::with_capacity(stride * indices.len());
 
@@ -62,7 +64,7 @@ pub(crate) fn decompress_samples_batch(
 
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
-                &base_bit_mask,
+                &non_base_positions,
                 &compressed.base_table,
                 chunk_size,
                 sample.deviation.as_bitslice(),
@@ -80,7 +82,7 @@ pub(crate) fn decompress_samples_batch(
 
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
-                &base_bit_mask,
+                &non_base_positions,
                 &compressed.base_table,
                 chunk_size,
                 sample.deviation.as_bitslice(),
@@ -120,18 +122,20 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let row_padding_bits = stride.saturating_sub(chunk_size);
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let base_bit_mask = build_base_bit_mask(chunk_size, &compressed.base_bit_positions);
+    let non_base_positions = (0..chunk_size)
+        .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
+        .collect::<Vec<_>>();
     let mut reconstructed_bits = crate::BitStream::with_capacity(stride * original_num_rows);
     let mut decoded_rows = 0usize;
-
+    
+    let _timer = ScopedTimer::trace("Reconstrunting bit data");
     if row_padding_bits == 0 {
-        compressed.encoded_data.for_each_sample(|sample| {
-            if decoded_rows >= original_num_rows {
-                return Ok(());
-            }
-
+        compressed
+            .encoded_data
+            .for_each_sample_n(original_num_rows, |sample| {
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
-                &base_bit_mask,
+                &non_base_positions,
                 &compressed.base_table,
                 chunk_size,
                 sample.deviation,
@@ -142,14 +146,12 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
             Ok(())
         })?;
     } else {
-        compressed.encoded_data.for_each_sample(|sample| {
-            if decoded_rows >= original_num_rows {
-                return Ok(());
-            }
-
+        compressed
+            .encoded_data
+            .for_each_sample_n(original_num_rows, |sample| {
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
-                &base_bit_mask,
+                &non_base_positions,
                 &compressed.base_table,
                 chunk_size,
                 sample.deviation,
@@ -162,6 +164,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
             Ok(())
         })?;
     }
+    drop(_timer);
 
     if decoded_rows != original_num_rows {
         return Err(EntroGdError::InvalidMetadata {
@@ -185,13 +188,12 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
 
 fn append_reconstructed_chunk(
     out: &mut crate::BitStream,
-    base_bit_mask: &crate::BitStream,
+    non_base_positions: &[usize],
     base_table: &[(crate::BitStream, usize)],
     chunk_size: usize,
     deviation_bits: &crate::BitView,
     id_bits: &crate::BitView,
 ) -> Result<(), EntroGdError> {
-    let mut chunk = bitvec![usize, crate::BitOrder; 0; chunk_size];
     let base_id = decode_base_id(id_bits);
     if base_id >= base_table.len() {
         return Err(EntroGdError::InvalidBaseId {
@@ -200,25 +202,28 @@ fn append_reconstructed_chunk(
         });
     }
 
+    let out_start = out.len();
+    out.resize(out_start + chunk_size, false);
+
     let base_pattern = &base_table[base_id].0;
     let base_len = chunk_size.min(base_pattern.len());
     for bit_pos in 0..base_len {
-        chunk.set(bit_pos, unsafe { *base_pattern.get_unchecked(bit_pos) });
+        out.set(
+            out_start + bit_pos,
+            unsafe { *base_pattern.get_unchecked(bit_pos) },
+        );
     }
 
-    let mut deviation_bit_idx = 0;
-    for bit_pos in 0..chunk_size {
-        if !unsafe { *base_bit_mask.get_unchecked(bit_pos) }
-            && deviation_bit_idx < deviation_bits.len()
-        {
-            chunk.set(bit_pos, unsafe {
-                *deviation_bits.get_unchecked(deviation_bit_idx)
-            });
-            deviation_bit_idx += 1;
-        }
+    for (deviation_bit_idx, &bit_pos) in non_base_positions
+        .iter()
+        .take(deviation_bits.len())
+        .enumerate()
+    {
+        out.set(out_start + bit_pos, unsafe {
+            *deviation_bits.get_unchecked(deviation_bit_idx)
+        });
     }
 
-    out.extend_from_bitslice(&chunk);
     Ok(())
 }
 
@@ -324,7 +329,10 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
             ),
         });
     }
-
+    let _timer = ScopedTimer::trace(format!(
+        "Writing decompressed image ({}x{}, {} channels) to raw buffer",
+        image_info.width, image_info.height, channels
+    ));
     let mut raw =
         Vec::with_capacity(image_info.width as usize * image_info.height as usize * channels);
     for row in 0..bit_data.num_rows() {
@@ -354,7 +362,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         ImageColorModel::YCoCg => convert_ycocg_to_rgb_channels(&raw, channels),
         ImageColorModel::YCoCgR => convert_ycocg_r_to_rgb_channels(&raw, channels),
     };
-
+    drop(_timer);
     save_raw_image(
         output_path.as_ref(),
         image_info.width,
@@ -550,6 +558,10 @@ fn save_raw_image(
     channels: u8,
     raw: Vec<u8>,
 ) -> Result<(), EntroGdError> {
+    let _timer = ScopedTimer::trace(format!(
+        "Saving decompressed image to file: {}",
+        output_path.display()
+    ));
     match channels {
         3 => {
             let image = RgbImage::from_raw(width, height, raw).ok_or_else(|| {

@@ -146,13 +146,15 @@ impl DeviationData {
         self.num_id_bits
     }
 
-    pub(crate) fn for_each_sample(
+    pub(crate) fn for_each_sample_n(
         &self,
+        limit: usize,
         mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
     ) -> Result<(), EntroGdError> {
         let sample_width = self.num_deviation_bits + self.num_id_bits;
+        let capped_limit = limit.min(self.num_samples);
 
-        for sample_idx in 0..self.num_samples {
+        for sample_idx in 0..capped_limit {
             let start_bit = sample_idx * sample_width;
             let end_bit = start_bit + sample_width;
             debug_assert!(end_bit <= self.encoded_bit_stream.len());
@@ -221,14 +223,15 @@ impl EncodedData {
         }
     }
 
-    pub(crate) fn for_each_sample(
+    pub(crate) fn for_each_sample_n(
         &self,
+        limit: usize,
         f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
     ) -> Result<(), EntroGdError> {
         match self {
-            EncodedData::Normal(data) => data.for_each_sample(f),
-            EncodedData::Rle(data) => data.for_each_sample(f),
-            EncodedData::Huffman(data) => data.for_each_sample(f),
+            EncodedData::Normal(data) => data.for_each_sample_n(limit, f),
+            EncodedData::Rle(data) => data.for_each_sample_n(limit, f),
+            EncodedData::Huffman(data) => data.for_each_sample_n(limit, f),
         }
     }
 

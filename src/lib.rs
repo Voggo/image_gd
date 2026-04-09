@@ -68,7 +68,7 @@ pub mod prelude {
 
 use std::sync::Once;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::filter::{EnvFilter, LevelFilter};
+use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 
