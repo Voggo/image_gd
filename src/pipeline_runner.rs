@@ -133,7 +133,13 @@ impl TerminalProgress {
         }
     }
 
-    fn file_started(&mut self, file_idx: usize, path: &Path, kind: InputKind, profile_count: usize) {
+    fn file_started(
+        &mut self,
+        file_idx: usize,
+        path: &Path,
+        kind: InputKind,
+        profile_count: usize,
+    ) {
         if self.enabled {
             let _ = write!(
                 std::io::stderr(),

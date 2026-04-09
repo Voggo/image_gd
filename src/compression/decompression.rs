@@ -127,42 +127,42 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
         .collect::<Vec<_>>();
     let mut reconstructed_bits = crate::BitStream::with_capacity(stride * original_num_rows);
     let mut decoded_rows = 0usize;
-    
+
     let _timer = ScopedTimer::trace("Reconstrunting bit data");
     if row_padding_bits == 0 {
         compressed
             .encoded_data
             .for_each_sample_n(original_num_rows, |sample| {
-            append_reconstructed_chunk(
-                &mut reconstructed_bits,
-                &non_base_positions,
-                &compressed.base_table,
-                chunk_size,
-                sample.deviation,
-                sample.id,
-            )?;
+                append_reconstructed_chunk(
+                    &mut reconstructed_bits,
+                    &non_base_positions,
+                    &compressed.base_table,
+                    chunk_size,
+                    sample.deviation,
+                    sample.id,
+                )?;
 
-            decoded_rows += 1;
-            Ok(())
-        })?;
+                decoded_rows += 1;
+                Ok(())
+            })?;
     } else {
         compressed
             .encoded_data
             .for_each_sample_n(original_num_rows, |sample| {
-            append_reconstructed_chunk(
-                &mut reconstructed_bits,
-                &non_base_positions,
-                &compressed.base_table,
-                chunk_size,
-                sample.deviation,
-                sample.id,
-            )?;
+                append_reconstructed_chunk(
+                    &mut reconstructed_bits,
+                    &non_base_positions,
+                    &compressed.base_table,
+                    chunk_size,
+                    sample.deviation,
+                    sample.id,
+                )?;
 
-            append_row_padding(&mut reconstructed_bits, row_padding_bits);
+                append_row_padding(&mut reconstructed_bits, row_padding_bits);
 
-            decoded_rows += 1;
-            Ok(())
-        })?;
+                decoded_rows += 1;
+                Ok(())
+            })?;
     }
     drop(_timer);
 
@@ -208,10 +208,9 @@ fn append_reconstructed_chunk(
     let base_pattern = &base_table[base_id].0;
     let base_len = chunk_size.min(base_pattern.len());
     for bit_pos in 0..base_len {
-        out.set(
-            out_start + bit_pos,
-            unsafe { *base_pattern.get_unchecked(bit_pos) },
-        );
+        out.set(out_start + bit_pos, unsafe {
+            *base_pattern.get_unchecked(bit_pos)
+        });
     }
 
     for (deviation_bit_idx, &bit_pos) in non_base_positions
