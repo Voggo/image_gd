@@ -1,5 +1,5 @@
 use crate::compression::base_bits::BaseBitGroups;
-use crate::compression::compress::CondensedSamples;
+use crate::compression::encoding::CondensedSamples;
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;

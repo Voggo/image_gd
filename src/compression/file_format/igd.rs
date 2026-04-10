@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use super::egd::EgdFile;
 use super::path_utils::ensure_igd_extension;
 
-use crate::compression::compress::CompressedData;
+use crate::compression::encoding::CompressedData;
 use crate::compression::decompression::{decompress_file, write_bitdata_as_image};
 use crate::compression::preprocessor::{
     BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,

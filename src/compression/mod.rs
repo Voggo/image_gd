@@ -1,10 +1,11 @@
 pub mod base_bits;
 pub mod base_selection;
-pub mod compress;
 pub mod condensed_samples;
 pub mod decompression;
+#[path = "encoding/mod.rs"]
 pub mod encoding;
 pub mod entropy;
+#[path = "file_format/mod.rs"]
 pub mod file_format;
 pub mod image_preprocessor;
 pub mod preprocessor;
@@ -15,7 +16,7 @@ pub use base_bits::{
 pub use base_selection::{
     BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
 };
-pub use compress::{
+pub use encoding::{
     CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,
 };
 pub use condensed_samples::GenCondensedSamples;

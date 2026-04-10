@@ -1,6 +1,10 @@
 mod context;
 mod fused_dictionary;
 mod huffman;
+mod huffman_codec;
+mod layout;
+mod rle;
+mod types;
 
 use self::context::{encode_rows_as_symbol_stream, prepare_encoding_context};
 use self::fused_dictionary::encode_data_fused_dictionary;
@@ -9,8 +13,15 @@ use self::huffman::{
     encode_data_huffman_base_id_only as encode_data_huffman_base_id_only_core,
 };
 
+pub(crate) use self::huffman_codec::build_huffman_code_map;
+pub(crate) use self::layout::{build_base_bit_mask, huffman_row_layout};
+pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD};
+pub use self::types::{
+    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
+    HuffmanDeviationData, RleDeviationData,
+};
+
 use crate::compression::base_bits::BaseBit;
-use crate::compression::compress::{CompressedData, DeviationData, EncodedData, RleDeviationData};
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;

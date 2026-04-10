@@ -1,6 +1,6 @@
 use crate::BitDataSet;
 use crate::compression::base_bits::BaseBit;
-use crate::compression::compress::{CompressedData, EncodedData};
+use crate::compression::encoding::{CompressedData, EncodedData};
 use crate::compression::image_preprocessor::BuildImageBitDataSet;
 use crate::compression::preprocessor::{
     BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, InferFeatureSpecs,

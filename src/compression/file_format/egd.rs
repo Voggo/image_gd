@@ -9,7 +9,7 @@ use super::tags::{
     ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
-use crate::compression::compress::{
+use crate::compression::encoding::{
     CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX,
     RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };

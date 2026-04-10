@@ -3,10 +3,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use super::context::EncodingContext;
-
-use crate::compression::compress::{
-    HuffmanDeviationData, build_huffman_code_map, huffman_row_layout,
-};
+use super::{HuffmanDeviationData, build_huffman_code_map, huffman_row_layout};
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 

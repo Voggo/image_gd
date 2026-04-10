@@ -18,7 +18,7 @@ pub use igd::{
 mod tests {
     use super::*;
     use crate::compression::base_selection::SelectBases;
-    use crate::compression::compress::{CompressedData, EncodedData};
+    use crate::compression::encoding::{CompressedData, EncodedData};
     use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};

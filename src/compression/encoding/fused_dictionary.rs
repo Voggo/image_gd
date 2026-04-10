@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use super::context::build_deviation_ranges;
 
 use crate::compression::base_bits::BaseBit;
-use crate::compression::compress::DeviationData;
+use crate::compression::encoding::DeviationData;
 use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
 

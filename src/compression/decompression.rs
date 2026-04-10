@@ -1,4 +1,6 @@
-use crate::compression::compress::{CompressedData, CondensedSamples, build_base_bit_mask};
+use crate::compression::encoding::{
+    CompressedData, CondensedSamples, build_base_bit_mask,
+};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     append_row_padding, decode_value_from_bits,
@@ -591,7 +593,7 @@ fn save_raw_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::compress::{DeviationData, DeviationSample, EncodedData};
+    use crate::compression::encoding::{DeviationData, DeviationSample, EncodedData};
     use crate::compression::preprocessor::{
         BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
     };
