@@ -12,8 +12,14 @@ pub struct CompressedData {
     pub condensed_sample_weights: Option<Vec<usize>>,
     /// Base table mapping base patterns to their frequencies or encodings.
     pub base_table: Vec<(crate::BitStream, usize)>,
-    /// Bit positions used as base bits during compression.
+    /// Selected bit positions used as base bits during compression.
     pub base_bit_positions: Vec<usize>,
+    /// Selected base-bit positions that vary across bases.
+    pub variable_base_bit_positions: Vec<usize>,
+    /// Selected base-bit positions that are constant and equal to zero.
+    pub constant_zero_bit_positions: Vec<usize>,
+    /// Selected base-bit positions that are constant and equal to one.
+    pub constant_one_bit_positions: Vec<usize>,
     /// Metadata for decompression (column count, base bits used, etc.).
     pub metadata: BitDataInfo,
 }

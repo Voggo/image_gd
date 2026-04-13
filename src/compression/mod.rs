@@ -16,13 +16,13 @@ pub use base_bits::{
 pub use base_selection::{
     BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
 };
-pub use encoding::{
-    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,
-};
 pub use condensed_samples::GenCondensedSamples;
 pub use decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRowsData, decompress_analytics,
     decompress_file, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
+};
+pub use encoding::{
+    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,
 };
 pub use encoding::{
     EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,

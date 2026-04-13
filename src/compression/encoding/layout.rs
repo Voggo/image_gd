@@ -63,6 +63,9 @@ impl CompressedData {
             condensed_sample_weights: None,
             base_table: Vec::new(),
             base_bit_positions: Vec::new(),
+            variable_base_bit_positions: Vec::new(),
+            constant_zero_bit_positions: Vec::new(),
+            constant_one_bit_positions: Vec::new(),
             metadata,
         }
     }

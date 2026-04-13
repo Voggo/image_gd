@@ -18,9 +18,9 @@ pub use igd::{
 mod tests {
     use super::*;
     use crate::compression::base_selection::SelectBases;
-    use crate::compression::encoding::{CompressedData, EncodedData};
     use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
+    use crate::compression::encoding::{CompressedData, EncodedData};
     use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
     use crate::compression::entropy::EntropyBatched;
     use crate::compression::preprocessor::{
@@ -100,6 +100,18 @@ mod tests {
 
         assert_eq!(loaded.metadata, compressed.metadata);
         assert_eq!(loaded.base_bit_positions, compressed.base_bit_positions);
+        assert_eq!(
+            loaded.variable_base_bit_positions,
+            compressed.variable_base_bit_positions
+        );
+        assert_eq!(
+            loaded.constant_zero_bit_positions,
+            compressed.constant_zero_bit_positions
+        );
+        assert_eq!(
+            loaded.constant_one_bit_positions,
+            compressed.constant_one_bit_positions
+        );
         assert_eq!(
             loaded.condensed_sample_weights,
             compressed.condensed_sample_weights

@@ -31,6 +31,84 @@ use crate::utils::bits_needed_nonzero;
 const RLE_MAX_CONTROL_VALUE: usize = 134;
 const RLE_MAX_RUN_LEN: usize = RLE_MAX_CONTROL_VALUE + 1;
 
+struct BaseLayoutInfo {
+    variable_positions: Vec<usize>,
+    constant_zero_positions: Vec<usize>,
+    constant_one_positions: Vec<usize>,
+    variable_indices: Vec<usize>,
+}
+
+fn derive_base_layout_from_selected_bases(
+    selected_positions: &[usize],
+    selected_bases: &[(crate::BitStream, usize)],
+) -> BaseLayoutInfo {
+    if selected_bases.is_empty() {
+        return BaseLayoutInfo {
+            variable_positions: Vec::new(),
+            constant_zero_positions: Vec::new(),
+            constant_one_positions: Vec::new(),
+            variable_indices: Vec::new(),
+        };
+    }
+
+    let selected_len = selected_bases[0].0.len();
+    let mut variable_positions = Vec::new();
+    let mut constant_zero_positions = Vec::new();
+    let mut constant_one_positions = Vec::new();
+    let mut variable_indices = Vec::new();
+
+    for selected_idx in 0..selected_len {
+        let first_value = unsafe { *selected_bases[0].0.get_unchecked(selected_idx) };
+        let is_variable = selected_bases.iter().skip(1).any(|(base_bits, _)| {
+            base_bits
+                .get(selected_idx)
+                .map(|bit| *bit != first_value)
+                .unwrap_or(false)
+        });
+
+        let Some(&bit_position) = selected_positions.get(selected_idx) else {
+            continue;
+        };
+
+        if is_variable {
+            variable_indices.push(selected_idx);
+            variable_positions.push(bit_position);
+        } else if first_value {
+            constant_one_positions.push(bit_position);
+        } else {
+            constant_zero_positions.push(bit_position);
+        }
+    }
+
+    BaseLayoutInfo {
+        variable_positions,
+        constant_zero_positions,
+        constant_one_positions,
+        variable_indices,
+    }
+}
+
+fn project_selected_bases_to_variable(
+    selected_bases: &[(crate::BitStream, usize)],
+    variable_indices: &[usize],
+) -> Vec<(crate::BitStream, usize)> {
+    selected_bases
+        .iter()
+        .map(|(selected_bits, count)| {
+            let mut variable_bits = crate::BitStream::with_capacity(variable_indices.len());
+            for &selected_idx in variable_indices {
+                variable_bits.push(
+                    selected_bits
+                        .get(selected_idx)
+                        .map(|bit| *bit)
+                        .unwrap_or(false),
+                );
+            }
+            (variable_bits, *count)
+        })
+        .collect()
+}
+
 pub struct EncodeData {}
 
 impl Filter for EncodeData {
@@ -44,8 +122,15 @@ impl Filter for EncodeData {
             EncodedData::Normal(encode_data(&bit_data, base_bit_groups.as_ref())),
             bit_data.info.clone(),
         );
-        compressed.base_table = base_bit_groups.get_bases(&bit_data);
-        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_base_table = base_bit_groups.get_bases(&bit_data);
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout =
+            derive_base_layout_from_selected_bases(&selected_positions, &selected_base_table);
+        compressed.base_table = base_bit_groups.get_variable_bases(&bit_data);
+        compressed.base_bit_positions = selected_positions;
+        compressed.variable_base_bit_positions = layout.variable_positions;
+        compressed.constant_zero_bit_positions = layout.constant_zero_positions;
+        compressed.constant_one_bit_positions = layout.constant_one_positions;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()
@@ -67,8 +152,15 @@ impl Filter for EncodeDataOptimized {
             EncodedData::Normal(encode_data_optimized(&bit_data, base_bit_groups.as_ref())),
             bit_data.info.clone(),
         );
-        compressed.base_table = base_bit_groups.get_bases(&bit_data);
-        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_base_table = base_bit_groups.get_bases(&bit_data);
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout =
+            derive_base_layout_from_selected_bases(&selected_positions, &selected_base_table);
+        compressed.base_table = base_bit_groups.get_variable_bases(&bit_data);
+        compressed.base_bit_positions = selected_positions;
+        compressed.variable_base_bit_positions = layout.variable_positions;
+        compressed.constant_zero_bit_positions = layout.constant_zero_positions;
+        compressed.constant_one_bit_positions = layout.constant_one_positions;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()
@@ -90,8 +182,15 @@ impl Filter for EncodeDataRLE {
             EncodedData::Rle(encode_data_rle(&bit_data, base_bit_groups.as_ref())),
             bit_data.info.clone(),
         );
-        compressed.base_table = base_bit_groups.get_bases(&bit_data);
-        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_base_table = base_bit_groups.get_bases(&bit_data);
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout =
+            derive_base_layout_from_selected_bases(&selected_positions, &selected_base_table);
+        compressed.base_table = base_bit_groups.get_variable_bases(&bit_data);
+        compressed.base_bit_positions = selected_positions;
+        compressed.variable_base_bit_positions = layout.variable_positions;
+        compressed.constant_zero_bit_positions = layout.constant_zero_positions;
+        compressed.constant_one_bit_positions = layout.constant_one_positions;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()
@@ -117,8 +216,14 @@ impl Filter for EncodeDataFusedDictionary {
             EncodedData::Normal(fused.deviation_data),
             bit_data.info.clone(),
         );
-        compressed.base_table = fused.base_table;
-        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout = derive_base_layout_from_selected_bases(&selected_positions, &fused.base_table);
+        compressed.base_table =
+            project_selected_bases_to_variable(&fused.base_table, &layout.variable_indices);
+        compressed.base_bit_positions = selected_positions;
+        compressed.variable_base_bit_positions = layout.variable_positions;
+        compressed.constant_zero_bit_positions = layout.constant_zero_positions;
+        compressed.constant_one_bit_positions = layout.constant_one_positions;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()
@@ -141,8 +246,15 @@ impl Filter for EncodeDataHuffman {
             EncodedData::Huffman(encode_data_huffman_core(&bit_data, &context)?),
             bit_data.info.clone(),
         );
-        compressed.base_table = base_bit_groups.get_bases(&bit_data);
-        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_base_table = base_bit_groups.get_bases(&bit_data);
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout =
+            derive_base_layout_from_selected_bases(&selected_positions, &selected_base_table);
+        compressed.base_table = base_bit_groups.get_variable_bases(&bit_data);
+        compressed.base_bit_positions = selected_positions;
+        compressed.variable_base_bit_positions = layout.variable_positions;
+        compressed.constant_zero_bit_positions = layout.constant_zero_positions;
+        compressed.constant_one_bit_positions = layout.constant_one_positions;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()
@@ -167,8 +279,15 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
             EncodedData::Huffman(encode_data_huffman_base_id_only_core(&bit_data, &context)?),
             bit_data.info.clone(),
         );
-        compressed.base_table = base_bit_groups.get_bases(&bit_data);
-        compressed.base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_base_table = base_bit_groups.get_bases(&bit_data);
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout =
+            derive_base_layout_from_selected_bases(&selected_positions, &selected_base_table);
+        compressed.base_table = base_bit_groups.get_variable_bases(&bit_data);
+        compressed.base_bit_positions = selected_positions;
+        compressed.variable_base_bit_positions = layout.variable_positions;
+        compressed.constant_zero_bit_positions = layout.constant_zero_positions;
+        compressed.constant_one_bit_positions = layout.constant_one_positions;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()

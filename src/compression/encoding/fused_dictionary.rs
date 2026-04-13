@@ -71,7 +71,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     base_bit_groups: &B,
 ) -> FusedEncodingResult {
     let base_bit_mask = base_bit_groups.get_base_bit_mask();
-    let base_bit_positions = base_bit_groups.get_base_bit_positions();
+    let selected_bit_positions = base_bit_groups.get_base_bit_positions();
 
     let chunk_size = bit_data.chunk_size();
     let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
@@ -87,7 +87,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
 
     for row in 0..num_rows {
         let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
-        let signature = build_signature_key(chunk, base_bit_positions);
+        let signature = build_signature_key(chunk, selected_bit_positions);
         let id = if let Some(existing_id) = signature_to_id.get(&signature).copied() {
             base_counts[existing_id] += 1;
             existing_id
@@ -132,9 +132,12 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
 
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
-        let base: crate::BitStream =
-            unsafe { bit_data.get_chunk_unchecked(representative_row) }.to_bitvec();
-        base_table.push((base & base_bit_mask, base_counts[id]));
+        let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
+        let mut packed_base = crate::BitStream::with_capacity(selected_bit_positions.len());
+        for &bit_pos in selected_bit_positions {
+            packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
+        }
+        base_table.push((packed_base, base_counts[id]));
     }
 
     FusedEncodingResult {

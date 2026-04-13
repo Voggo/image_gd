@@ -1,6 +1,4 @@
-use crate::compression::encoding::{
-    CompressedData, CondensedSamples, build_base_bit_mask,
-};
+use crate::compression::encoding::{CompressedData, CondensedSamples, build_base_bit_mask};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     append_row_padding, decode_value_from_bits,
@@ -67,6 +65,8 @@ pub(crate) fn decompress_samples_batch(
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
                 &non_base_positions,
+                &compressed.variable_base_bit_positions,
+                &compressed.constant_one_bit_positions,
                 &compressed.base_table,
                 chunk_size,
                 sample.deviation.as_bitslice(),
@@ -85,6 +85,8 @@ pub(crate) fn decompress_samples_batch(
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
                 &non_base_positions,
+                &compressed.variable_base_bit_positions,
+                &compressed.constant_one_bit_positions,
                 &compressed.base_table,
                 chunk_size,
                 sample.deviation.as_bitslice(),
@@ -138,6 +140,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
                     &non_base_positions,
+                    &compressed.variable_base_bit_positions,
+                    &compressed.constant_one_bit_positions,
                     &compressed.base_table,
                     chunk_size,
                     sample.deviation,
@@ -154,6 +158,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
                     &non_base_positions,
+                    &compressed.variable_base_bit_positions,
+                    &compressed.constant_one_bit_positions,
                     &compressed.base_table,
                     chunk_size,
                     sample.deviation,
@@ -191,6 +197,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
 fn append_reconstructed_chunk(
     out: &mut crate::BitStream,
     non_base_positions: &[usize],
+    variable_base_positions: &[usize],
+    constant_one_positions: &[usize],
     base_table: &[(crate::BitStream, usize)],
     chunk_size: usize,
     deviation_bits: &crate::BitView,
@@ -207,12 +215,21 @@ fn append_reconstructed_chunk(
     let out_start = out.len();
     out.resize(out_start + chunk_size, false);
 
+    for &bit_pos in constant_one_positions {
+        if bit_pos < chunk_size {
+            out.set(out_start + bit_pos, true);
+        }
+    }
+
     let base_pattern = &base_table[base_id].0;
-    let base_len = chunk_size.min(base_pattern.len());
-    for bit_pos in 0..base_len {
-        out.set(out_start + bit_pos, unsafe {
-            *base_pattern.get_unchecked(bit_pos)
-        });
+    for (bit_idx, &bit_pos) in variable_base_positions.iter().enumerate() {
+        if bit_pos >= chunk_size {
+            continue;
+        }
+        out.set(
+            out_start + bit_pos,
+            base_pattern.get(bit_idx).map(|bit| *bit).unwrap_or(false),
+        );
     }
 
     for (deviation_bit_idx, &bit_pos) in non_base_positions
@@ -686,7 +703,7 @@ mod tests {
         num_base_bits: usize,
     ) -> CompressedData {
         let metadata = create_test_bit_data_info(chunk_size, num_rows);
-        let base_table = create_base_table(num_bases, chunk_size);
+        let base_table = create_base_table(num_bases, num_base_bits);
         let base_bit_positions = create_base_bit_positions(chunk_size, num_base_bits);
 
         // Create sample encoded data - one sample per row
@@ -703,6 +720,9 @@ mod tests {
             condensed_sample_weights: None,
             base_table,
             base_bit_positions,
+            variable_base_bit_positions: create_base_bit_positions(chunk_size, num_base_bits),
+            constant_zero_bit_positions: Vec::new(),
+            constant_one_bit_positions: Vec::new(),
             metadata,
         }
     }

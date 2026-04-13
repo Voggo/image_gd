@@ -1,4 +1,4 @@
-use bitvec::prelude::*;
+use fxhash::{FxHashMap, FxHashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,11 +9,11 @@ use super::tags::{
     ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
+use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX,
     RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
-use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -35,7 +35,8 @@ impl EgdFile {
     /// 1) header: magic ("EGD") + version
     /// 2) global: n (u64), m (u64), num_features (u64)
     /// 3) feature metadata (per feature):
-    ///    tag=1 (u8), data_type (u8), transform_tag (u8), [transform params], bits_per_feature (u16), base_bit_mask bits
+    ///    tag=1 (u8), data_type (u8), transform_tag (u8), [transform params], bits_per_feature (u16), 2-bit bit-state per feature bit
+    ///    bit-state encoding: 0=deviation, 1=variable base, 2=constant-zero base, 3=constant-one base
     /// 4) zero-padding to next byte
     /// 5) condensed weights bitstream (m * ceil(log2(n)) bits)
     /// 6) zero-padding to next byte
@@ -62,8 +63,39 @@ impl EgdFile {
             .as_deref()
             .unwrap_or(&[]);
 
-        let mut base_positions = compressed.base_bit_positions.clone();
-        base_positions.sort_unstable();
+        let selected_positions = compressed.base_bit_positions.clone();
+        let variable_positions = compressed.variable_base_bit_positions.clone();
+        let constant_zero_positions = compressed.constant_zero_bit_positions.clone();
+        let constant_one_positions = compressed.constant_one_bit_positions.clone();
+
+        let variable_set: FxHashSet<usize> = variable_positions.iter().copied().collect();
+        let constant_zero_set: FxHashSet<usize> = constant_zero_positions.iter().copied().collect();
+        let constant_one_set: FxHashSet<usize> = constant_one_positions.iter().copied().collect();
+
+        let selected_from_split: FxHashSet<usize> = variable_set
+            .iter()
+            .copied()
+            .chain(constant_zero_set.iter().copied())
+            .chain(constant_one_set.iter().copied())
+            .collect();
+        let selected_set: FxHashSet<usize> = selected_positions.iter().copied().collect();
+        if selected_from_split != selected_set {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "selected base positions do not match variable/constant split".to_string(),
+            });
+        }
+
+        let mut variable_position_to_index =
+            FxHashMap::with_capacity_and_hasher(variable_positions.len(), Default::default());
+        for (idx, &bit_pos) in variable_positions.iter().enumerate() {
+            if variable_position_to_index.insert(bit_pos, idx).is_some() {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!("duplicate variable base bit position {}", bit_pos),
+                });
+            }
+        }
+
+        let mut variable_positions_in_metadata_order = Vec::with_capacity(variable_positions.len());
 
         let n_u64 =
             u64::try_from(original_num_rows).map_err(|_| EntroGdError::InvalidMetadata {
@@ -133,7 +165,17 @@ impl EgdFile {
             let offset = data_info.feature_offset(feature_idx);
             for local_bit in 0..feature_bits {
                 let global_bit = offset + local_bit;
-                writer.write_bit(base_positions.binary_search(&global_bit).is_ok());
+                let bit_state = if variable_set.contains(&global_bit) {
+                    variable_positions_in_metadata_order.push(global_bit);
+                    1usize
+                } else if constant_zero_set.contains(&global_bit) {
+                    2usize
+                } else if constant_one_set.contains(&global_bit) {
+                    3usize
+                } else {
+                    0usize
+                };
+                writer.write_usize_bits(bit_state, 2);
             }
         }
 
@@ -157,8 +199,16 @@ impl EgdFile {
         })?;
         writer.write_u64(num_bases);
         for (base_bits, _) in &compressed.base_table {
-            for &bit_pos in &base_positions {
-                writer.write_bit(base_bits.get(bit_pos).map(|b| *b).unwrap_or(false));
+            for &global_bit in &variable_positions_in_metadata_order {
+                let variable_idx = *variable_position_to_index.get(&global_bit).ok_or_else(|| {
+                    EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "variable base position {} missing from index map",
+                            global_bit
+                        ),
+                    }
+                })?;
+                writer.write_bit(base_bits.get(variable_idx).map(|b| *b).unwrap_or(false));
             }
         }
 
@@ -286,6 +336,9 @@ impl EgdFile {
         // Feature metadata
         let mut features = Vec::with_capacity(num_features);
         let mut base_bit_positions = Vec::new();
+        let mut variable_base_bit_positions = Vec::new();
+        let mut constant_zero_bit_positions = Vec::new();
+        let mut constant_one_bit_positions = Vec::new();
         let mut running_offset = 0usize;
         for feature_idx in 0..num_features {
             let tag = reader.read_u8()?;
@@ -343,8 +396,29 @@ impl EgdFile {
             });
 
             for local_bit in 0..bits {
-                if reader.read_bit()? {
-                    base_bit_positions.push(running_offset + local_bit);
+                let global_bit = running_offset + local_bit;
+                match reader.read_usize_bits(2)? {
+                    0 => {}
+                    1 => {
+                        base_bit_positions.push(global_bit);
+                        variable_base_bit_positions.push(global_bit);
+                    }
+                    2 => {
+                        base_bit_positions.push(global_bit);
+                        constant_zero_bit_positions.push(global_bit);
+                    }
+                    3 => {
+                        base_bit_positions.push(global_bit);
+                        constant_one_bit_positions.push(global_bit);
+                    }
+                    other => {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "invalid base bit-state {} at feature {} local bit {}",
+                                other, feature_idx, local_bit
+                            ),
+                        });
+                    }
                 }
             }
             running_offset =
@@ -383,10 +457,9 @@ impl EgdFile {
 
         let mut base_table = Vec::with_capacity(num_bases);
         for _ in 0..num_bases {
-            let mut base_bits = bitvec![usize, crate::BitOrder; 0; chunk_size];
-            for &bit_pos in &base_bit_positions {
-                let bit = reader.read_bit()?;
-                base_bits.set(bit_pos, bit);
+            let mut base_bits = crate::BitStream::with_capacity(variable_base_bit_positions.len());
+            for _ in 0..variable_base_bit_positions.len() {
+                base_bits.push(reader.read_bit()?);
             }
             base_table.push((base_bits, 0usize));
         }
@@ -700,6 +773,9 @@ impl EgdFile {
             condensed_sample_weights: if m == 0 { None } else { Some(weights) },
             base_table,
             base_bit_positions,
+            variable_base_bit_positions,
+            constant_zero_bit_positions,
+            constant_one_bit_positions,
             metadata,
         })
     }

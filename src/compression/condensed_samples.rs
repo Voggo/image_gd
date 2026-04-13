@@ -122,10 +122,18 @@ fn select_condensed_samples(
 
     let bases = condensed_bit_groups.get_bases(bit_data);
     let base_mask = condensed_bit_groups.get_base_bit_mask();
+    let selected_positions = condensed_bit_groups.get_base_bit_positions();
 
     for (base_group, base) in condensed_bit_groups.get_groups().iter().zip(bases.iter()) {
         if base_group.is_empty() {
             continue;
+        }
+
+        let mut full_base = bitvec::bitvec![usize, crate::BitOrder; 0; bit_data.chunk_size()];
+        for (selected_idx, &bit_pos) in selected_positions.iter().enumerate() {
+            if let Some(bit_value) = base.0.get(selected_idx) {
+                full_base.set(bit_pos, *bit_value);
+            }
         }
 
         let mut condensed_bitvec = crate::BitStream::with_capacity(bit_data.chunk_size());
@@ -135,7 +143,7 @@ fn select_condensed_samples(
             let feature_bits = bit_data.feature_bits(feature_idx);
             let feature_end = feature_offset + feature_bits;
 
-            let base_feature = &base.0[feature_offset..feature_end];
+            let base_feature = &full_base[feature_offset..feature_end];
             let base_feature_mask = &base_mask[feature_offset..feature_end];
 
             let base_value = bits_to_u64(base_feature);
