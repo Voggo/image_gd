@@ -23,7 +23,7 @@
       "name": "img_compression",
       "build": {
         "colorspace": ["srgb_with_linear_alpha"],
-        "color_model": ["rgb"],
+        "color_model": ["y_co_cg_r"],
         "pixel_grouping": { "values": [1, 2, 3, 4, 5, 6, 8, 10] },
         "grouping_transform": ["raw", "for_min", "for_first_pixel"]
       },
