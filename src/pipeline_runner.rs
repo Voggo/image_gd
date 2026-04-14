@@ -626,12 +626,20 @@ fn encode_data(
     input: (BitDataSet, Box<dyn BaseBit>),
 ) -> Result<CompressedData, EntroGdError> {
     match implementation {
-        EncodeImpl::Naive => EncodeData {}.process(input),
-        EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
         EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
-        EncodeImpl::Rle => EncodeDataRLE {}.process(input),
-        EncodeImpl::Huffman => EncodeDataHuffman {}.process(input),
-        EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffmanBaseIdOnly {}.process(input),
+        _ => {
+            let base_table_ctx = BuildBaseTable {}.process(input)?;
+            match implementation {
+                EncodeImpl::Naive => EncodeData {}.process(base_table_ctx),
+                EncodeImpl::Optimized => EncodeDataOptimized {}.process(base_table_ctx),
+                EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
+                EncodeImpl::Huffman => EncodeDataHuffman {}.process(base_table_ctx),
+                EncodeImpl::HuffmanBaseIdOnly => {
+                    EncodeDataHuffmanBaseIdOnly {}.process(base_table_ctx)
+                }
+                EncodeImpl::FusedDictionary => unreachable!(),
+            }
+        }
     }
 }
 
@@ -639,6 +647,7 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
     let encoded_stream_total = compressed.encoded_data.get_encoded_size();
     let base_table_patterns = compressed
         .base_table
+        .as_raw()
         .iter()
         .map(|(pattern, _)| pattern.len())
         .sum::<usize>();

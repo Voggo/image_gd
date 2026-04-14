@@ -307,6 +307,10 @@ impl BaseBitGroups {
     pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
         let _timer =
             ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
+        tracing::trace!(
+            "--------------- Adding constant bit positions {:?} --------------",
+            bit_positions
+        );
         add_constant_bits(
             &mut self.base_bit_mask,
             &mut self.base_bit_positions,

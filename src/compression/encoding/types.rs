@@ -11,7 +11,7 @@ pub struct CompressedData {
     // Should be stored as a bitstream of length m * l_w (log_2(n).ceil() bits per weight).
     pub condensed_sample_weights: Option<Vec<usize>>,
     /// Base table mapping base patterns to their frequencies or encodings.
-    pub base_table: Vec<(crate::BitStream, usize)>,
+    pub base_table: BaseTable,
     /// Selected bit positions used as base bits during compression.
     pub base_bit_positions: Vec<usize>,
     /// Selected base-bit positions that vary across bases.
@@ -82,4 +82,32 @@ pub enum EncodedData {
     Normal(DeviationData),
     Rle(RleDeviationData),
     Huffman(HuffmanDeviationData),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaseTable {
+    Raw(Vec<(crate::BitStream, usize)>),
+    Delta(Vec<(crate::BitStream, usize)>),
+}
+
+impl BaseTable {
+    pub fn as_raw(&self) -> &[(crate::BitStream, usize)] {
+        match self {
+            BaseTable::Raw(table) | BaseTable::Delta(table) => table.as_slice(),
+        }
+    }
+
+    pub fn as_raw_mut(&mut self) -> &mut Vec<(crate::BitStream, usize)> {
+        match self {
+            BaseTable::Raw(table) | BaseTable::Delta(table) => table,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.as_raw().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.as_raw().is_empty()
+    }
 }

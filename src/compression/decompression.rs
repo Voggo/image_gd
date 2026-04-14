@@ -67,7 +67,7 @@ pub(crate) fn decompress_samples_batch(
                 &non_base_positions,
                 &compressed.variable_base_bit_positions,
                 &compressed.constant_one_bit_positions,
-                &compressed.base_table,
+                compressed.base_table.as_raw(),
                 chunk_size,
                 sample.deviation.as_bitslice(),
                 sample.id.as_bitslice(),
@@ -87,7 +87,7 @@ pub(crate) fn decompress_samples_batch(
                 &non_base_positions,
                 &compressed.variable_base_bit_positions,
                 &compressed.constant_one_bit_positions,
-                &compressed.base_table,
+                compressed.base_table.as_raw(),
                 chunk_size,
                 sample.deviation.as_bitslice(),
                 sample.id.as_bitslice(),
@@ -142,7 +142,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                     &non_base_positions,
                     &compressed.variable_base_bit_positions,
                     &compressed.constant_one_bit_positions,
-                    &compressed.base_table,
+                    compressed.base_table.as_raw(),
                     chunk_size,
                     sample.deviation,
                     sample.id,
@@ -160,7 +160,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                     &non_base_positions,
                     &compressed.variable_base_bit_positions,
                     &compressed.constant_one_bit_positions,
-                    &compressed.base_table,
+                    compressed.base_table.as_raw(),
                     chunk_size,
                     sample.deviation,
                     sample.id,
@@ -267,6 +267,7 @@ pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamp
     if let Some(weights) = &compressed.condensed_sample_weights {
         let samples: Vec<crate::BitStream> = compressed
             .base_table
+            .as_raw()
             .iter()
             .map(|(bv, _)| bv.clone())
             .collect();
@@ -718,7 +719,7 @@ mod tests {
         CompressedData {
             encoded_data,
             condensed_sample_weights: None,
-            base_table,
+            base_table: crate::compression::encoding::BaseTable::Raw(base_table),
             base_bit_positions,
             variable_base_bit_positions: create_base_bit_positions(chunk_size, num_base_bits),
             constant_zero_bit_positions: Vec::new(),
@@ -909,9 +910,10 @@ mod tests {
 
         // Verify that each sample matches the base table
         for (i, sample) in result.samples.iter().enumerate() {
-            assert_eq!(sample.len(), compressed.base_table[i].0.len());
+            let base_table = compressed.base_table.as_raw();
+            assert_eq!(sample.len(), base_table[i].0.len());
             for bit_idx in 0..sample.len() {
-                assert_eq!(sample[bit_idx], compressed.base_table[i].0[bit_idx]);
+                assert_eq!(sample[bit_idx], base_table[i].0[bit_idx]);
             }
         }
     }

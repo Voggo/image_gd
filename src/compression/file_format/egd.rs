@@ -11,8 +11,8 @@ use super::tags::{
 
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
-    CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX,
-    RLE_TERMINATOR_PAYLOAD, RleDeviationData,
+    BaseTable, CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX,
+    RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -192,22 +192,23 @@ impl EgdFile {
         writer.align_to_byte();
 
         // Base table
-        let num_bases = u64::try_from(compressed.base_table.len()).map_err(|_| {
-            EntroGdError::InvalidMetadata {
+        let base_table = compressed.base_table.as_raw();
+        let num_bases =
+            u64::try_from(base_table.len()).map_err(|_| EntroGdError::InvalidMetadata {
                 message: "num_bases does not fit into u64".to_string(),
-            }
-        })?;
+            })?;
         writer.write_u64(num_bases);
-        for (base_bits, _) in &compressed.base_table {
+        for (base_bits, _) in base_table {
             for &global_bit in &variable_positions_in_metadata_order {
-                let variable_idx = *variable_position_to_index.get(&global_bit).ok_or_else(|| {
-                    EntroGdError::InvalidMetadata {
-                        message: format!(
-                            "variable base position {} missing from index map",
-                            global_bit
-                        ),
-                    }
-                })?;
+                let variable_idx =
+                    *variable_position_to_index.get(&global_bit).ok_or_else(|| {
+                        EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "variable base position {} missing from index map",
+                                global_bit
+                            ),
+                        }
+                    })?;
                 writer.write_bit(base_bits.get(variable_idx).map(|b| *b).unwrap_or(false));
             }
         }
@@ -771,7 +772,7 @@ impl EgdFile {
         Ok(CompressedData {
             encoded_data,
             condensed_sample_weights: if m == 0 { None } else { Some(weights) },
-            base_table,
+            base_table: BaseTable::Raw(base_table),
             base_bit_positions,
             variable_base_bit_positions,
             constant_zero_bit_positions,

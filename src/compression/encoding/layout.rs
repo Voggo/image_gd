@@ -1,4 +1,4 @@
-use super::types::DeviationSampleRef;
+use super::types::{BaseTable, DeviationSampleRef};
 use super::{CompressedData, DeviationData, DeviationSample, EncodedData};
 use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
@@ -61,7 +61,7 @@ impl CompressedData {
         CompressedData {
             encoded_data,
             condensed_sample_weights: None,
-            base_table: Vec::new(),
+            base_table: BaseTable::Raw(Vec::new()),
             base_bit_positions: Vec::new(),
             variable_base_bit_positions: Vec::new(),
             constant_zero_bit_positions: Vec::new(),

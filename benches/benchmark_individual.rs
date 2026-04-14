@@ -253,12 +253,20 @@ impl EncodeImpl {
 
     fn process(self, input: (BitDataSet, DynBaseBit)) -> Result<CompressedData, EntroGdError> {
         match self {
-            EncodeImpl::Naive => EncodeData {}.process(input),
-            EncodeImpl::Optimized => EncodeDataOptimized {}.process(input),
-            EncodeImpl::Rle => EncodeDataRLE {}.process(input),
             EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
-            EncodeImpl::Huffman => EncodeDataHuffman {}.process(input),
-            EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffmanBaseIdOnly {}.process(input),
+            _ => {
+                let base_table_ctx = BuildBaseTable {}.process(input)?;
+                match self {
+                    EncodeImpl::Naive => EncodeData {}.process(base_table_ctx),
+                    EncodeImpl::Optimized => EncodeDataOptimized {}.process(base_table_ctx),
+                    EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
+                    EncodeImpl::Huffman => EncodeDataHuffman {}.process(base_table_ctx),
+                    EncodeImpl::HuffmanBaseIdOnly => {
+                        EncodeDataHuffmanBaseIdOnly {}.process(base_table_ctx)
+                    }
+                    EncodeImpl::FusedDictionary => unreachable!(),
+                }
+            }
         }
     }
 }
@@ -725,7 +733,8 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     .process(condensed_seed.clone())
     .unwrap();
     let huffman_symbol_width_seed = huffman_symbol_width(&selected_seed);
-    let compressed_seed = EncodeDataOptimized {}.process(selected_seed).unwrap();
+    let base_table_ctx_seed = BuildBaseTable {}.process(selected_seed).unwrap();
+    let compressed_seed = EncodeDataOptimized {}.process(base_table_ctx_seed).unwrap();
 
     let egd_path = output_egd_path(case);
     let _saved_once = SaveEgdFile {

@@ -18,6 +18,7 @@ pub use igd::{
 mod tests {
     use super::*;
     use crate::compression::base_selection::SelectBases;
+    use crate::compression::base_table::BuildBaseTable;
     use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{CompressedData, EncodedData};
@@ -34,6 +35,7 @@ mod tests {
         EntropyBatched {}
             .then(GenCondensedSamples { m_max: 50 })
             .then(SelectBases { patience: 10 })
+            .then(BuildBaseTable {})
             .then(EncodeData {})
     }
 
@@ -41,6 +43,7 @@ mod tests {
         EntropyBatched {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
+            .then(BuildBaseTable {})
             .then(EncodeDataRLE {})
     }
 
@@ -49,6 +52,7 @@ mod tests {
         EntropyBatched {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
+            .then(BuildBaseTable {})
             .then(EncodeDataHuffman {})
     }
 
@@ -133,7 +137,12 @@ mod tests {
             compressed.encoded_data.get_num_id_bits()
         );
         assert_eq!(loaded.base_table.len(), compressed.base_table.len());
-        for (lhs, rhs) in loaded.base_table.iter().zip(compressed.base_table.iter()) {
+        for (lhs, rhs) in loaded
+            .base_table
+            .as_raw()
+            .iter()
+            .zip(compressed.base_table.as_raw().iter())
+        {
             assert_eq!(lhs.0, rhs.0);
             assert_eq!(lhs.1, rhs.1);
         }
@@ -263,12 +272,13 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_with_huffman_payload() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder;
-                0, 1, 0, 1, 0, 1, 0, 1,
-                0, 1, 1, 0, 0, 1, 1, 0,
-                1, 0, 0, 1, 1, 0, 0, 1,
-                1, 1, 0, 0, 1, 1, 0, 0,
-            ],
+            data: vec![
+                0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0,
+                1, 1, 0, 0,
+            ]
+            .into_iter()
+            .map(|b| b != 0)
+            .collect(),
             num_rows: 4,
             stride: 8,
             chunk_size: 8,
@@ -299,12 +309,13 @@ mod tests {
     #[test]
     fn test_roundtrip_igd_with_huffman_image_payload() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder;
-                0,0,0,1, 0,0,1,0, 0,0,1,1,
-                0,1,0,0, 0,1,0,1, 0,1,1,0,
-                0,1,1,1, 1,0,0,0, 1,0,0,1,
-                1,0,1,0, 1,0,1,1, 1,1,0,0,
-            ],
+            data: vec![
+                0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 1,
+                1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0,
+            ]
+            .into_iter()
+            .map(|b| b != 0)
+            .collect(),
             num_rows: 4,
             stride: 12,
             chunk_size: 12,

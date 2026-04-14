@@ -20,6 +20,7 @@ fn test_csv_roundtrip_compression() {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
         })
+        .then(BuildBaseTable {})
         .then(EncodeDataOptimized {});
 
     let compressed = compression_pipeline
@@ -86,6 +87,7 @@ fn test_image_roundtrip_compression() {
         patience: 10,
         base_bit_impl: BaseBitImpl::BatchGroups,
     })
+    .then(BuildBaseTable {})
     .then(EncodeDataHuffmanBaseIdOnly {});
 
     let compressed = compression_pipeline

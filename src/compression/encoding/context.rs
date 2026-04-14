@@ -1,4 +1,4 @@
-use crate::compression::base_bits::BaseBit;
+use crate::compression::base_table::PreEncodeContext;
 use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
 
@@ -41,19 +41,21 @@ pub(super) fn build_deviation_ranges(
     deviation_ranges
 }
 
-pub(super) fn prepare_encoding_context<B: BaseBit + ?Sized>(
-    bit_data: &BitDataSet,
-    base_bit_groups: &B,
-) -> EncodingContext {
-    let base_bit_mask = base_bit_groups.get_base_bit_mask();
-    let num_bases = base_bit_groups.get_num_bases();
+pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContext {
+    let chunk_size = input.bit_data.chunk_size();
+    let num_bits_per_base = input.layout.selected_base_bit_positions.len();
+    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
+    let num_bases = input.variable_base_table.len();
     let l_id = bits_needed_nonzero(num_bases);
 
-    let chunk_size = bit_data.chunk_size();
-    let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
-    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
-
-    let deviation_ranges = build_deviation_ranges(base_bit_mask, chunk_size, num_deviation_bits);
+    let mut base_bit_mask = crate::BitStream::repeat(false, chunk_size);
+    for &bit_pos in &input.layout.selected_base_bit_positions {
+        if bit_pos < chunk_size {
+            base_bit_mask.set(bit_pos, true);
+        }
+    }
+    let deviation_ranges =
+        build_deviation_ranges(base_bit_mask.as_bitslice(), chunk_size, num_deviation_bits);
 
     let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
     if l_id > 0 {
@@ -67,18 +69,10 @@ pub(super) fn prepare_encoding_context<B: BaseBit + ?Sized>(
         }
     }
 
-    let num_rows = bit_data.num_rows();
-    let mut row_to_group_id = vec![0usize; num_rows];
-    for (id, group) in base_bit_groups.get_groups().iter().enumerate() {
-        for &row in group.iter() {
-            row_to_group_id[row] = id;
-        }
-    }
-
     EncodingContext {
         l_id,
         num_deviation_bits,
-        row_to_group_id,
+        row_to_group_id: input.row_to_base_id.clone(),
         deviation_ranges,
         id_bits_per_base,
     }

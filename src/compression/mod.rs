@@ -1,5 +1,6 @@
 pub mod base_bits;
 pub mod base_selection;
+pub mod base_table;
 pub mod condensed_samples;
 pub mod decompression;
 #[path = "encoding/mod.rs"]
@@ -16,13 +17,15 @@ pub use base_bits::{
 pub use base_selection::{
     BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
 };
+pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};
 pub use condensed_samples::GenCondensedSamples;
 pub use decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRowsData, decompress_analytics,
     decompress_file, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
 pub use encoding::{
-    CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData, RleDeviationData,
+    BaseTable, CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
+    RleDeviationData,
 };
 pub use encoding::{
     EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,

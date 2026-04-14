@@ -82,6 +82,7 @@ fn main() -> Result<(), EntroGdError> {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
         })
+        .then(BuildBaseTable {})
         .then(EncodeDataOptimized {});
     let compressed = compression_pipeline.process(bit_data)?;
 
@@ -133,6 +134,7 @@ fn main() -> Result<(), EntroGdError> {
     // Calculate compression ratio
     let base_table_size = loaded_compressed
         .base_table
+        .as_raw()
         .iter()
         .map(|(pattern, _)| pattern.len())
         .sum::<usize>();

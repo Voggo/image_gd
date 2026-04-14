@@ -10,7 +10,7 @@ use std::path::Path;
 fn main() -> Result<(), EntroGdError> {
     unsafe {
         env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
-        env::set_var("RUST_LOG", "info");
+        env::set_var("RUST_LOG", "trace");
     }
     let _log_handle = init_logging();
     let _timer =
@@ -68,16 +68,15 @@ fn main() -> Result<(), EntroGdError> {
 
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
-        color_model: ImageColorModel::YCoCgR,
+        color_model: ImageColorModel::Rgb,
         pixel_grouping: 4,
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        grouping_transform: ImageGroupingTransform::Raw,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBases {
-        patience: 10,
-    })
-    .then(EncodeDataFusedDictionary {});
+    .then(SelectBases { patience: 10 })
+    .then(BuildBaseTable {})
+    .then(EncodeDataRLE {});
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());
@@ -106,11 +105,22 @@ fn main() -> Result<(), EntroGdError> {
             compressed.metadata.original_size_bits(),
             compressed.encoded_data.get_encoded_size()
         );
-        tracing::info!(
-            "Compression ratio: {:.2}%",
-            100.0 * compressed.encoded_data.get_encoded_size() as f64
-                / compressed.metadata.original_size_bits() as f64
-        );
+        let igd_size_bytes = fs::metadata(&compressed_path)?.len();
+        let igd_size_bits = igd_size_bytes.saturating_mul(8);
+        let original_size_bits = compressed.metadata.original_size_bits();
+
+        if original_size_bits > 0 {
+            tracing::info!(
+                "Compression ratio (stored .igd size): {:.2}% ({} bytes)",
+                100.0 * igd_size_bits as f64 / original_size_bits as f64,
+                igd_size_bytes
+            );
+        } else {
+            tracing::info!(
+                "Compression ratio (stored .igd size): n/a (original size is 0 bits, .igd={} bytes)",
+                igd_size_bytes
+            );
+        }
         tracing::info!("Completed processing: {}", image_file.display());
     }
 

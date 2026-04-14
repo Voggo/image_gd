@@ -207,6 +207,7 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
             .then(SelectBases {
                 patience: case.patience,
             })
+            .then(BuildBaseTable {})
             .then(EncodeDataOptimized {})
             .process(bit_data)
             .unwrap(),
@@ -214,6 +215,7 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
             .then(SelectBases {
                 patience: case.patience,
             })
+            .then(BuildBaseTable {})
             .then(EncodeDataOptimized {})
             .process(bit_data)
             .unwrap(),
