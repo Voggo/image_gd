@@ -653,7 +653,8 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
         .sum::<usize>();
 
     let position_width_bits = bits_needed_nonzero(compressed.metadata.chunk_size().max(1));
-    let base_bit_positions = compressed.base_bit_positions.len() * position_width_bits;
+    let base_bit_positions =
+        compressed.layout.selected_base_bit_positions.len() * position_width_bits;
 
     let condensed_weights = compressed
         .condensed_sample_weights

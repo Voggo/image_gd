@@ -1,5 +1,6 @@
 use super::types::{BaseTable, DeviationSampleRef};
 use super::{CompressedData, DeviationData, DeviationSample, EncodedData};
+use crate::compression::base_table::BaseLayoutInfo;
 use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
 use bitvec::prelude::*;
@@ -62,10 +63,13 @@ impl CompressedData {
             encoded_data,
             condensed_sample_weights: None,
             base_table: BaseTable::Raw(Vec::new()),
-            base_bit_positions: Vec::new(),
-            variable_base_bit_positions: Vec::new(),
-            constant_zero_bit_positions: Vec::new(),
-            constant_one_bit_positions: Vec::new(),
+            layout: BaseLayoutInfo {
+                selected_base_bit_positions: Vec::new(),
+                variable_base_bit_positions: Vec::new(),
+                constant_zero_bit_positions: Vec::new(),
+                constant_one_bit_positions: Vec::new(),
+            },
+            entropy_sorted_column_order: None,
             metadata,
         }
     }

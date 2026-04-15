@@ -6,6 +6,8 @@ mod layout;
 mod rle;
 mod types;
 
+use bitvec::prelude::*;
+
 use self::context::{build_encoding_context, encode_rows_as_symbol_stream};
 use self::fused_dictionary::encode_data_fused_dictionary;
 use self::huffman::{
@@ -17,8 +19,8 @@ pub(crate) use self::huffman_codec::build_huffman_code_map;
 pub(crate) use self::layout::{build_base_bit_mask, huffman_row_layout};
 pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD};
 pub use self::types::{
-    BaseTable, CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
-    HuffmanDeviationData, RleDeviationData,
+    BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
+    DeviationSample, EncodedData, HuffmanDeviationData, RleDeviationData,
 };
 
 use crate::compression::base_bits::BaseBit;
@@ -95,10 +97,9 @@ impl Filter for EncodeDataFusedDictionary {
             &layout.variable_base_bit_positions,
             &fused.base_table,
         ));
-        compressed.base_bit_positions = selected_positions;
-        compressed.variable_base_bit_positions = layout.variable_base_bit_positions;
-        compressed.constant_zero_bit_positions = layout.constant_zero_bit_positions;
-        compressed.constant_one_bit_positions = layout.constant_one_bit_positions;
+        compressed.layout = layout;
+        compressed.layout.selected_base_bit_positions = selected_positions;
+        compressed.entropy_sorted_column_order = None;
         compressed.condensed_sample_weights = bit_data
             .info
             .m_condensed_sample_weights()
@@ -139,13 +140,95 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
     }
 }
 
+pub struct DeltaEncodeBaseTable {}
+
+impl Filter for DeltaEncodeBaseTable {
+    type Input = CompressedData;
+    type Output = CompressedData;
+
+    fn process(&self, mut input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Delta encoding base table (post-encoding)");
+
+        let Some(order) = input.entropy_sorted_column_order.clone() else {
+            tracing::warn!(
+                "DeltaEncodeBaseTable skipped: missing entropy_sorted_column_order; keeping raw base table"
+            );
+            if !matches!(input.base_table, BaseTable::Raw(_)) {
+                input.base_table = BaseTable::Raw(input.base_table.as_raw().to_vec());
+            }
+            return Ok(input);
+        };
+
+        let raw_rows = input.base_table.as_raw().to_vec();
+        if raw_rows.is_empty() {
+            input.base_table = BaseTable::Delta(DeltaBaseTableData {
+                raw_rows,
+                first_sort_key: crate::BitStream::new(),
+                delta_bit_stream: crate::BitStream::new(),
+                delta_count: 0,
+                sort_column_order: order,
+            });
+            return Ok(input);
+        }
+
+        let row_width = raw_rows[0].0.len();
+        if order.iter().any(|&idx| idx >= row_width) {
+            tracing::warn!(
+                row_width,
+                "DeltaEncodeBaseTable skipped: entropy order contains out-of-range column index; keeping raw base table"
+            );
+            input.base_table = BaseTable::Raw(raw_rows);
+            return Ok(input);
+        }
+
+        let mut key_rows = Vec::with_capacity(raw_rows.len());
+        for (row_bits, _) in &raw_rows {
+            key_rows.push(build_sort_key_bits(row_bits.as_bitslice(), &order));
+        }
+
+        let first_sort_key = key_rows[0].clone();
+        let mut delta_bit_stream = crate::BitStream::new();
+        for pair in key_rows.windows(2) {
+            let prev = pair[0].as_bitslice();
+            let curr = pair[1].as_bitslice();
+
+            if compare_unsigned(prev, curr) == std::cmp::Ordering::Less {
+                tracing::warn!(
+                    "DeltaEncodeBaseTable skipped: base rows are not monotonic for descending key deltas; keeping raw base table"
+                );
+                input.base_table = BaseTable::Raw(raw_rows);
+                return Ok(input);
+            }
+
+            let delta = subtract_unsigned(prev, curr);
+            if is_zero_bits(delta.as_bitslice()) {
+                tracing::warn!(
+                    "DeltaEncodeBaseTable skipped: encountered zero delta (expected unique sorted rows); keeping raw base table"
+                );
+                input.base_table = BaseTable::Raw(raw_rows);
+                return Ok(input);
+            }
+
+            let d = subtract_one(delta.as_bitslice());
+            encode_adjusted_delta_bits(d.as_bitslice(), row_width, &mut delta_bit_stream);
+        }
+
+        input.base_table = BaseTable::Delta(DeltaBaseTableData {
+            raw_rows,
+            first_sort_key,
+            delta_bit_stream,
+            delta_count: key_rows.len().saturating_sub(1),
+            sort_column_order: order,
+        });
+        Ok(input)
+    }
+}
+
 fn build_compressed_data(input: PreEncodeContext, encoded_data: EncodedData) -> CompressedData {
     let mut compressed = CompressedData::new(encoded_data, input.bit_data.info.clone());
     compressed.base_table = BaseTable::Raw(input.variable_base_table);
-    compressed.base_bit_positions = input.layout.selected_base_bit_positions;
-    compressed.variable_base_bit_positions = input.layout.variable_base_bit_positions;
-    compressed.constant_zero_bit_positions = input.layout.constant_zero_bit_positions;
-    compressed.constant_one_bit_positions = input.layout.constant_one_bit_positions;
+    compressed.layout = input.layout;
+    compressed.entropy_sorted_column_order = input.entropy_sorted_column_order;
     compressed.condensed_sample_weights = input
         .bit_data
         .info
@@ -259,4 +342,129 @@ fn symbol_slice(
     let end = start + symbol_width;
     debug_assert!(end <= symbol_stream.len());
     unsafe { symbol_stream.get_unchecked(start..end) }
+}
+
+fn build_sort_key_bits(row: &crate::BitView, order: &[usize]) -> crate::BitStream {
+    let mut out = crate::BitStream::with_capacity(order.len());
+    for &col_idx in order.iter().rev() {
+        out.push(row.get(col_idx).map(|b| *b).unwrap_or(false));
+    }
+    out
+}
+
+fn is_zero_bits(bits: &crate::BitView) -> bool {
+    bits.not_any()
+}
+
+fn compare_unsigned(lhs: &crate::BitView, rhs: &crate::BitView) -> std::cmp::Ordering {
+    let max_len = lhs.len().max(rhs.len());
+    for idx in (0..max_len).rev() {
+        let l = lhs.get(idx).map(|b| *b).unwrap_or(false);
+        let r = rhs.get(idx).map(|b| *b).unwrap_or(false);
+        match l.cmp(&r) {
+            std::cmp::Ordering::Equal => continue,
+            non_equal => return non_equal,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> crate::BitStream {
+    let max_len = minuend.len().max(subtrahend.len());
+    let mut out = crate::BitStream::with_capacity(max_len);
+
+    let mut borrow: i8 = 0;
+    for idx in 0..max_len {
+        let a = if minuend.get(idx).map(|b| *b).unwrap_or(false) {
+            1
+        } else {
+            0
+        };
+        let b = if subtrahend.get(idx).map(|b| *b).unwrap_or(false) {
+            1
+        } else {
+            0
+        };
+
+        let mut diff = a - b - borrow;
+        if diff < 0 {
+            diff += 2;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        out.push(diff == 1);
+    }
+
+    while out.last().map(|bit| *bit) == Some(false) {
+        out.pop();
+    }
+
+    out
+}
+
+fn subtract_one(bits: &crate::BitView) -> crate::BitStream {
+    let mut out = bits.to_bitvec();
+    for idx in 0..out.len() {
+        if out[idx] {
+            out.set(idx, false);
+            break;
+        }
+        out.set(idx, true);
+    }
+    while out.last().map(|bit| *bit) == Some(false) {
+        out.pop();
+    }
+    out
+}
+
+fn bits_to_u64(bits: &crate::BitView) -> u64 {
+    let mut value = 0u64;
+    for idx in (0..bits.len()).rev() {
+        value = (value << 1) | (bits.get(idx).map(|b| *b).unwrap_or(false) as u64);
+    }
+    value
+}
+
+// fn write_u64_lsb_bits(value: u64, width: usize, out: &mut crate::BitStream) {
+//     for shift in 0..width {
+//         out.push(((value >> shift) & 1) == 1);
+//     }
+// }
+
+fn write_u64_bits<O: BitOrder>(value: u64, width: usize, out: &mut BitVec<usize, O>) {
+    let bits = value.view_bits::<O>();
+    out.extend_from_bitslice(&bits[..width]);
+}
+
+fn encode_adjusted_delta_bits(d_bits: &crate::BitView, lb: usize, out: &mut crate::BitStream) {
+    let d_len = d_bits.len();
+
+    if d_len <= 38 {
+        let d = bits_to_u64(d_bits);
+
+        const STARTS: [u64; 8] = [0, 4, 20, 84, 1108, 9300, 74772, 598068];
+        const WIDTHS: [usize; 8] = [2, 4, 7, 10, 13, 16, 19, 38];
+
+        for tier in 0..8 {
+            let start = STARTS[tier];
+            let width = WIDTHS[tier];
+            let max = start + ((1u128 << width) as u64) - 1;
+            if d <= max {
+                for _ in 0..tier {
+                    out.push(true);
+                }
+                out.push(false);
+                write_u64_bits(d - start, width, out);
+                return;
+            }
+        }
+    }
+
+    for _ in 0..8 {
+        out.push(true);
+    }
+    for idx in 0..lb {
+        out.push(d_bits.get(idx).map(|b| *b).unwrap_or(false));
+    }
 }

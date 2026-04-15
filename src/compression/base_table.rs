@@ -12,9 +12,12 @@ pub struct PreEncodeContext {
     pub row_to_base_id: Vec<usize>,
     pub layout: BaseLayoutInfo,
     pub variable_base_table: Vec<(crate::BitStream, usize)>,
+    /// Column indices into `variable_base_table` rows, ordered by ascending
+    /// unweighted entropy as used by `BuildSortedBaseTable`.
+    pub entropy_sorted_column_order: Option<Vec<usize>>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseLayoutInfo {
     pub selected_base_bit_positions: Vec<usize>,
     pub variable_base_bit_positions: Vec<usize>,
@@ -82,6 +85,7 @@ fn build_encode_context(
         row_to_base_id,
         layout,
         variable_base_table,
+        entropy_sorted_column_order: None,
     };
 
     if sort_bases {
@@ -184,11 +188,12 @@ pub(crate) fn project_selected_bases_to_variable(
 fn sort_context_base_tables(context: &mut PreEncodeContext) {
     let _timer = ScopedTimer::trace("Sorting base table entries and remapping IDs");
     let base_count = context.variable_base_table.len();
+    let column_order = column_order_by_unweighted_entropy(&context.variable_base_table);
+    context.entropy_sorted_column_order = Some(column_order.clone());
+
     if base_count <= 1 {
         return;
     }
-
-    let column_order = column_order_by_unweighted_entropy(&context.variable_base_table);
 
     let mut indices: Vec<usize> = (0..base_count).collect();
     indices.sort_by(|&lhs, &rhs| {
@@ -259,7 +264,7 @@ fn compare_rows_by_column_order(
     for &column_idx in column_order {
         let l = lhs.get(column_idx).map(|bit| *bit).unwrap_or(false);
         let r = rhs.get(column_idx).map(|bit| *bit).unwrap_or(false);
-        match l.cmp(&r) {
+        match r.cmp(&l) {
             Ordering::Equal => continue,
             non_equal => return non_equal,
         }
@@ -269,7 +274,7 @@ fn compare_rows_by_column_order(
     for idx in 0..len {
         let l = lhs.get(idx).map(|bit| *bit).unwrap_or(false);
         let r = rhs.get(idx).map(|bit| *bit).unwrap_or(false);
-        match l.cmp(&r) {
+        match r.cmp(&l) {
             Ordering::Equal => continue,
             non_equal => return non_equal,
         }
@@ -358,6 +363,7 @@ mod tests {
         assert_eq!(context.layout.variable_base_bit_positions, vec![0, 1]);
         assert_eq!(context.layout.constant_one_bit_positions, vec![3]);
         assert!(context.layout.constant_zero_bit_positions.is_empty());
+        assert!(context.entropy_sorted_column_order.is_none());
         let mut ids = context.row_to_base_id.clone();
         ids.sort_unstable();
         assert_eq!(ids, vec![0, 1, 2, 3]);
@@ -387,6 +393,8 @@ mod tests {
             sorted.variable_base_table.len(),
             unsorted.variable_base_table.len()
         );
+        assert!(unsorted.entropy_sorted_column_order.is_none());
+        assert!(sorted.entropy_sorted_column_order.is_some());
 
         let mut unsorted_patterns = unsorted
             .variable_base_table
@@ -431,6 +439,7 @@ mod tests {
                 (make_bits(&[true, false, true, true]), 1),   // 1011
                 (make_bits(&[false, true, true, true]), 1),   // 0111
             ],
+            entropy_sorted_column_order: None,
         };
 
         sort_context_base_tables(&mut context);
@@ -445,12 +454,13 @@ mod tests {
         assert_eq!(
             sorted_rows,
             vec![
-                vec![false, false, false, true],
-                vec![true, false, true, false],
-                vec![true, false, true, true],
                 vec![false, true, true, true],
+                vec![true, false, true, true],
+                vec![true, false, true, false],
+                vec![false, false, false, true],
             ]
         );
-        assert_eq!(context.row_to_base_id, vec![1, 0, 2, 3]);
+        assert_eq!(context.row_to_base_id, vec![2, 3, 1, 0]);
+        assert_eq!(context.entropy_sorted_column_order, Some(vec![1, 2, 3, 0]));
     }
 }

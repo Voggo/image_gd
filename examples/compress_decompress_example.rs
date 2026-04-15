@@ -82,8 +82,9 @@ fn main() -> Result<(), EntroGdError> {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
         })
-        .then(BuildBaseTable {})
-        .then(EncodeDataOptimized {});
+        .then(BuildSortedBaseTable {})
+        .then(EncodeDataOptimized {})
+        .then(DeltaEncodeBaseTable {});
     let compressed = compression_pipeline.process(bit_data)?;
 
     let compressed_path = SaveEgdFile {
@@ -129,7 +130,10 @@ fn main() -> Result<(), EntroGdError> {
         compressed.encoded_data.get_encoded_size()
     );
     tracing::info!("  Base table entries: {}", compressed.base_table.len());
-    tracing::info!("  Base bit positions: {:?}", compressed.base_bit_positions);
+    tracing::info!(
+        "  Base bit positions: {:?}",
+        compressed.layout.selected_base_bit_positions
+    );
 
     // Calculate compression ratio
     let base_table_size = loaded_compressed

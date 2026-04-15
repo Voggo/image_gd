@@ -8,6 +8,7 @@ pub(super) struct EncodingContext {
     pub(super) row_to_group_id: Vec<usize>,
     pub(super) deviation_ranges: Vec<(usize, usize)>,
     pub(super) id_bits_per_base: Vec<crate::BitStream>,
+    pub(super) _entropy_sorted_column_order: Option<Vec<usize>>,
 }
 
 pub(super) fn build_deviation_ranges(
@@ -75,6 +76,7 @@ pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContex
         row_to_group_id: input.row_to_base_id.clone(),
         deviation_ranges,
         id_bits_per_base,
+        _entropy_sorted_column_order: input.entropy_sorted_column_order.clone(),
     }
 }
 

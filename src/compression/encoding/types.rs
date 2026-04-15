@@ -1,5 +1,6 @@
 use fxhash::FxHashMap;
 
+use crate::compression::base_table::BaseLayoutInfo;
 use crate::compression::preprocessor::BitDataInfo;
 
 /// Represents the compressed output.
@@ -12,14 +13,11 @@ pub struct CompressedData {
     pub condensed_sample_weights: Option<Vec<usize>>,
     /// Base table mapping base patterns to their frequencies or encodings.
     pub base_table: BaseTable,
-    /// Selected bit positions used as base bits during compression.
-    pub base_bit_positions: Vec<usize>,
-    /// Selected base-bit positions that vary across bases.
-    pub variable_base_bit_positions: Vec<usize>,
-    /// Selected base-bit positions that are constant and equal to zero.
-    pub constant_zero_bit_positions: Vec<usize>,
-    /// Selected base-bit positions that are constant and equal to one.
-    pub constant_one_bit_positions: Vec<usize>,
+    /// Base-table bit layout metadata.
+    pub layout: BaseLayoutInfo,
+    /// Column indices into `base_table` row bit-vectors (variable part), ordered
+    /// by ascending unweighted entropy as used by `BuildSortedBaseTable`.
+    pub entropy_sorted_column_order: Option<Vec<usize>>,
     /// Metadata for decompression (column count, base bits used, etc.).
     pub metadata: BitDataInfo,
 }
@@ -87,19 +85,30 @@ pub enum EncodedData {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BaseTable {
     Raw(Vec<(crate::BitStream, usize)>),
-    Delta(Vec<(crate::BitStream, usize)>),
+    Delta(DeltaBaseTableData),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeltaBaseTableData {
+    pub raw_rows: Vec<(crate::BitStream, usize)>,
+    pub first_sort_key: crate::BitStream,
+    pub delta_bit_stream: crate::BitStream,
+    pub delta_count: usize,
+    pub sort_column_order: Vec<usize>,
 }
 
 impl BaseTable {
     pub fn as_raw(&self) -> &[(crate::BitStream, usize)] {
         match self {
-            BaseTable::Raw(table) | BaseTable::Delta(table) => table.as_slice(),
+            BaseTable::Raw(table) => table.as_slice(),
+            BaseTable::Delta(delta) => delta.raw_rows.as_slice(),
         }
     }
 
     pub fn as_raw_mut(&mut self) -> &mut Vec<(crate::BitStream, usize)> {
         match self {
-            BaseTable::Raw(table) | BaseTable::Delta(table) => table,
+            BaseTable::Raw(table) => table,
+            BaseTable::Delta(delta) => &mut delta.raw_rows,
         }
     }
 

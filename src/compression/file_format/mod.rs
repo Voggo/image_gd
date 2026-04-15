@@ -103,18 +103,21 @@ mod tests {
         let loaded = egd.to_compressed_data().unwrap();
 
         assert_eq!(loaded.metadata, compressed.metadata);
-        assert_eq!(loaded.base_bit_positions, compressed.base_bit_positions);
         assert_eq!(
-            loaded.variable_base_bit_positions,
-            compressed.variable_base_bit_positions
+            loaded.layout.selected_base_bit_positions,
+            compressed.layout.selected_base_bit_positions
         );
         assert_eq!(
-            loaded.constant_zero_bit_positions,
-            compressed.constant_zero_bit_positions
+            loaded.layout.variable_base_bit_positions,
+            compressed.layout.variable_base_bit_positions
         );
         assert_eq!(
-            loaded.constant_one_bit_positions,
-            compressed.constant_one_bit_positions
+            loaded.layout.constant_zero_bit_positions,
+            compressed.layout.constant_zero_bit_positions
+        );
+        assert_eq!(
+            loaded.layout.constant_one_bit_positions,
+            compressed.layout.constant_one_bit_positions
         );
         assert_eq!(
             loaded.condensed_sample_weights,

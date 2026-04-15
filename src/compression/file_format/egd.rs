@@ -5,14 +5,15 @@ use std::path::{Path, PathBuf};
 use super::bit_io::{BitReader, BitWriter};
 use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
 use super::tags::{
-    ENCODING_TAG_HUFFMAN_BASE_ID_ONLY, ENCODING_TAG_HUFFMAN_CANONICAL, ENCODING_TAG_NORMAL,
-    ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
+    BASE_TABLE_TAG_DELTA, BASE_TABLE_TAG_RAW, ENCODING_TAG_HUFFMAN_BASE_ID_ONLY,
+    ENCODING_TAG_HUFFMAN_CANONICAL, ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_RM_PACKED,
+    HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
-    BaseTable, CompressedData, DeviationData, EncodedData, HuffmanDeviationData, RLE_LONG_MAX,
-    RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
+    BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
+    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -21,6 +22,186 @@ use crate::utils::bits_needed_nonzero;
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
+
+fn decode_delta_base_rows(
+    num_bases: usize,
+    lb: usize,
+    order: &[usize],
+    first_sort_key: &crate::BitView,
+    delta_count: usize,
+    delta_bit_stream: &crate::BitView,
+) -> Result<Vec<(crate::BitStream, usize)>, EntroGdError> {
+    if num_bases == 0 {
+        return Ok(Vec::new());
+    }
+
+    if delta_count != num_bases.saturating_sub(1) {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "delta_count mismatch: expected {}, got {}",
+                num_bases.saturating_sub(1),
+                delta_count
+            ),
+        });
+    }
+
+    if order.iter().any(|&idx| idx >= lb) {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta sort column order contains out-of-range index".to_string(),
+        });
+    }
+
+    let mut rows = Vec::with_capacity(num_bases);
+    let mut prev_key = first_sort_key.to_bitvec();
+    rows.push((sort_key_to_row(&prev_key, order, lb), 0usize));
+
+    let mut bit_pos = 0usize;
+    for _ in 0..delta_count {
+        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb)?;
+        let delta = add_one(d.as_bitslice());
+        let next_key = subtract_unsigned(prev_key.as_bitslice(), delta.as_bitslice());
+        rows.push((sort_key_to_row(&next_key, order, lb), 0usize));
+        prev_key = next_key;
+    }
+
+    if bit_pos != delta_bit_stream.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta bitstream has trailing/unused bits".to_string(),
+        });
+    }
+
+    Ok(rows)
+}
+
+fn sort_key_to_row(sort_key: &crate::BitStream, order: &[usize], lb: usize) -> crate::BitStream {
+    let mut row = crate::BitStream::repeat(false, lb);
+    for (rank, &col_idx) in order.iter().enumerate() {
+        let key_idx = lb.saturating_sub(1 + rank);
+        let bit = sort_key.get(key_idx).map(|b| *b).unwrap_or(false);
+        if col_idx < lb {
+            row.set(col_idx, bit);
+        }
+    }
+    row
+}
+
+fn decode_adjusted_delta(
+    bits: &crate::BitView,
+    bit_pos: &mut usize,
+    lb: usize,
+) -> Result<crate::BitStream, EntroGdError> {
+    let mut tier = 0usize;
+    while *bit_pos < bits.len() && bits[*bit_pos] {
+        tier += 1;
+        *bit_pos += 1;
+        if tier == 8 {
+            break;
+        }
+    }
+
+    if tier < 8 {
+        if *bit_pos >= bits.len() || bits[*bit_pos] {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "invalid delta prefix terminator".to_string(),
+            });
+        }
+        *bit_pos += 1;
+    }
+
+    let (payload_width, start): (usize, u64) = match tier {
+        0 => (2, 0),
+        1 => (4, 4),
+        2 => (7, 20),
+        3 => (10, 84),
+        4 => (13, 1108),
+        5 => (16, 9300),
+        6 => (19, 74772),
+        7 => (38, 598068),
+        8 => (lb, 0),
+        _ => {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "invalid delta tier".to_string(),
+            });
+        }
+    };
+
+    if *bit_pos + payload_width > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta payload exceeds bitstream".to_string(),
+        });
+    }
+
+    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
+    *bit_pos += payload_width;
+
+    if tier == 8 {
+        return Ok(payload.to_bitvec());
+    }
+
+    let mut payload_value = 0u64;
+    for idx in 0..payload_width {
+        if payload[idx] {
+            payload_value |= 1u64 << idx;
+        }
+    }
+    let value = start + payload_value;
+
+    let mut out = crate::BitStream::new();
+    let mut v = value;
+    while v > 0 {
+        out.push((v & 1) == 1);
+        v >>= 1;
+    }
+    Ok(out)
+}
+
+fn add_one(bits: &crate::BitView) -> crate::BitStream {
+    let mut out = bits.to_bitvec();
+    let mut carry = true;
+    let mut idx = 0usize;
+    while carry {
+        if idx >= out.len() {
+            out.push(true);
+            break;
+        }
+        let bit = out[idx];
+        out.set(idx, !bit);
+        carry = bit;
+        idx += 1;
+    }
+    out
+}
+
+fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> crate::BitStream {
+    let max_len = minuend.len().max(subtrahend.len());
+    let mut out = crate::BitStream::with_capacity(max_len);
+
+    let mut borrow: i8 = 0;
+    for idx in 0..max_len {
+        let a = if minuend.get(idx).map(|b| *b).unwrap_or(false) {
+            1
+        } else {
+            0
+        };
+        let b = if subtrahend.get(idx).map(|b| *b).unwrap_or(false) {
+            1
+        } else {
+            0
+        };
+        let mut diff = a - b - borrow;
+        if diff < 0 {
+            diff += 2;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        out.push(diff == 1);
+    }
+    while out.last().map(|b| *b) == Some(false) {
+        out.pop();
+    }
+    out
+}
 
 /// In-memory EGD file contents that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,10 +244,10 @@ impl EgdFile {
             .as_deref()
             .unwrap_or(&[]);
 
-        let selected_positions = compressed.base_bit_positions.clone();
-        let variable_positions = compressed.variable_base_bit_positions.clone();
-        let constant_zero_positions = compressed.constant_zero_bit_positions.clone();
-        let constant_one_positions = compressed.constant_one_bit_positions.clone();
+        let selected_positions = compressed.layout.selected_base_bit_positions.clone();
+        let variable_positions = compressed.layout.variable_base_bit_positions.clone();
+        let constant_zero_positions = compressed.layout.constant_zero_bit_positions.clone();
+        let constant_one_positions = compressed.layout.constant_one_bit_positions.clone();
 
         let variable_set: FxHashSet<usize> = variable_positions.iter().copied().collect();
         let constant_zero_set: FxHashSet<usize> = constant_zero_positions.iter().copied().collect();
@@ -182,6 +363,15 @@ impl EgdFile {
         // Align after feature metadata
         writer.align_to_byte();
 
+        let mut metadata_variable_position_to_index = FxHashMap::with_capacity_and_hasher(
+            variable_positions_in_metadata_order.len(),
+            Default::default(),
+        );
+        for (metadata_idx, &global_bit) in variable_positions_in_metadata_order.iter().enumerate()
+        {
+            metadata_variable_position_to_index.insert(global_bit, metadata_idx);
+        }
+
         // Condensed sample weights
         let weight_bits = bits_needed_nonzero(original_num_rows);
         for &weight in condensed_weights {
@@ -192,24 +382,92 @@ impl EgdFile {
         writer.align_to_byte();
 
         // Base table
-        let base_table = compressed.base_table.as_raw();
-        let num_bases =
-            u64::try_from(base_table.len()).map_err(|_| EntroGdError::InvalidMetadata {
-                message: "num_bases does not fit into u64".to_string(),
-            })?;
-        writer.write_u64(num_bases);
-        for (base_bits, _) in base_table {
-            for &global_bit in &variable_positions_in_metadata_order {
-                let variable_idx =
-                    *variable_position_to_index.get(&global_bit).ok_or_else(|| {
-                        EntroGdError::InvalidMetadata {
-                            message: format!(
-                                "variable base position {} missing from index map",
-                                global_bit
-                            ),
-                        }
+        match &compressed.base_table {
+            BaseTable::Raw(base_table) => {
+                writer.write_u8(BASE_TABLE_TAG_RAW);
+                let num_bases =
+                    u64::try_from(base_table.len()).map_err(|_| EntroGdError::InvalidMetadata {
+                        message: "num_bases does not fit into u64".to_string(),
                     })?;
-                writer.write_bit(base_bits.get(variable_idx).map(|b| *b).unwrap_or(false));
+                writer.write_u64(num_bases);
+                for (base_bits, _) in base_table {
+                    for &global_bit in &variable_positions_in_metadata_order {
+                        let variable_idx = *variable_position_to_index
+                            .get(&global_bit)
+                            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                                message: format!(
+                                    "variable base position {} missing from index map",
+                                    global_bit
+                                ),
+                            })?;
+                        writer.write_bit(base_bits.get(variable_idx).map(|b| *b).unwrap_or(false));
+                    }
+                }
+            }
+            BaseTable::Delta(delta) => {
+                writer.write_u8(BASE_TABLE_TAG_DELTA);
+                let num_bases = u64::try_from(delta.raw_rows.len()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "num_bases does not fit into u64".to_string(),
+                    }
+                })?;
+                writer.write_u64(num_bases);
+
+                let mapped_order: Vec<usize> = delta
+                    .sort_column_order
+                    .iter()
+                    .map(|&current_idx| {
+                        let &global_bit = variable_positions.get(current_idx).ok_or_else(|| {
+                            EntroGdError::InvalidMetadata {
+                                message: format!(
+                                    "delta sort column index {} out of range {}",
+                                    current_idx,
+                                    variable_positions.len()
+                                ),
+                            }
+                        })?;
+                        metadata_variable_position_to_index
+                            .get(&global_bit)
+                            .copied()
+                            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                                message: format!(
+                                    "variable base position {} missing from metadata index map",
+                                    global_bit
+                                ),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, EntroGdError>>()?;
+
+                let order_len = u64::try_from(mapped_order.len()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "sort_column_order length does not fit into u64".to_string(),
+                    }
+                })?;
+                writer.write_u64(order_len);
+                let index_bits = bits_needed_nonzero(variable_positions.len().max(1));
+                for &idx in &mapped_order {
+                    writer.write_usize_bits(idx, index_bits);
+                }
+
+                let lb = variable_positions.len();
+                if !delta.raw_rows.is_empty() {
+                    for idx in 0..lb {
+                        writer
+                            .write_bit(delta.first_sort_key.get(idx).map(|b| *b).unwrap_or(false));
+                    }
+                }
+
+                writer.write_u64(u64::try_from(delta.delta_count).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "delta_count does not fit into u64".to_string(),
+                    }
+                })?);
+                writer.write_u64(u64::try_from(delta.delta_bit_stream.len()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "delta bitstream length does not fit into u64".to_string(),
+                    }
+                })?);
+                writer.write_bitslice(delta.delta_bit_stream.as_bitslice());
             }
         }
 
@@ -444,6 +702,7 @@ impl EgdFile {
         reader.align_to_byte();
 
         // Base table
+        let base_table_tag = reader.read_u8()?;
         let num_bases =
             usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
                 message: "num_bases does not fit into usize".to_string(),
@@ -456,14 +715,80 @@ impl EgdFile {
             });
         }
 
-        let mut base_table = Vec::with_capacity(num_bases);
-        for _ in 0..num_bases {
-            let mut base_bits = crate::BitStream::with_capacity(variable_base_bit_positions.len());
-            for _ in 0..variable_base_bit_positions.len() {
-                base_bits.push(reader.read_bit()?);
+        let mut entropy_sorted_column_order: Option<Vec<usize>> = None;
+        let mut base_table = match base_table_tag {
+            BASE_TABLE_TAG_RAW => {
+                let mut rows = Vec::with_capacity(num_bases);
+                for _ in 0..num_bases {
+                    let mut base_bits =
+                        crate::BitStream::with_capacity(variable_base_bit_positions.len());
+                    for _ in 0..variable_base_bit_positions.len() {
+                        base_bits.push(reader.read_bit()?);
+                    }
+                    rows.push((base_bits, 0usize));
+                }
+                BaseTable::Raw(rows)
             }
-            base_table.push((base_bits, 0usize));
-        }
+            BASE_TABLE_TAG_DELTA => {
+                let order_len = usize::try_from(reader.read_u64()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "sort_column_order length does not fit into usize".to_string(),
+                    }
+                })?;
+                let lb = variable_base_bit_positions.len();
+                let index_bits = bits_needed_nonzero(lb.max(1));
+                let mut order = Vec::with_capacity(order_len);
+                for _ in 0..order_len {
+                    let idx = reader.read_usize_bits(index_bits)?;
+                    if idx >= lb {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: format!("delta sort column index {} out of range {}", idx, lb),
+                        });
+                    }
+                    order.push(idx);
+                }
+                let mut first_sort_key = crate::BitStream::with_capacity(lb);
+                if num_bases > 0 {
+                    for _ in 0..lb {
+                        first_sort_key.push(reader.read_bit()?);
+                    }
+                }
+
+                let delta_count = usize::try_from(reader.read_u64()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "delta_count does not fit into usize".to_string(),
+                    }
+                })?;
+                let delta_bit_len = usize::try_from(reader.read_u64()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "delta bitstream length does not fit into usize".to_string(),
+                    }
+                })?;
+                let delta_bit_stream = reader.read_bits(delta_bit_len)?;
+
+                let rows = decode_delta_base_rows(
+                    num_bases,
+                    lb,
+                    &order,
+                    first_sort_key.as_bitslice(),
+                    delta_count,
+                    delta_bit_stream.as_bitslice(),
+                )?;
+                entropy_sorted_column_order = Some(order.clone());
+                BaseTable::Delta(DeltaBaseTableData {
+                    raw_rows: rows,
+                    first_sort_key,
+                    delta_bit_stream,
+                    delta_count,
+                    sort_column_order: order,
+                })
+            }
+            other => {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!("unsupported base-table tag {}", other),
+                });
+            }
+        };
 
         let num_samples = n
             .checked_add(m)
@@ -757,7 +1082,7 @@ impl EgdFile {
                 counts[base_id] += 1;
             }
             for (idx, count) in counts.into_iter().enumerate() {
-                base_table[idx].1 = count;
+                base_table.as_raw_mut()[idx].1 = count;
             }
         }
 
@@ -772,11 +1097,14 @@ impl EgdFile {
         Ok(CompressedData {
             encoded_data,
             condensed_sample_weights: if m == 0 { None } else { Some(weights) },
-            base_table: BaseTable::Raw(base_table),
-            base_bit_positions,
-            variable_base_bit_positions,
-            constant_zero_bit_positions,
-            constant_one_bit_positions,
+            base_table,
+            layout: crate::compression::base_table::BaseLayoutInfo {
+                selected_base_bit_positions: base_bit_positions,
+                variable_base_bit_positions,
+                constant_zero_bit_positions,
+                constant_one_bit_positions,
+            },
+            entropy_sorted_column_order,
             metadata,
         })
     }

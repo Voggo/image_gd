@@ -24,12 +24,12 @@ pub use decompression::{
     decompress_file, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
 pub use encoding::{
-    BaseTable, CompressedData, CondensedSamples, DeviationData, DeviationSample, EncodedData,
-    RleDeviationData,
+    BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
+    DeviationSample, EncodedData, RleDeviationData,
 };
 pub use encoding::{
-    EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman, EncodeDataHuffmanBaseIdOnly,
-    EncodeDataOptimized, EncodeDataRLE,
+    DeltaEncodeBaseTable, EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman,
+    EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
     EntropyBatched, EntropyNaive, EntropyStrideSampled, EntropyStrideSampledBatched,
