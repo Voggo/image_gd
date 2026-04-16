@@ -9,8 +9,8 @@ use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::pipeline_profiles::{
-    BaseBitImpl, CsvPipelineProfile, EncodeImpl, ImagePipelineProfile, PipelineProfileSet,
-    SelectBasesImpl,
+    BaseBitImpl, BaseTableImpl, CsvPipelineProfile, EncodeImpl, EntropyImpl, ImagePipelineProfile,
+    PipelineProfileSet, SelectBasesImpl,
 };
 use crate::prelude::*;
 use crate::utils::bits_needed_nonzero;
@@ -84,6 +84,11 @@ pub struct ExperimentConfigColumns {
     pub csv_float_scaling: Option<String>,
     pub csv_max_decimal_scale: Option<u8>,
     pub csv_integer_zero_normalization: Option<bool>,
+    pub entropy_impl: Option<String>,
+    pub entropy_skip_rows: Option<usize>,
+    pub use_condensed_samples: Option<bool>,
+    pub base_table_impl: Option<String>,
+    pub delta_encode_base_table: Option<bool>,
     pub image_colorspace: Option<String>,
     pub image_color_model: Option<String>,
     pub image_pixel_grouping: Option<u32>,
@@ -343,18 +348,35 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,base_bit_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_encode_base_table,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
     )?;
 
     for record in records {
         writeln!(
             file,
-            "{},{:?},{},{:?},{:?},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{:?},{},{:?},{:?},{},{},{},{},{},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             record.file_path.display(),
             record.kind,
             record.preset_name,
             record.select_impl,
             record.base_bit_impl,
+            record.config.entropy_impl.as_deref().unwrap_or(""),
+            record
+                .config
+                .entropy_skip_rows
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record
+                .config
+                .use_condensed_samples
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record.config.base_table_impl.as_deref().unwrap_or(""),
+            record
+                .config
+                .delta_encode_base_table
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             record.encode_impl,
             record.m_max,
             record.patience,
@@ -442,27 +464,39 @@ fn run_csv_profile(
     let preprocess_ms = preprocess_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let entropy_t0 = Instant::now();
-    let entropy_out = EntropyNaive {}.process(bit_data)?;
+    let entropy_out = run_entropy(profile.entropy_impl, profile.entropy_skip_rows, bit_data)?;
     let entropy_ms = entropy_t0.elapsed().as_secs_f64() * 1_000.0;
 
-    let condensed_t0 = Instant::now();
-    let condensed_out = GenCondensedSamples {
-        m_max: profile.m_max,
-    }
-    .process(entropy_out)?;
-    let condensed_ms = condensed_t0.elapsed().as_secs_f64() * 1_000.0;
+    let (select_input, condensed_ms) = if profile.use_condensed_samples {
+        let condensed_t0 = Instant::now();
+        let condensed_out = GenCondensedSamples {
+            m_max: profile.m_max,
+        }
+        .process(entropy_out)?;
+        (
+            condensed_out,
+            condensed_t0.elapsed().as_secs_f64() * 1_000.0,
+        )
+    } else {
+        (entropy_out, 0.0)
+    };
 
     let select_t0 = Instant::now();
     let selected = select_bases(
         profile.select_impl,
         profile.base_bit_impl,
-        condensed_out,
+        select_input,
         profile.patience,
     )?;
     let select_ms = select_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let encode_t0 = Instant::now();
-    let compressed = encode_data(profile.encode_impl, selected)?;
+    let compressed = encode_data(
+        profile.encode_impl,
+        profile.base_table_impl,
+        profile.delta_encode_base_table,
+        selected,
+    )?;
     let encode_ms = encode_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let size_breakdown_bits = estimate_size_breakdown_bits(&compressed);
@@ -478,6 +512,11 @@ fn run_csv_profile(
             csv_float_scaling: Some(format!("{:?}", profile.preprocess.float_scaling)),
             csv_max_decimal_scale: Some(profile.preprocess.max_decimal_scale),
             csv_integer_zero_normalization: Some(profile.preprocess.integer_zero_normalization),
+            entropy_impl: Some(format!("{:?}", profile.entropy_impl)),
+            entropy_skip_rows: Some(profile.entropy_skip_rows),
+            use_condensed_samples: Some(profile.use_condensed_samples),
+            base_table_impl: Some(format!("{:?}", profile.base_table_impl)),
+            delta_encode_base_table: Some(profile.delta_encode_base_table),
             ..ExperimentConfigColumns::default()
         },
         select_impl: profile.select_impl,
@@ -517,27 +556,39 @@ fn run_image_profile(
     let load_ms = load_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let entropy_t0 = Instant::now();
-    let entropy_out = EntropyNaive {}.process(bit_data)?;
+    let entropy_out = run_entropy(profile.entropy_impl, profile.entropy_skip_rows, bit_data)?;
     let entropy_ms = entropy_t0.elapsed().as_secs_f64() * 1_000.0;
 
-    let condensed_t0 = Instant::now();
-    let condensed_out = GenCondensedSamples {
-        m_max: profile.m_max,
-    }
-    .process(entropy_out)?;
-    let condensed_ms = condensed_t0.elapsed().as_secs_f64() * 1_000.0;
+    let (select_input, condensed_ms) = if profile.use_condensed_samples {
+        let condensed_t0 = Instant::now();
+        let condensed_out = GenCondensedSamples {
+            m_max: profile.m_max,
+        }
+        .process(entropy_out)?;
+        (
+            condensed_out,
+            condensed_t0.elapsed().as_secs_f64() * 1_000.0,
+        )
+    } else {
+        (entropy_out, 0.0)
+    };
 
     let select_t0 = Instant::now();
     let selected = select_bases(
         profile.select_impl,
         profile.base_bit_impl,
-        condensed_out,
+        select_input,
         profile.patience,
     )?;
     let select_ms = select_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let encode_t0 = Instant::now();
-    let compressed = encode_data(profile.encode_impl, selected)?;
+    let compressed = encode_data(
+        profile.encode_impl,
+        profile.base_table_impl,
+        profile.delta_encode_base_table,
+        selected,
+    )?;
     let encode_ms = encode_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let size_breakdown_bits = estimate_size_breakdown_bits(&compressed);
@@ -551,6 +602,11 @@ fn run_image_profile(
             image_color_model: Some(format!("{:?}", profile.build.color_model)),
             image_pixel_grouping: Some(profile.build.pixel_grouping),
             image_grouping_transform: Some(format!("{:?}", profile.build.grouping_transform)),
+            entropy_impl: Some(format!("{:?}", profile.entropy_impl)),
+            entropy_skip_rows: Some(profile.entropy_skip_rows),
+            use_condensed_samples: Some(profile.use_condensed_samples),
+            base_table_impl: Some(format!("{:?}", profile.base_table_impl)),
+            delta_encode_base_table: Some(profile.delta_encode_base_table),
             ..ExperimentConfigColumns::default()
         },
         select_impl: profile.select_impl,
@@ -623,13 +679,19 @@ fn select_bases(
 
 fn encode_data(
     implementation: EncodeImpl,
+    base_table_impl: BaseTableImpl,
+    delta_encode_base_table: bool,
     input: (BitDataSet, Box<dyn BaseBit>),
 ) -> Result<CompressedData, EntroGdError> {
     match implementation {
         EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
         _ => {
-            let base_table_ctx = BuildBaseTable {}.process(input)?;
-            match implementation {
+            let base_table_ctx = match base_table_impl {
+                BaseTableImpl::Raw => BuildBaseTable {}.process(input)?,
+                BaseTableImpl::Sorted => BuildSortedBaseTable {}.process(input)?,
+            };
+
+            let compressed = match implementation {
                 EncodeImpl::Naive => EncodeData {}.process(base_table_ctx),
                 EncodeImpl::Optimized => EncodeDataOptimized {}.process(base_table_ctx),
                 EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
@@ -638,19 +700,65 @@ fn encode_data(
                     EncodeDataHuffmanBaseIdOnly {}.process(base_table_ctx)
                 }
                 EncodeImpl::FusedDictionary => unreachable!(),
+            }?;
+
+            if delta_encode_base_table {
+                DeltaEncodeBaseTable {}.process(compressed)
+            } else {
+                Ok(compressed)
             }
+        }
+    }
+}
+
+fn run_entropy(
+    implementation: EntropyImpl,
+    skip_rows: usize,
+    input: BitDataSet,
+) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
+    match implementation {
+        EntropyImpl::Naive => EntropyNaive {}.process(input),
+        EntropyImpl::Batched => EntropyBatched {}.process(input),
+        EntropyImpl::StrideSampled => EntropyStrideSampled { skip_rows }.process(input),
+        EntropyImpl::StrideSampledBatched => {
+            EntropyStrideSampledBatched { skip_rows }.process(input)
         }
     }
 }
 
 fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBreakdownBits {
     let encoded_stream_total = compressed.encoded_data.get_encoded_size();
-    let base_table_patterns = compressed
-        .base_table
-        .as_raw()
-        .iter()
-        .map(|(pattern, _)| pattern.len())
-        .sum::<usize>();
+    let variable_base_bits = compressed.layout.variable_base_bit_positions.len();
+    let base_table_payload_bits = match &compressed.base_table {
+        crate::compression::encoding::BaseTable::Raw(rows) => {
+            // Matches EgdFile::from_compressed_data raw base-table layout:
+            // - base table tag (u8)
+            // - num_bases (u64)
+            // - packed row bits in metadata variable-base order (lb bits per row)
+            let num_bases = rows.len();
+            8 + 64 + num_bases * variable_base_bits
+        }
+        crate::compression::encoding::BaseTable::Delta(delta) => {
+            // Matches EgdFile::from_compressed_data delta base-table layout:
+            // - base table tag (u8)
+            // - num_bases (u64)
+            // - sort order len (u64)
+            // - sort order indices (index_bits each)
+            // - first sort key (lb bits, only if num_bases > 0)
+            // - delta_count (u64)
+            // - delta_bit_len (u64)
+            // - delta bitstream payload
+            let num_bases = delta.raw_rows.len();
+            let index_bits = bits_needed_nonzero(variable_base_bits.max(1));
+            let order_bits = delta.sort_column_order.len() * index_bits;
+            let first_key_bits = if num_bases > 0 { variable_base_bits } else { 0 };
+            8 + 64 + 64 + order_bits + first_key_bits + 64 + 64 + delta.delta_bit_stream.len()
+        }
+    };
+
+    // EgdFile::from_compressed_data aligns to byte after base table.
+    let base_table_padding_bits = (8 - (base_table_payload_bits % 8)) % 8;
+    let base_table_patterns = base_table_payload_bits + base_table_padding_bits;
 
     let position_width_bits = bits_needed_nonzero(compressed.metadata.chunk_size().max(1));
     let base_bit_positions =

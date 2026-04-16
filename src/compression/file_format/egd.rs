@@ -367,8 +367,7 @@ impl EgdFile {
             variable_positions_in_metadata_order.len(),
             Default::default(),
         );
-        for (metadata_idx, &global_bit) in variable_positions_in_metadata_order.iter().enumerate()
-        {
+        for (metadata_idx, &global_bit) in variable_positions_in_metadata_order.iter().enumerate() {
             metadata_variable_position_to_index.insert(global_bit, metadata_idx);
         }
 

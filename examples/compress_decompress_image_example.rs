@@ -69,12 +69,12 @@ fn main() -> Result<(), EntroGdError> {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: 4,
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pixel_grouping: 1,
+        grouping_transform: ImageGroupingTransform::Raw,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBases { patience: 20 })
+    .then(SelectBases { patience: 30 })
     .then(BuildSortedBaseTable {})
     .then(EncodeDataRLE {})
     .then(DeltaEncodeBaseTable {});

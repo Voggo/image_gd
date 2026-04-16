@@ -142,6 +142,14 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
 
 pub struct DeltaEncodeBaseTable {}
 
+#[derive(Debug, Clone, Copy, Default)]
+struct DeltaBitStats {
+    total_written_bits: usize,
+    prefix_bits: usize,
+    payload_bits: usize,
+    minimally_necessary_bits: usize,
+}
+
 impl Filter for DeltaEncodeBaseTable {
     type Input = CompressedData;
     type Output = CompressedData;
@@ -188,6 +196,7 @@ impl Filter for DeltaEncodeBaseTable {
 
         let first_sort_key = key_rows[0].clone();
         let mut delta_bit_stream = crate::BitStream::new();
+        let mut delta_stats = DeltaBitStats::default();
         for pair in key_rows.windows(2) {
             let prev = pair[0].as_bitslice();
             let curr = pair[1].as_bitslice();
@@ -210,8 +219,71 @@ impl Filter for DeltaEncodeBaseTable {
             }
 
             let d = subtract_one(delta.as_bitslice());
-            encode_adjusted_delta_bits(d.as_bitslice(), row_width, &mut delta_bit_stream);
+            let stats = encode_adjusted_delta_bits_with_stats(
+                d.as_bitslice(),
+                row_width,
+                &mut delta_bit_stream,
+            );
+            delta_stats.total_written_bits += stats.total_written_bits;
+            delta_stats.prefix_bits += stats.prefix_bits;
+            delta_stats.payload_bits += stats.payload_bits;
+            delta_stats.minimally_necessary_bits += stats.minimally_necessary_bits;
         }
+
+        let raw_base_table_bits = raw_rows.len() * row_width;
+        let delta_base_table_bits = first_sort_key.len() + delta_bit_stream.len();
+        let delta_count = key_rows.len().saturating_sub(1);
+
+        let quantization_overhead_bits = delta_stats
+            .payload_bits
+            .saturating_sub(delta_stats.minimally_necessary_bits);
+        let total_overhead_bits = delta_stats
+            .total_written_bits
+            .saturating_sub(delta_stats.minimally_necessary_bits);
+
+        let encoded_id_deviation_bits = input.encoded_data.get_encoded_size();
+        let combined_bits = encoded_id_deviation_bits + delta_base_table_bits;
+        let base_table_share_pct = if combined_bits == 0 {
+            0.0
+        } else {
+            100.0 * delta_base_table_bits as f64 / combined_bits as f64
+        };
+        let id_deviation_share_pct = if combined_bits == 0 {
+            0.0
+        } else {
+            100.0 * encoded_id_deviation_bits as f64 / combined_bits as f64
+        };
+
+        let raw_to_delta_ratio = if raw_base_table_bits == 0 {
+            0.0
+        } else {
+            delta_base_table_bits as f64 / raw_base_table_bits as f64
+        };
+
+        tracing::debug!(
+            raw_base_table_bits,
+            delta_base_table_bits,
+            delta_count,
+            row_width,
+            raw_to_delta_ratio,
+            "Delta base-table size summary"
+        );
+        tracing::debug!(
+            minimally_necessary_bits = delta_stats.minimally_necessary_bits,
+            unary_prefix_overhead_bits = delta_stats.prefix_bits,
+            quantization_overhead_bits,
+            total_overhead_bits,
+            encoded_delta_bits = delta_stats.total_written_bits,
+            "Delta coding overhead summary"
+        );
+        tracing::debug!(
+            encoded_base_table_bits = delta_base_table_bits,
+            encoded_id_deviation_bits,
+            base_table_share_pct,
+            id_deviation_share_pct,
+            combined_bits,
+            "Compressed payload composition (base-table vs id/deviation)"
+        );
 
         input.base_table = BaseTable::Delta(DeltaBaseTableData {
             raw_rows,
@@ -437,7 +509,16 @@ fn write_u64_bits<O: BitOrder>(value: u64, width: usize, out: &mut BitVec<usize,
     out.extend_from_bitslice(&bits[..width]);
 }
 
-fn encode_adjusted_delta_bits(d_bits: &crate::BitView, lb: usize, out: &mut crate::BitStream) {
+fn encode_adjusted_delta_bits_with_stats(
+    d_bits: &crate::BitView,
+    lb: usize,
+    out: &mut crate::BitStream,
+) -> DeltaBitStats {
+    let mut stats = DeltaBitStats {
+        minimally_necessary_bits: d_bits.len(),
+        ..DeltaBitStats::default()
+    };
+
     let d_len = d_bits.len();
 
     if d_len <= 38 {
@@ -456,7 +537,10 @@ fn encode_adjusted_delta_bits(d_bits: &crate::BitView, lb: usize, out: &mut crat
                 }
                 out.push(false);
                 write_u64_bits(d - start, width, out);
-                return;
+                stats.prefix_bits = tier + 1;
+                stats.payload_bits = width;
+                stats.total_written_bits = stats.prefix_bits + stats.payload_bits;
+                return stats;
             }
         }
     }
@@ -467,4 +551,8 @@ fn encode_adjusted_delta_bits(d_bits: &crate::BitView, lb: usize, out: &mut crat
     for idx in 0..lb {
         out.push(d_bits.get(idx).map(|b| *b).unwrap_or(false));
     }
+    stats.prefix_bits = 8;
+    stats.payload_bits = lb;
+    stats.total_written_bits = stats.prefix_bits + stats.payload_bits;
+    stats
 }

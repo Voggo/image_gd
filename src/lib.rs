@@ -38,13 +38,13 @@ pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
 #[cfg(feature = "experiment-runner")]
 pub use pipeline_profiles::{
-    ConfigBaseBitImpl, ConfigEncodeImpl, ConfigImageColorModel, ConfigImageColorSpace,
-    ConfigImageGroupingTransform, ConfigMissingValuePolicy, ConfigSelectBasesImpl,
-    CsvPipelineProfile, CsvPipelineProfileConfig, CsvProfileGroupConfig, EncodeImpl,
-    ExperimentRunnerConfigFile, ImageBuildConfig, ImageBuildSweepConfig, ImagePipelineProfile,
-    ImagePipelineProfileConfig, ImageProfileGroupConfig, IntegerRangeU8, IntegerRangeU32,
-    IntegerRangeUsize, IntegerSweepU8, IntegerSweepU32, IntegerSweepUsize, PipelineProfileSet,
-    SelectBasesImpl,
+    BaseTableImpl, ConfigBaseBitImpl, ConfigBaseTableImpl, ConfigEncodeImpl, ConfigEntropyImpl,
+    ConfigImageColorModel, ConfigImageColorSpace, ConfigImageGroupingTransform,
+    ConfigMissingValuePolicy, ConfigSelectBasesImpl, CsvPipelineProfile, CsvPipelineProfileConfig,
+    CsvProfileGroupConfig, EncodeImpl, EntropyImpl, ExperimentRunnerConfigFile, ImageBuildConfig,
+    ImageBuildSweepConfig, ImagePipelineProfile, ImagePipelineProfileConfig,
+    ImageProfileGroupConfig, IntegerRangeU8, IntegerRangeU32, IntegerRangeUsize, IntegerSweepU8,
+    IntegerSweepU32, IntegerSweepUsize, PipelineProfileSet, SelectBasesImpl,
 };
 #[cfg(feature = "experiment-runner")]
 pub use pipeline_runner::{

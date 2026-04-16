@@ -33,6 +33,20 @@ pub enum EncodeImpl {
     HuffmanBaseIdOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntropyImpl {
+    Naive,
+    Batched,
+    StrideSampled,
+    StrideSampledBatched,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseTableImpl {
+    Raw,
+    Sorted,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigSelectBasesImpl {
@@ -62,6 +76,23 @@ pub enum ConfigEncodeImpl {
     Rle,
     Huffman,
     HuffmanBaseIdOnly,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigEntropyImpl {
+    Naive,
+    #[serde(alias = "optimized")]
+    Batched,
+    StrideSampled,
+    StrideSampledBatched,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigBaseTableImpl {
+    Raw,
+    Sorted,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,6 +158,11 @@ pub struct CsvPipelineProfileConfig {
     pub patience: usize,
     pub select_impl: ConfigSelectBasesImpl,
     pub base_bit_impl: Option<ConfigBaseBitImpl>,
+    pub entropy_impl: Option<ConfigEntropyImpl>,
+    pub entropy_skip_rows: Option<usize>,
+    pub use_condensed_samples: Option<bool>,
+    pub base_table_impl: Option<ConfigBaseTableImpl>,
+    pub delta_encode_base_table: Option<bool>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -146,6 +182,11 @@ pub struct ImagePipelineProfileConfig {
     pub patience: usize,
     pub select_impl: ConfigSelectBasesImpl,
     pub base_bit_impl: Option<ConfigBaseBitImpl>,
+    pub entropy_impl: Option<ConfigEntropyImpl>,
+    pub entropy_skip_rows: Option<usize>,
+    pub use_condensed_samples: Option<bool>,
+    pub base_table_impl: Option<ConfigBaseTableImpl>,
+    pub delta_encode_base_table: Option<bool>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -216,6 +257,11 @@ pub struct CsvProfileGroupConfig {
     pub patience: Option<IntegerSweepUsize>,
     pub select_impl: Option<Vec<ConfigSelectBasesImpl>>,
     pub base_bit_impl: Option<Vec<ConfigBaseBitImpl>>,
+    pub entropy_impl: Option<Vec<ConfigEntropyImpl>>,
+    pub entropy_skip_rows: Option<IntegerSweepUsize>,
+    pub use_condensed_samples: Option<Vec<bool>>,
+    pub base_table_impl: Option<Vec<ConfigBaseTableImpl>>,
+    pub delta_encode_base_table: Option<Vec<bool>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -235,6 +281,11 @@ pub struct ImageProfileGroupConfig {
     pub patience: Option<IntegerSweepUsize>,
     pub select_impl: Option<Vec<ConfigSelectBasesImpl>>,
     pub base_bit_impl: Option<Vec<ConfigBaseBitImpl>>,
+    pub entropy_impl: Option<Vec<ConfigEntropyImpl>>,
+    pub entropy_skip_rows: Option<IntegerSweepUsize>,
+    pub use_condensed_samples: Option<Vec<bool>>,
+    pub base_table_impl: Option<Vec<ConfigBaseTableImpl>>,
+    pub delta_encode_base_table: Option<Vec<bool>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -249,6 +300,11 @@ pub struct CsvPipelineProfile {
     pub patience: usize,
     pub select_impl: SelectBasesImpl,
     pub base_bit_impl: BaseBitImpl,
+    pub entropy_impl: EntropyImpl,
+    pub entropy_skip_rows: usize,
+    pub use_condensed_samples: bool,
+    pub base_table_impl: BaseTableImpl,
+    pub delta_encode_base_table: bool,
     pub encode_impl: EncodeImpl,
 }
 
@@ -268,6 +324,11 @@ pub struct ImagePipelineProfile {
     pub patience: usize,
     pub select_impl: SelectBasesImpl,
     pub base_bit_impl: BaseBitImpl,
+    pub entropy_impl: EntropyImpl,
+    pub entropy_skip_rows: usize,
+    pub use_condensed_samples: bool,
+    pub base_table_impl: BaseTableImpl,
+    pub delta_encode_base_table: bool,
     pub encode_impl: EncodeImpl,
 }
 
@@ -291,6 +352,11 @@ impl PipelineProfileSet {
                     patience: 6,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::SignatureGroups,
+                    entropy_impl: EntropyImpl::Naive,
+                    entropy_skip_rows: 0,
+                    use_condensed_samples: true,
+                    base_table_impl: BaseTableImpl::Raw,
+                    delta_encode_base_table: false,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 CsvPipelineProfile {
@@ -303,6 +369,11 @@ impl PipelineProfileSet {
                     patience: 10,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::IncSignatureGroups,
+                    entropy_impl: EntropyImpl::Naive,
+                    entropy_skip_rows: 0,
+                    use_condensed_samples: true,
+                    base_table_impl: BaseTableImpl::Raw,
+                    delta_encode_base_table: false,
                     encode_impl: EncodeImpl::Rle,
                 },
                 CsvPipelineProfile {
@@ -315,6 +386,11 @@ impl PipelineProfileSet {
                     patience: 20,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::BatchGroups,
+                    entropy_impl: EntropyImpl::Naive,
+                    entropy_skip_rows: 0,
+                    use_condensed_samples: true,
+                    base_table_impl: BaseTableImpl::Raw,
+                    delta_encode_base_table: false,
                     encode_impl: EncodeImpl::Rle,
                 },
             ],
@@ -331,6 +407,11 @@ impl PipelineProfileSet {
                     patience: 6,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::SignatureGroups,
+                    entropy_impl: EntropyImpl::Naive,
+                    entropy_skip_rows: 0,
+                    use_condensed_samples: true,
+                    base_table_impl: BaseTableImpl::Raw,
+                    delta_encode_base_table: false,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 ImagePipelineProfile {
@@ -345,6 +426,11 @@ impl PipelineProfileSet {
                     patience: 10,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::IncSignatureGroups,
+                    entropy_impl: EntropyImpl::Naive,
+                    entropy_skip_rows: 0,
+                    use_condensed_samples: true,
+                    base_table_impl: BaseTableImpl::Raw,
+                    delta_encode_base_table: false,
                     encode_impl: EncodeImpl::Rle,
                 },
                 ImagePipelineProfile {
@@ -359,6 +445,11 @@ impl PipelineProfileSet {
                     patience: 20,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::BatchGroups,
+                    entropy_impl: EntropyImpl::Naive,
+                    entropy_skip_rows: 0,
+                    use_condensed_samples: true,
+                    base_table_impl: BaseTableImpl::Raw,
+                    delta_encode_base_table: false,
                     encode_impl: EncodeImpl::Huffman,
                 },
             ],
@@ -467,6 +558,23 @@ fn expand_csv_group(
         .encode_impl
         .clone()
         .unwrap_or_else(|| vec![ConfigEncodeImpl::Optimized]);
+    let entropy_impl = group
+        .entropy_impl
+        .clone()
+        .unwrap_or_else(|| vec![ConfigEntropyImpl::Naive]);
+    let entropy_skip_rows = expand_usize_sweep(group.entropy_skip_rows.as_ref(), 0)?;
+    let use_condensed_samples = group
+        .use_condensed_samples
+        .clone()
+        .unwrap_or_else(|| vec![true]);
+    let base_table_impl = group
+        .base_table_impl
+        .clone()
+        .unwrap_or_else(|| vec![ConfigBaseTableImpl::Raw]);
+    let delta_encode_base_table = group
+        .delta_encode_base_table
+        .clone()
+        .unwrap_or_else(|| vec![false]);
 
     if encode_impl
         .iter()
@@ -508,6 +616,11 @@ fn expand_csv_group(
         patience.len(),
         select_impl.len(),
         base_bit_impl.len(),
+        entropy_impl.len(),
+        entropy_skip_rows.len(),
+        use_condensed_samples.len(),
+        base_table_impl.len(),
+        delta_encode_base_table.len(),
         encode_impl.len(),
     ];
 
@@ -522,12 +635,28 @@ fn expand_csv_group(
         let patience_item = patience[indices[7]];
         let select_item = &select_impl[indices[8]];
         let base_bit_item = &base_bit_impl[indices[9]];
-        let encode_item = &encode_impl[indices[10]];
+        let entropy_item = &entropy_impl[indices[10]];
+        let entropy_skip_rows_item = entropy_skip_rows[indices[11]];
+        let use_condensed_item = use_condensed_samples[indices[12]];
+        let base_table_item = &base_table_impl[indices[13]];
+        let delta_base_table_item = delta_encode_base_table[indices[14]];
+        let encode_item = &encode_impl[indices[15]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_enc{:?}",
-            group.name, run_idx, m_max_item, patience_item, select_item, base_bit_item, encode_item
+            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
+            group.name,
+            run_idx,
+            m_max_item,
+            patience_item,
+            select_item,
+            base_bit_item,
+            entropy_item,
+            entropy_skip_rows_item,
+            use_condensed_item,
+            base_table_item,
+            delta_base_table_item,
+            encode_item
         );
 
         profiles.push(CsvPipelineProfile {
@@ -544,6 +673,11 @@ fn expand_csv_group(
             patience: patience_item,
             select_impl: select_item.clone().into(),
             base_bit_impl: base_bit_item.clone().into(),
+            entropy_impl: entropy_item.clone().into(),
+            entropy_skip_rows: entropy_skip_rows_item,
+            use_condensed_samples: use_condensed_item,
+            base_table_impl: base_table_item.clone().into(),
+            delta_encode_base_table: delta_base_table_item,
             encode_impl: encode_item.clone().into(),
         });
 
@@ -594,6 +728,23 @@ fn expand_image_group(
         .encode_impl
         .clone()
         .unwrap_or_else(|| vec![ConfigEncodeImpl::Optimized]);
+    let entropy_impl = group
+        .entropy_impl
+        .clone()
+        .unwrap_or_else(|| vec![ConfigEntropyImpl::Naive]);
+    let entropy_skip_rows = expand_usize_sweep(group.entropy_skip_rows.as_ref(), 0)?;
+    let use_condensed_samples = group
+        .use_condensed_samples
+        .clone()
+        .unwrap_or_else(|| vec![true]);
+    let base_table_impl = group
+        .base_table_impl
+        .clone()
+        .unwrap_or_else(|| vec![ConfigBaseTableImpl::Raw]);
+    let delta_encode_base_table = group
+        .delta_encode_base_table
+        .clone()
+        .unwrap_or_else(|| vec![false]);
 
     if pixel_grouping.contains(&0) {
         return Err(EntroGdError::InvalidMetadata {
@@ -611,6 +762,11 @@ fn expand_image_group(
         patience.len(),
         select_impl.len(),
         base_bit_impl.len(),
+        entropy_impl.len(),
+        entropy_skip_rows.len(),
+        use_condensed_samples.len(),
+        base_table_impl.len(),
+        delta_encode_base_table.len(),
         encode_impl.len(),
     ];
 
@@ -623,11 +779,16 @@ fn expand_image_group(
         let patience_item = patience[indices[5]];
         let select_item = &select_impl[indices[6]];
         let base_bit_item = &base_bit_impl[indices[7]];
-        let encode_item = &encode_impl[indices[8]];
+        let entropy_item = &entropy_impl[indices[8]];
+        let entropy_skip_rows_item = entropy_skip_rows[indices[9]];
+        let use_condensed_item = use_condensed_samples[indices[10]];
+        let base_table_item = &base_table_impl[indices[11]];
+        let delta_base_table_item = delta_encode_base_table[indices[12]];
+        let encode_item = &encode_impl[indices[13]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_cm{:?}_pg{}_gt{:?}_sel{:?}_bb{:?}_enc{:?}",
+            "{}__{:03}_cm{:?}_pg{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
             group.name,
             run_idx,
             color_model_item,
@@ -635,6 +796,11 @@ fn expand_image_group(
             grouping_transform_item,
             select_item,
             base_bit_item,
+            entropy_item,
+            entropy_skip_rows_item,
+            use_condensed_item,
+            base_table_item,
+            delta_base_table_item,
             encode_item
         );
 
@@ -650,6 +816,11 @@ fn expand_image_group(
             patience: patience_item,
             select_impl: select_item.clone().into(),
             base_bit_impl: base_bit_item.clone().into(),
+            entropy_impl: entropy_item.clone().into(),
+            entropy_skip_rows: entropy_skip_rows_item,
+            use_condensed_samples: use_condensed_item,
+            base_table_impl: base_table_item.clone().into(),
+            delta_encode_base_table: delta_base_table_item,
             encode_impl: encode_item.clone().into(),
         });
 
@@ -811,6 +982,18 @@ impl_from_enum!(ConfigEncodeImpl => EncodeImpl {
     HuffmanBaseIdOnly => HuffmanBaseIdOnly,
 });
 
+impl_from_enum!(ConfigEntropyImpl => EntropyImpl {
+    Naive => Naive,
+    Batched => Batched,
+    StrideSampled => StrideSampled,
+    StrideSampledBatched => StrideSampledBatched,
+});
+
+impl_from_enum!(ConfigBaseTableImpl => BaseTableImpl {
+    Raw => Raw,
+    Sorted => Sorted,
+});
+
 impl_from_enum!(ConfigFloatStorage => FloatStorage {
     F32 => F32,
     F64 => F64,
@@ -889,6 +1072,17 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
                 .base_bit_impl
                 .unwrap_or(ConfigBaseBitImpl::BatchGroups)
                 .into(),
+            entropy_impl: value
+                .entropy_impl
+                .unwrap_or(ConfigEntropyImpl::Naive)
+                .into(),
+            entropy_skip_rows: value.entropy_skip_rows.unwrap_or(0),
+            use_condensed_samples: value.use_condensed_samples.unwrap_or(true),
+            base_table_impl: value
+                .base_table_impl
+                .unwrap_or(ConfigBaseTableImpl::Raw)
+                .into(),
+            delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
             encode_impl: value.encode_impl.into(),
         })
     }
@@ -922,6 +1116,17 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
                 .base_bit_impl
                 .unwrap_or(ConfigBaseBitImpl::BatchGroups)
                 .into(),
+            entropy_impl: value
+                .entropy_impl
+                .unwrap_or(ConfigEntropyImpl::Naive)
+                .into(),
+            entropy_skip_rows: value.entropy_skip_rows.unwrap_or(0),
+            use_condensed_samples: value.use_condensed_samples.unwrap_or(true),
+            base_table_impl: value
+                .base_table_impl
+                .unwrap_or(ConfigBaseTableImpl::Raw)
+                .into(),
+            delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
             encode_impl: value.encode_impl.into(),
         })
     }
