@@ -20,6 +20,7 @@ pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
     calculate_entropy_stride_sampled_naive(bit_data, 0)
 }
 
+/// [Deprecated] Too cheap to compute and limits future use of entropy
 /// Entropy filter that computes entropy from a stride-sampled subset of rows
 /// using the naive per-bit/per-row approach.
 ///
@@ -42,6 +43,9 @@ impl Filter for EntropyStrideSampled {
     type Output = (BitDataSet, Vec<(usize, f64)>);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        tracing::warn!("This filter is deprecated and will not be used as it limits the ability to use entropy for future calculations. 
+        (constant bit layout and base table column entropy ordering).
+        Use the non stride sampled versions instead");
         let _timer =
             ScopedTimer::info("Calculating entropy for each bit position (stride sampled naive)");
         let entropy = calculate_entropy_stride_sampled_naive(&input, self.skip_rows);
@@ -110,6 +114,7 @@ pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
     calculate_entropy_with_stride(bit_data, 1)
 }
 
+/// [Deprecated] Too cheap to compute and limits future use of entropy
 /// Entropy filter that computes entropy from a stride-sampled subset of rows.
 ///
 /// `skip_rows` controls how many rows are skipped between sampled rows.
@@ -131,6 +136,9 @@ impl Filter for EntropyStrideSampledBatched {
     type Output = (BitDataSet, Vec<(usize, f64)>);
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        tracing::warn!("This filter is deprecated and will not be used as it limits the ability to use entropy for future calculations. 
+        (constant bit layout and base table column entropy ordering).
+        Use the non stride sampled versions instead");
         let _timer =
             ScopedTimer::info("Calculating entropy for each bit position (stride sampled)");
         let entropy = calculate_entropy_stride_sampled(&input, self.skip_rows);
