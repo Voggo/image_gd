@@ -2,7 +2,7 @@ use crate::compression::base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitIncSignatureGroups,
     BaseBitSignatureGroups,
 };
-use crate::compression::entropy::EntropyScoredContext;
+use crate::compression::entropy::{ConstantBitPolarity, EntropyScoredContext};
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -169,15 +169,33 @@ pub struct SelectBases {
 pub struct BaseSelectionContext {
     pub bit_data: BitDataSet,
     pub base_bits: Box<dyn BaseBit>,
+    pub constant_bit_polarity: ConstantBitPolarity,
 }
 
 impl BaseSelectionContext {
-    pub fn new(bit_data: BitDataSet, base_bits: Box<dyn BaseBit>) -> Self {
+    pub fn new(
+        bit_data: BitDataSet,
+        base_bits: Box<dyn BaseBit>,
+        constant_bit_polarity: ConstantBitPolarity,
+    ) -> Self {
         Self {
             bit_data,
             base_bits,
+            constant_bit_polarity,
         }
     }
+}
+
+fn merge_constant_bit_positions(constant_bit_polarity: &ConstantBitPolarity) -> Vec<usize> {
+    let mut constant_positions = Vec::with_capacity(
+        constant_bit_polarity.constant_zero_bit_positions.len()
+            + constant_bit_polarity.constant_one_bit_positions.len(),
+    );
+    constant_positions.extend_from_slice(&constant_bit_polarity.constant_zero_bit_positions);
+    constant_positions.extend_from_slice(&constant_bit_polarity.constant_one_bit_positions);
+    constant_positions.sort_unstable();
+    constant_positions.dedup();
+    constant_positions
 }
 
 /// Profiling-oriented selector that adds every bit position as base bits.
@@ -220,11 +238,19 @@ impl Filter for SelectBases {
         let EntropyScoredContext {
             bit_data,
             entropy_scores,
+            constant_bit_polarity,
         } = input;
-        let base_bit_groups = select_base_bits(&bit_data, entropy_scores, self.patience);
+        let constant_positions = merge_constant_bit_positions(&constant_bit_polarity);
+        let base_bit_groups = select_base_bits(
+            &bit_data,
+            entropy_scores,
+            &constant_positions,
+            self.patience,
+        );
         Ok(BaseSelectionContext::new(
             bit_data,
             Box::new(base_bit_groups),
+            constant_bit_polarity,
         ))
     }
 }
@@ -239,7 +265,11 @@ impl Filter for SelectBasesProfileAllBits {
             self.split_into_batches, self.base_bit_impl
         ));
 
-        let EntropyScoredContext { bit_data, .. } = input;
+        let EntropyScoredContext {
+            bit_data,
+            constant_bit_polarity,
+            ..
+        } = input;
         let chunk_size = bit_data.chunk_size();
         let all_bit_positions: Vec<usize> = (0..chunk_size).collect();
         let mut base_bit_groups: Box<dyn BaseBit> = match self.base_bit_impl {
@@ -290,7 +320,11 @@ impl Filter for SelectBasesProfileAllBits {
             "selected base bit mask (profile all bits, compressed size in bytes)"
         );
 
-        Ok(BaseSelectionContext::new(bit_data, base_bit_groups))
+        Ok(BaseSelectionContext::new(
+            bit_data,
+            base_bit_groups,
+            constant_bit_polarity,
+        ))
     }
 }
 
@@ -306,7 +340,9 @@ impl Filter for SelectBasesDebug {
         let EntropyScoredContext {
             bit_data,
             entropy_scores,
+            constant_bit_polarity,
         } = input;
+        let constant_positions = merge_constant_bit_positions(&constant_bit_polarity);
 
         let selected_debug_csv_path = {
             let guard = self
@@ -325,6 +361,7 @@ impl Filter for SelectBasesDebug {
         let base_bit_groups = select_base_bits_debug(
             &bit_data,
             entropy_scores,
+            &constant_positions,
             self.patience,
             selected_debug_csv_path.as_deref(),
         );
@@ -342,6 +379,7 @@ impl Filter for SelectBasesDebug {
         Ok(BaseSelectionContext::new(
             bit_data,
             Box::new(base_bit_groups),
+            constant_bit_polarity,
         ))
     }
 }
@@ -349,6 +387,7 @@ impl Filter for SelectBasesDebug {
 fn select_base_bits(
     bit_data: &BitDataSet,
     mut entropy: Vec<(usize, f64)>,
+    constant_positions: &[usize],
     patience: usize,
 ) -> BaseBitGroups {
     let mut non_improving_count = 0usize;
@@ -359,18 +398,13 @@ fn select_base_bits(
         entropy = ?entropy,
         "Sorted entropies (bit position, entropy value)"
     );
-    let zero_entropy_bits: Vec<usize> = entropy
-        .iter()
-        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
-        .map(|(bit_position, _)| *bit_position)
-        .collect();
-    base_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
+    base_bit_groups.add_constant_bit_positions(constant_positions);
 
     let mut best_base_bit_groups = base_bit_groups.clone();
     let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
     let mut trial_base_bit_groups = base_bit_groups.clone();
 
-    for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
+    for &(bit_position, _) in entropy.iter().skip(constant_positions.len()) {
         if best_base_bit_groups.get_num_bits_per_base()
             >= (bit_data.chunk_size() as f64 * 1.0) as usize
         {
@@ -417,6 +451,7 @@ fn select_base_bits(
 fn select_base_bits_debug(
     bit_data: &BitDataSet,
     mut entropy: Vec<(usize, f64)>,
+    constant_positions: &[usize],
     patience: usize,
     debug_csv_path: Option<&Path>,
 ) -> BaseBitGroups {
@@ -429,12 +464,7 @@ fn select_base_bits_debug(
         entropy = ?entropy,
         "Sorted entropies (bit position, entropy value)"
     );
-    let zero_entropy_bits: Vec<usize> = entropy
-        .iter()
-        .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
-        .map(|(bit_position, _)| *bit_position)
-        .collect();
-    for &bit_position in &zero_entropy_bits {
+    for &bit_position in constant_positions {
         base_bit_groups.add_constant_bit_positions(&[bit_position]);
         let breakdown = calculate_compressed_size_breakdown(bit_data, &base_bit_groups);
         csv_logger.log_row(bit_position, breakdown);
@@ -444,7 +474,7 @@ fn select_base_bits_debug(
     let mut best_compressed_size = calculate_compressed_size(bit_data, &best_base_bit_groups);
     let mut trial_base_bit_groups = base_bit_groups.clone();
 
-    for &(bit_position, _) in entropy.iter().skip(zero_entropy_bits.len()) {
+    for &(bit_position, _) in entropy.iter().skip(constant_positions.len()) {
         if best_base_bit_groups.get_num_bits_per_base()
             >= (bit_data.chunk_size() as f64 * 1.0) as usize
         {
@@ -507,12 +537,15 @@ impl Filter for SelectBasesOptimized {
         let EntropyScoredContext {
             bit_data,
             entropy_scores,
+            constant_bit_polarity,
         } = input;
+        let constant_positions = merge_constant_bit_positions(&constant_bit_polarity);
         let base_bit_groups = match self.base_bit_impl {
             BaseBitImpl::Naive => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
+                &constant_positions,
                 0.80,
                 self.patience,
             ),
@@ -520,6 +553,7 @@ impl Filter for SelectBasesOptimized {
                 &bit_data,
                 BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
+                &constant_positions,
                 0.80,
                 self.patience,
             ),
@@ -527,6 +561,7 @@ impl Filter for SelectBasesOptimized {
                 &bit_data,
                 BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
+                &constant_positions,
                 0.80,
                 self.patience,
             ),
@@ -534,6 +569,7 @@ impl Filter for SelectBasesOptimized {
                 &bit_data,
                 BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
+                &constant_positions,
                 0.80,
                 self.patience,
             ),
@@ -541,11 +577,16 @@ impl Filter for SelectBasesOptimized {
                 &bit_data,
                 BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
+                &constant_positions,
                 0.80,
                 self.patience,
             ),
         };
-        Ok(BaseSelectionContext::new(bit_data, base_bit_groups))
+        Ok(BaseSelectionContext::new(
+            bit_data,
+            base_bit_groups,
+            constant_bit_polarity,
+        ))
     }
 }
 
@@ -553,6 +594,7 @@ fn select_base_bits_threshold_optimized(
     bit_data: &BitDataSet,
     mut base_bit_groups: impl BaseBit + Clone + 'static,
     mut entropy: Vec<(usize, f64)>,
+    constant_positions: &[usize],
     entropy_threshold: f64,
     patience: usize,
 ) -> Box<dyn BaseBit> {
@@ -571,23 +613,12 @@ fn select_base_bits_threshold_optimized(
         .collect();
     let num_threshold_bits = threshold_bits.len();
 
-    let zero_entropy_bits: Vec<usize> = threshold_bits
-        .iter()
-        .copied()
-        .take_while(|&pos| {
-            entropy
-                .iter()
-                .find(|(p, _)| *p == pos)
-                .map(|(_, e)| *e == 0.0)
-                .unwrap_or(false)
-        })
-        .collect();
-    base_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
+    base_bit_groups.add_constant_bit_positions(constant_positions);
 
     let low_entropy_bits: Vec<usize> = threshold_bits
         .iter()
         .copied()
-        .skip(zero_entropy_bits.len())
+        .filter(|pos| !constant_positions.contains(pos))
         .collect();
     if !low_entropy_bits.is_empty() {
         base_bit_groups.add_bit_positions(bit_data, &low_entropy_bits);

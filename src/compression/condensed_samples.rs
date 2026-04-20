@@ -1,6 +1,6 @@
 use crate::compression::base_bits::BaseBitGroups;
 use crate::compression::encoding::CondensedSamples;
-use crate::compression::entropy::EntropyScoredContext;
+use crate::compression::entropy::{ConstantBitPolarity, EntropyScoredContext};
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -62,12 +62,69 @@ impl Filter for GenCondensedSamples {
         let EntropyScoredContext {
             bit_data,
             entropy_scores,
+            constant_bit_polarity,
         } = input;
+        let original_num_rows = bit_data.num_rows();
         let condensed_samples = select_condensed_samples(&bit_data, &entropy_scores, self.m_max);
-        Ok(EntropyScoredContext::new(
-            append_condensed_samples(bit_data, condensed_samples),
+        let bit_data = append_condensed_samples(bit_data, condensed_samples);
+        let constant_bit_polarity = update_constant_bit_polarity_from_appended_rows(
+            &bit_data,
+            &constant_bit_polarity,
+            original_num_rows,
+        );
+        Ok(EntropyScoredContext {
+            bit_data,
             entropy_scores,
-        ))
+            constant_bit_polarity,
+        })
+    }
+}
+
+fn update_constant_bit_polarity_from_appended_rows(
+    bit_data: &BitDataSet,
+    previous: &ConstantBitPolarity,
+    appended_row_start: usize,
+) -> ConstantBitPolarity {
+    fn appended_rows_match(
+        bit_data: &BitDataSet,
+        bit_position: usize,
+        expected: bool,
+        appended_row_start: usize,
+    ) -> bool {
+        if bit_position >= bit_data.chunk_size() {
+            return false;
+        }
+
+        let start = appended_row_start.min(bit_data.num_rows());
+        for row in start..bit_data.num_rows() {
+            if unsafe { bit_data.get_bit_unchecked(row, bit_position) } != expected {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    let constant_zero_bit_positions = previous
+        .constant_zero_bit_positions
+        .iter()
+        .copied()
+        .filter(|&bit_position| {
+            appended_rows_match(bit_data, bit_position, false, appended_row_start)
+        })
+        .collect();
+    let constant_one_bit_positions = previous
+        .constant_one_bit_positions
+        .iter()
+        .copied()
+        .filter(|&bit_position| {
+            appended_rows_match(bit_data, bit_position, true, appended_row_start)
+        })
+        .collect();
+
+    ConstantBitPolarity {
+        constant_zero_bit_positions,
+        constant_one_bit_positions,
     }
 }
 
@@ -533,6 +590,74 @@ mod tests {
             .expect("filter should succeed");
 
         assert_eq!(output.entropy_scores, entropy);
+    }
+
+    #[test]
+    fn test_gen_condensed_samples_filter_recomputes_constant_bit_polarity() {
+        let bit_data = TestBitDataBuilder::new(4, 1, 4).build();
+        let entropy = create_test_entropy(4);
+        let input = EntropyScoredContext {
+            bit_data,
+            entropy_scores: entropy,
+            constant_bit_polarity: ConstantBitPolarity {
+                constant_zero_bit_positions: vec![0, 1],
+                constant_one_bit_positions: vec![2, 3],
+            },
+        };
+
+        let filter = GenCondensedSamples { m_max: 2 };
+        let output = filter.process(input).expect("filter should succeed");
+
+        assert_eq!(
+            output.constant_bit_polarity.constant_zero_bit_positions,
+            vec![0, 1]
+        );
+        assert!(
+            output
+                .constant_bit_polarity
+                .constant_one_bit_positions
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_update_constant_polarity_checks_only_appended_rows() {
+        let mut bit_data = TestBitDataBuilder::new(3, 1, 2).build();
+        // Row 0: [1, 1] (breaks prior expectations)
+        // Row 1: [0, 0]
+        // Row 2: [0, 1] (appended row)
+        bit_data.data.data.set(0, true);
+        bit_data.data.data.set(1, true);
+        bit_data.data.data.set(4, false);
+        bit_data.data.data.set(5, true);
+
+        let previous = ConstantBitPolarity {
+            constant_zero_bit_positions: vec![0],
+            constant_one_bit_positions: vec![1],
+        };
+
+        let updated = update_constant_bit_polarity_from_appended_rows(&bit_data, &previous, 2);
+
+        assert_eq!(updated.constant_zero_bit_positions, vec![0]);
+        assert_eq!(updated.constant_one_bit_positions, vec![1]);
+    }
+
+    #[test]
+    fn test_update_constant_polarity_removes_on_appended_row_mismatch() {
+        let mut bit_data = TestBitDataBuilder::new(3, 1, 2).build();
+        // Row 2 (appended): [1, 1], so bit 0 mismatches expected false.
+        bit_data.data.data.set(4, true);
+        bit_data.data.data.set(5, true);
+
+        let previous = ConstantBitPolarity {
+            constant_zero_bit_positions: vec![0],
+            constant_one_bit_positions: vec![1],
+        };
+
+        let updated = update_constant_bit_polarity_from_appended_rows(&bit_data, &previous, 2);
+
+        assert!(updated.constant_zero_bit_positions.is_empty());
+        assert_eq!(updated.constant_one_bit_positions, vec![1]);
     }
 
     #[test]

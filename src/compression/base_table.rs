@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 
 use crate::compression::base_bits::BaseBit;
 use crate::compression::base_selection::BaseSelectionContext;
+use crate::compression::entropy::ConstantBitPolarity;
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -37,8 +38,14 @@ impl Filter for BuildBaseTable {
         let BaseSelectionContext {
             bit_data,
             base_bits,
+            constant_bit_polarity,
         } = input;
-        Ok(build_encode_context(bit_data, base_bits.as_ref(), false))
+        Ok(build_encode_context(
+            bit_data,
+            base_bits.as_ref(),
+            &constant_bit_polarity,
+            false,
+        ))
     }
 }
 
@@ -53,19 +60,30 @@ impl Filter for BuildSortedBaseTable {
         let BaseSelectionContext {
             bit_data,
             base_bits,
+            constant_bit_polarity,
         } = input;
-        Ok(build_encode_context(bit_data, base_bits.as_ref(), true))
+        Ok(build_encode_context(
+            bit_data,
+            base_bits.as_ref(),
+            &constant_bit_polarity,
+            true,
+        ))
     }
 }
 
 fn build_encode_context(
     bit_data: BitDataSet,
     base_bit_groups: &dyn BaseBit,
+    constant_bit_polarity: &ConstantBitPolarity,
     sort_bases: bool,
 ) -> PreEncodeContext {
     let selected_base_table = base_bit_groups.get_bases(&bit_data);
     let base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
-    let layout = build_base_layout(&base_bit_positions, &selected_base_table);
+    let layout = build_base_layout_from_constant_polarity(
+        &base_bit_positions,
+        &constant_bit_polarity.constant_zero_bit_positions,
+        &constant_bit_polarity.constant_one_bit_positions,
+    );
     let variable_base_table = project_selected_bases_to_variable(
         &base_bit_positions,
         &layout.variable_base_bit_positions,
@@ -94,67 +112,31 @@ fn build_encode_context(
     context
 }
 
-fn derive_base_layout_from_selected_bases(
+pub(crate) fn build_base_layout_from_constant_polarity(
     selected_positions: &[usize],
-    selected_bases: &[(crate::BitStream, usize)],
-) -> (BaseLayoutInfo, Vec<usize>) {
-    if selected_bases.is_empty() {
-        return (
-            BaseLayoutInfo {
-                selected_base_bit_positions: selected_positions.to_vec(),
-                variable_base_bit_positions: Vec::new(),
-                constant_zero_bit_positions: Vec::new(),
-                constant_one_bit_positions: Vec::new(),
-            },
-            Vec::new(),
-        );
-    }
-
-    let selected_len = selected_bases[0].0.len();
+    constant_zero_positions: &[usize],
+    constant_one_positions: &[usize],
+) -> BaseLayoutInfo {
     let mut variable_base_bit_positions = Vec::new();
     let mut constant_zero_bit_positions = Vec::new();
     let mut constant_one_bit_positions = Vec::new();
-    let mut variable_indices = Vec::new();
 
-    for selected_idx in 0..selected_len {
-        let first_value = unsafe { *selected_bases[0].0.get_unchecked(selected_idx) };
-        let is_variable = selected_bases.iter().skip(1).any(|(base_bits, _)| {
-            base_bits
-                .get(selected_idx)
-                .map(|bit| *bit != first_value)
-                .unwrap_or(false)
-        });
-
-        let Some(&bit_position) = selected_positions.get(selected_idx) else {
-            continue;
-        };
-
-        if is_variable {
-            variable_indices.push(selected_idx);
-            variable_base_bit_positions.push(bit_position);
-        } else if first_value {
+    for &bit_position in selected_positions {
+        if constant_one_positions.contains(&bit_position) {
             constant_one_bit_positions.push(bit_position);
-        } else {
+        } else if constant_zero_positions.contains(&bit_position) {
             constant_zero_bit_positions.push(bit_position);
+        } else {
+            variable_base_bit_positions.push(bit_position);
         }
     }
 
-    (
-        BaseLayoutInfo {
-            selected_base_bit_positions: selected_positions.to_vec(),
-            variable_base_bit_positions,
-            constant_zero_bit_positions,
-            constant_one_bit_positions,
-        },
-        variable_indices,
-    )
-}
-
-pub(crate) fn build_base_layout(
-    selected_positions: &[usize],
-    selected_bases: &[(crate::BitStream, usize)],
-) -> BaseLayoutInfo {
-    derive_base_layout_from_selected_bases(selected_positions, selected_bases).0
+    BaseLayoutInfo {
+        selected_base_bit_positions: selected_positions.to_vec(),
+        variable_base_bit_positions,
+        constant_zero_bit_positions,
+        constant_one_bit_positions,
+    }
 }
 
 pub(crate) fn project_selected_bases_to_variable(
@@ -300,6 +282,7 @@ fn binary_entropy_from_counts(ones: usize, total: usize) -> f64 {
 mod tests {
     use super::*;
     use crate::compression::base_bits::BaseBitGroups;
+    use crate::compression::entropy::ConstantBitPolarity;
     use crate::compression::preprocessor::{
         BitData, BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
     };
@@ -358,6 +341,10 @@ mod tests {
                 crate::compression::base_selection::BaseSelectionContext::new(
                     bit_data,
                     Box::new(groups),
+                    ConstantBitPolarity {
+                        constant_zero_bit_positions: Vec::new(),
+                        constant_one_bit_positions: vec![3],
+                    },
                 ),
             )
             .expect("BuildBaseTable should succeed");
@@ -391,6 +378,7 @@ mod tests {
                 crate::compression::base_selection::BaseSelectionContext::new(
                     bit_data.clone(),
                     Box::new(groups.clone()),
+                    ConstantBitPolarity::default(),
                 ),
             )
             .expect("BuildBaseTable should succeed");
@@ -399,6 +387,7 @@ mod tests {
                 crate::compression::base_selection::BaseSelectionContext::new(
                     bit_data,
                     Box::new(groups),
+                    ConstantBitPolarity::default(),
                 ),
             )
             .expect("BuildSortedBaseTable should succeed");

@@ -7,7 +7,9 @@ use super::encoding_core::{
 
 use crate::compression::base_bits::BaseBit;
 use crate::compression::base_selection::BaseSelectionContext;
-use crate::compression::base_table::{build_base_layout, project_selected_bases_to_variable};
+use crate::compression::base_table::{
+    build_base_layout_from_constant_polarity, project_selected_bases_to_variable,
+};
 use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
 use crate::{EntroGdError, Filter, ScopedTimer};
@@ -25,6 +27,7 @@ impl Filter for EncodeDataFusedDictionary {
         let BaseSelectionContext {
             bit_data,
             base_bits,
+            constant_bit_polarity,
         } = input;
         let fused = encode_data_fused_dictionary(&bit_data, base_bits.as_ref());
 
@@ -33,7 +36,11 @@ impl Filter for EncodeDataFusedDictionary {
             bit_data.info.clone(),
         );
         let selected_positions = base_bits.get_base_bit_positions().to_vec();
-        let layout = build_base_layout(&selected_positions, &fused.base_table);
+        let layout = build_base_layout_from_constant_polarity(
+            &selected_positions,
+            &constant_bit_polarity.constant_zero_bit_positions,
+            &constant_bit_polarity.constant_one_bit_positions,
+        );
         compressed.base_table = BaseTable::Raw(project_selected_bases_to_variable(
             &selected_positions,
             &layout.variable_base_bit_positions,

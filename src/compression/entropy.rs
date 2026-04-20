@@ -5,18 +5,66 @@ use crate::timing::ScopedTimer;
 
 pub type EntropyBitScore = (usize, f64);
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConstantBitPolarity {
+    pub constant_zero_bit_positions: Vec<usize>,
+    pub constant_one_bit_positions: Vec<usize>,
+}
+
 #[derive(Debug, Clone)]
 pub struct EntropyScoredContext {
     pub bit_data: BitDataSet,
     pub entropy_scores: Vec<EntropyBitScore>,
+    pub constant_bit_polarity: ConstantBitPolarity,
 }
 
 impl EntropyScoredContext {
     pub fn new(bit_data: BitDataSet, entropy_scores: Vec<EntropyBitScore>) -> Self {
+        let constant_bit_polarity =
+            derive_constant_bit_polarity_from_entropy(&bit_data, &entropy_scores);
         Self {
             bit_data,
             entropy_scores,
+            constant_bit_polarity,
         }
+    }
+}
+
+fn derive_constant_bit_polarity_from_entropy(
+    bit_data: &BitDataSet,
+    entropy_scores: &[EntropyBitScore],
+) -> ConstantBitPolarity {
+    let mut constant_zero_bit_positions = Vec::new();
+    let mut constant_one_bit_positions = Vec::new();
+
+    if bit_data.num_rows() == 0 {
+        for &(bit_position, entropy_val) in entropy_scores {
+            if entropy_val == 0.0 {
+                constant_zero_bit_positions.push(bit_position);
+            }
+        }
+
+        return ConstantBitPolarity {
+            constant_zero_bit_positions,
+            constant_one_bit_positions,
+        };
+    }
+
+    for &(bit_position, entropy_val) in entropy_scores {
+        if entropy_val != 0.0 {
+            continue;
+        }
+
+        if unsafe { bit_data.get_bit_unchecked(0, bit_position) } {
+            constant_one_bit_positions.push(bit_position);
+        } else {
+            constant_zero_bit_positions.push(bit_position);
+        }
+    }
+
+    ConstantBitPolarity {
+        constant_zero_bit_positions,
+        constant_one_bit_positions,
     }
 }
 
@@ -491,5 +539,37 @@ mod tests {
         let entropy_filter = EntropyStrideSampled::new(1);
         let entropy_scored = entropy_filter.process(bit_data).unwrap();
         assert_eq!(entropy_scored.entropy_scores.len(), chunk_size);
+    }
+
+    #[test]
+    fn test_entropy_context_derives_constant_bit_polarity() {
+        let num_rows = 4;
+        let chunk_size = 4;
+        let data = vec![
+            false, true, true, false, // Row 0
+            false, true, false, false, // Row 1
+            false, true, true, true, // Row 2
+            false, true, false, true, // Row 3
+        ];
+        let data = BitData {
+            data: data.into_iter().collect(),
+            chunk_size,
+            stride: chunk_size,
+            num_rows,
+        };
+        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 1); chunk_size];
+        let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let context = EntropyScoredContext::new(bit_data, vec![(0, 0.0), (1, 0.0), (2, 1.0)]);
+
+        assert_eq!(
+            context.constant_bit_polarity.constant_zero_bit_positions,
+            vec![0]
+        );
+        assert_eq!(
+            context.constant_bit_polarity.constant_one_bit_positions,
+            vec![1]
+        );
     }
 }
