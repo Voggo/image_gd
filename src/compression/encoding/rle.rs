@@ -1,5 +1,4 @@
-use super::types::DeviationSampleRef;
-use super::{DeviationData, DeviationSample, RleDeviationData};
+use super::encoding_core::{DeviationData, DeviationSample, DeviationSampleRef, RleDeviationData};
 use crate::error::EntroGdError;
 
 pub(crate) const RLE_SHORT_MAX: u8 = 7;

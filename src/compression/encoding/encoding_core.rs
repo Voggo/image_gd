@@ -1,0 +1,637 @@
+use bitvec::prelude::*;
+use fxhash::FxHashMap;
+
+use super::rle::RLE_LONG_MAX;
+
+use crate::compression::base_table::{BaseLayoutInfo, PreEncodeContext};
+use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo, BitDataSet};
+use crate::error::EntroGdError;
+use crate::filter_pipeline::Filter;
+use crate::timing::ScopedTimer;
+use crate::utils::bits_needed_nonzero;
+
+const RLE_MAX_CONTROL_VALUE: usize = RLE_LONG_MAX as usize;
+const RLE_MAX_RUN_LEN: usize = RLE_MAX_CONTROL_VALUE + 1;
+
+/// Represents the compressed output.
+#[derive(Debug, Clone)]
+pub struct CompressedData {
+    /// The encoded data stream.
+    pub encoded_data: EncodedData,
+    /// The weights for the condensed samples (if used).
+    // Should be stored as a bitstream of length m * l_w (log_2(n).ceil() bits per weight).
+    pub condensed_sample_weights: Option<Vec<usize>>,
+    /// Base table mapping base patterns to their frequencies or encodings.
+    pub base_table: BaseTable,
+    /// Base-table bit layout metadata.
+    pub layout: BaseLayoutInfo,
+    /// Column indices into `base_table` row bit-vectors (variable part), ordered
+    /// by ascending unweighted entropy as used by `BuildSortedBaseTable`.
+    pub entropy_sorted_column_order: Option<Vec<usize>>,
+    /// Metadata for decompression (column count, base bits used, etc.).
+    pub metadata: BitDataInfo,
+}
+
+#[derive(Debug, Clone)]
+pub struct CondensedSamples {
+    pub samples: Vec<crate::BitStream>,
+    pub weights: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviationSample {
+    pub deviation: crate::BitStream,
+    pub id: crate::BitStream,
+}
+
+pub(crate) struct DeviationSampleRef<'a> {
+    pub deviation: &'a crate::BitView,
+    pub id: &'a crate::BitView,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviationData {
+    pub(super) encoded_bit_stream: crate::BitStream,
+    pub(super) num_samples: usize,
+    pub(super) num_deviation_bits: usize,
+    pub(super) num_id_bits: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct RleDeviationData {
+    pub(super) symbol_bit_stream: crate::BitStream,
+    pub(super) rm_values: Vec<(u8, u8)>,
+    pub(super) rm_control_stream: crate::BitStream,
+    pub(super) num_samples: usize,
+    pub(super) num_deviation_bits: usize,
+    pub(super) num_id_bits: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct HuffmanDeviationData {
+    pub(super) pixel_bit_stream: crate::BitStream,
+    pub(super) raw_deviation_bit_stream: Option<crate::BitStream>,
+    pub(super) canonical_symbols: Vec<u64>,
+    pub(super) canonical_code_lengths: Vec<u8>,
+    pub(super) row_offsets: Vec<u32>,
+    pub(super) num_samples: usize,
+    pub(super) original_num_samples: usize,
+    pub(super) num_deviation_bits: usize,
+    pub(super) huffman_symbol_num_deviation_bits: usize,
+    pub(super) num_id_bits: usize,
+    pub(super) row_width: usize,
+    pub(super) max_code_length: u8,
+    pub(super) decode_by_length: Vec<FxHashMap<u32, u64>>,
+    pub(super) original_stream_end_offset_bits: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum EncodedData {
+    Normal(DeviationData),
+    Rle(RleDeviationData),
+    Huffman(HuffmanDeviationData),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaseTable {
+    Raw(Vec<(crate::BitStream, usize)>),
+    Delta(DeltaBaseTableData),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeltaBaseTableData {
+    pub raw_rows: Vec<(crate::BitStream, usize)>,
+    pub first_sort_key: crate::BitStream,
+    pub delta_bit_stream: crate::BitStream,
+    pub delta_count: usize,
+    pub sort_column_order: Vec<usize>,
+}
+
+impl BaseTable {
+    pub fn as_raw(&self) -> &[(crate::BitStream, usize)] {
+        match self {
+            BaseTable::Raw(table) => table.as_slice(),
+            BaseTable::Delta(delta) => delta.raw_rows.as_slice(),
+        }
+    }
+
+    pub fn as_raw_mut(&mut self) -> &mut Vec<(crate::BitStream, usize)> {
+        match self {
+            BaseTable::Raw(table) => table,
+            BaseTable::Delta(delta) => &mut delta.raw_rows,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.as_raw().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.as_raw().is_empty()
+    }
+}
+
+pub(crate) fn huffman_row_layout(
+    metadata: &BitDataInfo,
+) -> Result<(usize, usize, usize), EntroGdError> {
+    let chunk_size = metadata.chunk_size();
+    if chunk_size == 0 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "chunk_size is 0".to_string(),
+        });
+    }
+
+    let original_num_samples = metadata.original_size_bits() / chunk_size;
+    match metadata.reconstruction {
+        BitDataReconstructionInfo::Image(info) => {
+            let row_count = info.height as usize;
+            let pixel_grouping = info.pixel_grouping as usize;
+            if pixel_grouping == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: "image pixel_grouping must be > 0".to_string(),
+                });
+            }
+            let row_width = (info.width as usize).div_ceil(pixel_grouping);
+            if row_count == 0 && original_num_samples == 0 {
+                return Ok((0, 0, 0));
+            }
+            if row_count == 0 || row_width == 0 {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "invalid image row layout width={} height={} pixel_grouping={}",
+                        info.width, info.height, info.pixel_grouping
+                    ),
+                });
+            }
+            let expected_samples =
+                row_count
+                    .checked_mul(row_width)
+                    .ok_or_else(|| EntroGdError::InvalidMetadata {
+                        message: "image row layout overflows sample count".to_string(),
+                    })?;
+            if expected_samples != original_num_samples {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "image row layout mismatch: height * ceil(width / pixel_grouping) = {}, original samples = {}",
+                        expected_samples, original_num_samples
+                    ),
+                });
+            }
+            Ok((original_num_samples, row_count, row_width))
+        }
+        BitDataReconstructionInfo::Tabular => Ok((original_num_samples, original_num_samples, 1)),
+    }
+}
+
+impl CompressedData {
+    pub fn new(encoded_data: EncodedData, metadata: BitDataInfo) -> Self {
+        CompressedData {
+            encoded_data,
+            condensed_sample_weights: None,
+            base_table: BaseTable::Raw(Vec::new()),
+            layout: BaseLayoutInfo {
+                selected_base_bit_positions: Vec::new(),
+                variable_base_bit_positions: Vec::new(),
+                constant_zero_bit_positions: Vec::new(),
+                constant_one_bit_positions: Vec::new(),
+            },
+            entropy_sorted_column_order: None,
+            metadata,
+        }
+    }
+}
+
+pub(crate) fn build_base_bit_mask(
+    chunk_size: usize,
+    base_bit_positions: &[usize],
+) -> crate::BitStream {
+    let mut mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
+    for &bit_pos in base_bit_positions {
+        if bit_pos < chunk_size {
+            mask.set(bit_pos, true);
+        }
+    }
+    mask
+}
+
+impl DeviationData {
+    pub fn new(
+        encoded_bit_stream: crate::BitStream,
+        num_samples: usize,
+        num_deviation_bits: usize,
+        num_id_bits: usize,
+    ) -> Self {
+        DeviationData {
+            encoded_bit_stream,
+            num_samples,
+            num_deviation_bits,
+            num_id_bits,
+        }
+    }
+
+    pub fn get_sample(&self, sample_idx: usize) -> Option<DeviationSample> {
+        if sample_idx >= self.num_samples {
+            return None;
+        }
+        let start_bit = sample_idx * (self.num_deviation_bits + self.num_id_bits);
+        let end_bit = start_bit + self.num_deviation_bits + self.num_id_bits;
+        debug_assert!(end_bit <= self.encoded_bit_stream.len());
+        Some(DeviationSample {
+            deviation: unsafe {
+                self.encoded_bit_stream
+                    .get_unchecked(start_bit..start_bit + self.num_deviation_bits)
+            }
+            .to_bitvec(),
+            id: unsafe {
+                self.encoded_bit_stream
+                    .get_unchecked(start_bit + self.num_deviation_bits..end_bit)
+            }
+            .to_bitvec(),
+        })
+    }
+
+    pub fn get_encoded_size(&self) -> usize {
+        self.encoded_bit_stream.len()
+    }
+
+    pub fn encoded_bit_stream(&self) -> &crate::BitStream {
+        &self.encoded_bit_stream
+    }
+
+    pub fn get_num_samples(&self) -> usize {
+        self.num_samples
+    }
+
+    pub fn get_num_deviation_bits(&self) -> usize {
+        self.num_deviation_bits
+    }
+
+    pub fn get_num_id_bits(&self) -> usize {
+        self.num_id_bits
+    }
+
+    pub(crate) fn for_each_sample_n(
+        &self,
+        limit: usize,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let sample_width = self.num_deviation_bits + self.num_id_bits;
+        let capped_limit = limit.min(self.num_samples);
+
+        for sample_idx in 0..capped_limit {
+            let start_bit = sample_idx * sample_width;
+            let end_bit = start_bit + sample_width;
+            debug_assert!(end_bit <= self.encoded_bit_stream.len());
+            f(DeviationSampleRef {
+                deviation: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(start_bit..start_bit + self.num_deviation_bits)
+                },
+                id: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(start_bit + self.num_deviation_bits..end_bit)
+                },
+            })?;
+        }
+
+        Ok(())
+    }
+}
+
+impl EncodedData {
+    pub fn get_sample(&self, sample_idx: usize) -> Option<DeviationSample> {
+        match self {
+            EncodedData::Normal(data) => data.get_sample(sample_idx),
+            EncodedData::Rle(data) => data.get_sample(sample_idx),
+            EncodedData::Huffman(data) => data.get_sample(sample_idx),
+        }
+    }
+
+    pub fn get_encoded_size(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_encoded_size(),
+            EncodedData::Rle(data) => data.get_encoded_size(),
+            EncodedData::Huffman(data) => data.get_encoded_size(),
+        }
+    }
+
+    pub fn encoded_bit_stream(&self) -> &crate::BitStream {
+        match self {
+            EncodedData::Normal(data) => data.encoded_bit_stream(),
+            EncodedData::Rle(data) => data.symbol_bit_stream(),
+            EncodedData::Huffman(data) => data.pixel_bit_stream(),
+        }
+    }
+
+    pub fn get_num_samples(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_num_samples(),
+            EncodedData::Rle(data) => data.get_num_samples(),
+            EncodedData::Huffman(data) => data.get_num_samples(),
+        }
+    }
+
+    pub fn get_num_deviation_bits(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_num_deviation_bits(),
+            EncodedData::Rle(data) => data.get_num_deviation_bits(),
+            EncodedData::Huffman(data) => data.get_num_deviation_bits(),
+        }
+    }
+
+    pub fn get_num_id_bits(&self) -> usize {
+        match self {
+            EncodedData::Normal(data) => data.get_num_id_bits(),
+            EncodedData::Rle(data) => data.get_num_id_bits(),
+            EncodedData::Huffman(data) => data.get_num_id_bits(),
+        }
+    }
+
+    pub(crate) fn for_each_sample_n(
+        &self,
+        limit: usize,
+        f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        match self {
+            EncodedData::Normal(data) => data.for_each_sample_n(limit, f),
+            EncodedData::Rle(data) => data.for_each_sample_n(limit, f),
+            EncodedData::Huffman(data) => data.for_each_sample_n(limit, f),
+        }
+    }
+
+    pub fn to_raw_deviation_data(&self) -> DeviationData {
+        match self {
+            EncodedData::Normal(data) => data.clone(),
+            EncodedData::Rle(data) => data
+                .to_deviation_data()
+                .expect("RLE encoded data should be valid when converting to raw deviation data"),
+            EncodedData::Huffman(data) => data.to_deviation_data().expect(
+                "Huffman encoded data should be valid when converting to raw deviation data",
+            ),
+        }
+    }
+}
+
+pub(super) struct EncodingContext {
+    pub(super) l_id: usize,
+    pub(super) num_deviation_bits: usize,
+    pub(super) row_to_group_id: Vec<usize>,
+    pub(super) deviation_ranges: Vec<(usize, usize)>,
+    pub(super) id_bits_per_base: Vec<crate::BitStream>,
+    pub(super) _entropy_sorted_column_order: Option<Vec<usize>>,
+}
+
+pub(super) fn build_deviation_ranges(
+    base_bit_mask: &crate::BitView,
+    chunk_size: usize,
+    num_deviation_bits: usize,
+) -> Vec<(usize, usize)> {
+    let mut deviation_positions = Vec::with_capacity(num_deviation_bits);
+    for bit_pos in 0..chunk_size {
+        if !base_bit_mask[bit_pos] {
+            deviation_positions.push(bit_pos);
+        }
+    }
+
+    let mut deviation_ranges: Vec<(usize, usize)> = Vec::new();
+    if let Some(&first_pos) = deviation_positions.first() {
+        let mut range_start = first_pos;
+        let mut prev = first_pos;
+        for &pos in deviation_positions.iter().skip(1) {
+            if pos == prev + 1 {
+                prev = pos;
+            } else {
+                deviation_ranges.push((range_start, prev + 1));
+                range_start = pos;
+                prev = pos;
+            }
+        }
+        deviation_ranges.push((range_start, prev + 1));
+    }
+
+    deviation_ranges
+}
+
+pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContext {
+    let chunk_size = input.bit_data.chunk_size();
+    let num_bits_per_base = input.layout.selected_base_bit_positions.len();
+    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
+    let num_bases = input.variable_base_table.len();
+    let l_id = bits_needed_nonzero(num_bases);
+
+    let mut base_bit_mask = crate::BitStream::repeat(false, chunk_size);
+    for &bit_pos in &input.layout.selected_base_bit_positions {
+        if bit_pos < chunk_size {
+            base_bit_mask.set(bit_pos, true);
+        }
+    }
+    let deviation_ranges =
+        build_deviation_ranges(base_bit_mask.as_bitslice(), chunk_size, num_deviation_bits);
+
+    let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
+    if l_id > 0 {
+        id_bits_per_base = Vec::with_capacity(num_bases);
+        for id in 0..num_bases {
+            let mut id_bits = crate::BitStream::with_capacity(l_id);
+            for shift in (0..l_id).rev() {
+                id_bits.push(((id >> shift) & 1) == 1);
+            }
+            id_bits_per_base.push(id_bits);
+        }
+    }
+
+    EncodingContext {
+        l_id,
+        num_deviation_bits,
+        row_to_group_id: input.row_to_base_id.clone(),
+        deviation_ranges,
+        id_bits_per_base,
+        _entropy_sorted_column_order: input.entropy_sorted_column_order.clone(),
+    }
+}
+
+pub(super) fn encode_rows_as_symbol_stream(
+    bit_data: &BitDataSet,
+    context: &EncodingContext,
+) -> crate::BitStream {
+    let symbol_width = context.num_deviation_bits + context.l_id;
+    let num_rows = bit_data.num_rows();
+    let mut symbol_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
+
+    for (row, id_ref) in context.row_to_group_id.iter().enumerate().take(num_rows) {
+        let id = *id_ref;
+        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
+
+        for &(start, end) in &context.deviation_ranges {
+            symbol_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+        }
+
+        if context.l_id > 0 {
+            symbol_stream.extend_from_bitslice(context.id_bits_per_base[id].as_bitslice());
+        }
+    }
+
+    symbol_stream
+}
+
+pub struct EncodeData {}
+
+impl Filter for EncodeData {
+    type Input = PreEncodeContext;
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format");
+        let encoded = EncodedData::Normal(encode_data(&input));
+        Ok(build_compressed_data(input, encoded))
+    }
+}
+
+pub struct EncodeDataOptimized {}
+
+impl Filter for EncodeDataOptimized {
+    type Input = PreEncodeContext;
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format (optimized)");
+        let encoded = EncodedData::Normal(encode_data(&input));
+        Ok(build_compressed_data(input, encoded))
+    }
+}
+
+pub struct EncodeDataRLE {}
+
+impl Filter for EncodeDataRLE {
+    type Input = PreEncodeContext;
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Encoding data into compressed format (optimized + RLE)");
+        let encoded = EncodedData::Rle(encode_data_rle(&input));
+        Ok(build_compressed_data(input, encoded))
+    }
+}
+
+pub(super) fn build_compressed_data(
+    input: PreEncodeContext,
+    encoded_data: EncodedData,
+) -> CompressedData {
+    let mut compressed = CompressedData::new(encoded_data, input.bit_data.info.clone());
+    compressed.base_table = BaseTable::Raw(input.variable_base_table);
+    compressed.layout = input.layout;
+    compressed.entropy_sorted_column_order = input.entropy_sorted_column_order;
+    compressed.condensed_sample_weights = input
+        .bit_data
+        .info
+        .m_condensed_sample_weights()
+        .map(|weights| weights.to_vec());
+    compressed
+}
+
+fn encode_data(input: &PreEncodeContext) -> DeviationData {
+    let context = build_encoding_context(input);
+    let encoded_bit_stream = encode_rows_as_symbol_stream(&input.bit_data, &context);
+
+    DeviationData::new(
+        encoded_bit_stream,
+        input.bit_data.num_rows(),
+        context.num_deviation_bits,
+        context.l_id,
+    )
+}
+
+fn encode_data_rle(input: &PreEncodeContext) -> RleDeviationData {
+    let context = build_encoding_context(input);
+    let symbol_width = context.num_deviation_bits + context.l_id;
+    let num_rows = input.bit_data.num_rows();
+    let raw_symbol_stream = encode_rows_as_symbol_stream(&input.bit_data, &context);
+    let mut symbol_stream = crate::BitStream::new();
+    let mut rm_values: Vec<(u8, u8)> = Vec::new();
+
+    if num_rows == 0 || symbol_width == 0 {
+        return RleDeviationData::new(
+            symbol_stream,
+            rm_values,
+            num_rows,
+            context.num_deviation_bits,
+            context.l_id,
+        );
+    }
+
+    let mut i = 0usize;
+    while i < num_rows {
+        let current_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i);
+
+        let mut run_len = 1usize;
+        while i + run_len < num_rows && run_len < RLE_MAX_RUN_LEN {
+            let next_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i + run_len);
+            if next_symbol == current_symbol {
+                run_len += 1;
+            } else {
+                break;
+            }
+        }
+
+        let r_encoded: u8;
+        if run_len >= 2 {
+            r_encoded = (run_len - 1) as u8;
+            symbol_stream.extend_from_bitslice(current_symbol);
+            i += run_len;
+        } else {
+            r_encoded = 0;
+        }
+
+        let literal_start = i;
+        let mut literal_count = 0usize;
+        while i < num_rows && literal_count < RLE_MAX_CONTROL_VALUE {
+            let this_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i);
+
+            let mut lookahead_run = 1usize;
+            while i + lookahead_run < num_rows && lookahead_run < RLE_MAX_RUN_LEN {
+                let lookahead_symbol =
+                    symbol_slice(&raw_symbol_stream, symbol_width, i + lookahead_run);
+                if lookahead_symbol == this_symbol {
+                    lookahead_run += 1;
+                } else {
+                    break;
+                }
+            }
+
+            if lookahead_run >= 2 {
+                break;
+            }
+
+            symbol_stream.extend_from_bitslice(this_symbol);
+            literal_count += 1;
+            i += 1;
+        }
+
+        if r_encoded == 0 && literal_count == 0 {
+            symbol_stream.extend_from_bitslice(current_symbol);
+            literal_count = 1;
+            i = literal_start + 1;
+        }
+
+        rm_values.push((r_encoded, literal_count as u8));
+    }
+
+    RleDeviationData::new(
+        symbol_stream,
+        rm_values,
+        num_rows,
+        context.num_deviation_bits,
+        context.l_id,
+    )
+}
+
+fn symbol_slice(
+    symbol_stream: &crate::BitStream,
+    symbol_width: usize,
+    row: usize,
+) -> &crate::BitView {
+    let start = row * symbol_width;
+    let end = start + symbol_width;
+    debug_assert!(end <= symbol_stream.len());
+    unsafe { symbol_stream.get_unchecked(start..end) }
+}

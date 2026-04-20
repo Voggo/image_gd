@@ -1,12 +1,50 @@
 use fxhash::FxHashMap;
 use std::hash::{Hash, Hasher};
 
-use super::context::build_deviation_ranges;
+use super::encoding_core::{
+    BaseTable, CompressedData, DeviationData, EncodedData, build_deviation_ranges,
+};
 
 use crate::compression::base_bits::BaseBit;
-use crate::compression::encoding::DeviationData;
+use crate::compression::base_table::{build_base_layout, project_selected_bases_to_variable};
 use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
+use crate::{EntroGdError, Filter, ScopedTimer};
+
+pub struct EncodeDataFusedDictionary {}
+
+impl Filter for EncodeDataFusedDictionary {
+    type Input = (BitDataSet, Box<dyn BaseBit>);
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(
+            "Encoding data into compressed format (fused dictionary + id/deviation)",
+        );
+        let (bit_data, base_bit_groups) = input;
+        let fused = encode_data_fused_dictionary(&bit_data, base_bit_groups.as_ref());
+
+        let mut compressed = CompressedData::new(
+            EncodedData::Normal(fused.deviation_data),
+            bit_data.info.clone(),
+        );
+        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let layout = build_base_layout(&selected_positions, &fused.base_table);
+        compressed.base_table = BaseTable::Raw(project_selected_bases_to_variable(
+            &selected_positions,
+            &layout.variable_base_bit_positions,
+            &fused.base_table,
+        ));
+        compressed.layout = layout;
+        compressed.layout.selected_base_bit_positions = selected_positions;
+        compressed.entropy_sorted_column_order = None;
+        compressed.condensed_sample_weights = bit_data
+            .info
+            .m_condensed_sample_weights()
+            .map(|weights| weights.to_vec());
+        Ok(compressed)
+    }
+}
 
 pub(super) struct FusedEncodingResult {
     pub(super) deviation_data: DeviationData,
