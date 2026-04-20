@@ -12,9 +12,10 @@ use criterion::{criterion_group, criterion_main};
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
-use entro_gd::{BitDataSet, CompressedData, CondensedSamples, Dataset, EntroGdError, FeatureSpec};
-
-type DynBaseBit = Box<dyn entro_gd::compression::base_bits::BaseBit>;
+use entro_gd::{
+    BaseSelectionContext, BitDataSet, CompressedData, CondensedSamples, Dataset, EntroGdError,
+    EntropyScoredContext, FeatureSpec,
+};
 
 #[allow(unused)]
 #[derive(Clone, Copy)]
@@ -120,10 +121,7 @@ impl EntropyImpl {
         }
     }
 
-    fn entropy(
-        self,
-        bit_data: BitDataSet,
-    ) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
+    fn entropy(self, bit_data: BitDataSet) -> Result<EntropyScoredContext, EntroGdError> {
         match self {
             EntropyImpl::Naive => EntropyNaive {}.process(bit_data),
             EntropyImpl::Batched => EntropyBatched {}.process(bit_data),
@@ -152,9 +150,9 @@ impl GenCondensedImpl {
 
     fn process(
         self,
-        input: (BitDataSet, Vec<(usize, f64)>),
+        input: EntropyScoredContext,
         m_max: usize,
-    ) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
+    ) -> Result<EntropyScoredContext, EntroGdError> {
         match self {
             GenCondensedImpl::Current => GenCondensedSamples { m_max }.process(input),
         }
@@ -204,9 +202,9 @@ impl SelectBasesImpl {
 
     fn process(
         self,
-        input: (BitDataSet, Vec<(usize, f64)>),
+        input: EntropyScoredContext,
         patience: usize,
-    ) -> Result<(BitDataSet, DynBaseBit), EntroGdError> {
+    ) -> Result<BaseSelectionContext, EntroGdError> {
         match self {
             SelectBasesImpl::Current => SelectBases { patience }.process(input),
             SelectBasesImpl::ProfileAllBits(base_bit_impl) => SelectBasesProfileAllBits {
@@ -251,7 +249,7 @@ impl EncodeImpl {
         }
     }
 
-    fn process(self, input: (BitDataSet, DynBaseBit)) -> Result<CompressedData, EntroGdError> {
+    fn process(self, input: BaseSelectionContext) -> Result<CompressedData, EntroGdError> {
         match self {
             EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
             _ => {
@@ -279,10 +277,10 @@ fn id_bits_needed(num_bases: usize) -> usize {
     }
 }
 
-fn huffman_symbol_width(input: &(BitDataSet, DynBaseBit)) -> usize {
-    let chunk_size = input.0.chunk_size();
-    let base_bits = input.1.get_num_bits_per_base();
-    let num_bases = input.1.get_num_bases();
+fn huffman_symbol_width(input: &BaseSelectionContext) -> usize {
+    let chunk_size = input.bit_data.chunk_size();
+    let base_bits = input.base_bits.get_num_bits_per_base();
+    let num_bases = input.base_bits.get_num_bases();
     let num_deviation_bits = chunk_size.saturating_sub(base_bits);
     let num_id_bits = id_bits_needed(num_bases);
     num_deviation_bits + num_id_bits
@@ -682,8 +680,8 @@ struct PreparedCase {
     dataset_seed: Option<Dataset>,
     inferred_feature_specs_seed: Option<Vec<FeatureSpec>>,
     bit_data_seed: BitDataSet,
-    entropy_seed: (BitDataSet, Vec<(usize, f64)>),
-    condensed_seed: (BitDataSet, Vec<(usize, f64)>),
+    entropy_seed: EntropyScoredContext,
+    condensed_seed: EntropyScoredContext,
     huffman_symbol_width_seed: usize,
     compressed_seed: CompressedData,
     loaded_compressed_seed: CompressedData,

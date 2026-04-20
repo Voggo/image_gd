@@ -222,7 +222,10 @@ impl Filter for SelectBases {
             entropy_scores,
         } = input;
         let base_bit_groups = select_base_bits(&bit_data, entropy_scores, self.patience);
-        Ok(BaseSelectionContext::new(bit_data, Box::new(base_bit_groups)))
+        Ok(BaseSelectionContext::new(
+            bit_data,
+            Box::new(base_bit_groups),
+        ))
     }
 }
 
@@ -336,7 +339,10 @@ impl Filter for SelectBasesDebug {
             }
         }
 
-        Ok(BaseSelectionContext::new(bit_data, Box::new(base_bit_groups)))
+        Ok(BaseSelectionContext::new(
+            bit_data,
+            Box::new(base_bit_groups),
+        ))
     }
 }
 

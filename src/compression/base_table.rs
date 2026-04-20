@@ -34,12 +34,11 @@ impl Filter for BuildBaseTable {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Building base table and layout from selected bases");
-        let BaseSelectionContext { bit_data, base_bits } = input;
-        Ok(build_encode_context(
+        let BaseSelectionContext {
             bit_data,
-            base_bits.as_ref(),
-            false,
-        ))
+            base_bits,
+        } = input;
+        Ok(build_encode_context(bit_data, base_bits.as_ref(), false))
     }
 }
 
@@ -51,12 +50,11 @@ impl Filter for BuildSortedBaseTable {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Building and sorting base table");
-        let BaseSelectionContext { bit_data, base_bits } = input;
-        Ok(build_encode_context(
+        let BaseSelectionContext {
             bit_data,
-            base_bits.as_ref(),
-            true,
-        ))
+            base_bits,
+        } = input;
+        Ok(build_encode_context(bit_data, base_bits.as_ref(), true))
     }
 }
 
@@ -356,10 +354,12 @@ mod tests {
         groups.add_bit_position(&bit_data, 3);
 
         let context = BuildBaseTable {}
-            .process(crate::compression::base_selection::BaseSelectionContext::new(
-                bit_data,
-                Box::new(groups),
-            ))
+            .process(
+                crate::compression::base_selection::BaseSelectionContext::new(
+                    bit_data,
+                    Box::new(groups),
+                ),
+            )
             .expect("BuildBaseTable should succeed");
 
         assert_eq!(context.variable_base_table.len(), 4);
@@ -387,16 +387,20 @@ mod tests {
         groups.add_bit_position(&bit_data, 1);
 
         let unsorted = BuildBaseTable {}
-            .process(crate::compression::base_selection::BaseSelectionContext::new(
-                bit_data.clone(),
-                Box::new(groups.clone()),
-            ))
+            .process(
+                crate::compression::base_selection::BaseSelectionContext::new(
+                    bit_data.clone(),
+                    Box::new(groups.clone()),
+                ),
+            )
             .expect("BuildBaseTable should succeed");
         let sorted = BuildSortedBaseTable {}
-            .process(crate::compression::base_selection::BaseSelectionContext::new(
-                bit_data,
-                Box::new(groups),
-            ))
+            .process(
+                crate::compression::base_selection::BaseSelectionContext::new(
+                    bit_data,
+                    Box::new(groups),
+                ),
+            )
             .expect("BuildSortedBaseTable should succeed");
 
         assert_eq!(

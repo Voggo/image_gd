@@ -22,7 +22,10 @@ impl Filter for EncodeDataFusedDictionary {
         let _timer = ScopedTimer::info(
             "Encoding data into compressed format (fused dictionary + id/deviation)",
         );
-        let BaseSelectionContext { bit_data, base_bits } = input;
+        let BaseSelectionContext {
+            bit_data,
+            base_bits,
+        } = input;
         let fused = encode_data_fused_dictionary(&bit_data, base_bits.as_ref());
 
         let mut compressed = CompressedData::new(

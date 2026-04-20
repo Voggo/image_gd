@@ -3,14 +3,16 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
+pub type EntropyBitScore = (usize, f64);
+
 #[derive(Debug, Clone)]
 pub struct EntropyScoredContext {
     pub bit_data: BitDataSet,
-    pub entropy_scores: Vec<(usize, f64)>,
+    pub entropy_scores: Vec<EntropyBitScore>,
 }
 
 impl EntropyScoredContext {
-    pub fn new(bit_data: BitDataSet, entropy_scores: Vec<(usize, f64)>) -> Self {
+    pub fn new(bit_data: BitDataSet, entropy_scores: Vec<EntropyBitScore>) -> Self {
         Self {
             bit_data,
             entropy_scores,
@@ -31,7 +33,7 @@ impl Filter for EntropyNaive {
     }
 }
 
-pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
+pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<EntropyBitScore> {
     calculate_entropy_stride_sampled_naive(bit_data, 0)
 }
 
@@ -71,7 +73,7 @@ impl Filter for EntropyStrideSampled {
 pub fn calculate_entropy_stride_sampled_naive(
     bit_data: &BitDataSet,
     skip_rows: usize,
-) -> Vec<(usize, f64)> {
+) -> Vec<EntropyBitScore> {
     let num_rows = bit_data.num_rows();
     let chunk_size = bit_data.chunk_size();
     if num_rows == 0 {
@@ -125,7 +127,7 @@ impl Filter for EntropyBatched {
     }
 }
 
-pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<(usize, f64)> {
+pub fn calculate_entropy_optimized(bit_data: &BitDataSet) -> Vec<EntropyBitScore> {
     calculate_entropy_with_stride(bit_data, 1)
 }
 
@@ -164,12 +166,12 @@ impl Filter for EntropyStrideSampledBatched {
 pub fn calculate_entropy_stride_sampled(
     bit_data: &BitDataSet,
     skip_rows: usize,
-) -> Vec<(usize, f64)> {
+) -> Vec<EntropyBitScore> {
     let stride = skip_rows.saturating_add(1);
     calculate_entropy_with_stride(bit_data, stride)
 }
 
-fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<(usize, f64)> {
+fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<EntropyBitScore> {
     let num_rows = bit_data.num_rows();
     let chunk_size = bit_data.chunk_size();
     if num_rows == 0 {
@@ -316,7 +318,10 @@ mod tests {
 
         let entropy_filter = EntropyNaive;
         let entropy_scored = entropy_filter.process(bit_data).unwrap();
-        tracing::info!("Entropies from pipeline: {:?}", entropy_scored.entropy_scores);
+        tracing::info!(
+            "Entropies from pipeline: {:?}",
+            entropy_scored.entropy_scores
+        );
         assert_eq!(entropy_scored.entropy_scores.len(), chunk_size);
     }
 

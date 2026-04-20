@@ -33,9 +33,8 @@ pub use encoding::{
     EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
-    EntropyBatched, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,
-    EntropyStrideSampledBatched,
-    calculate_entropy, calculate_entropy_stride_sampled,
+    EntropyBatched, EntropyBitScore, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,
+    EntropyStrideSampledBatched, calculate_entropy, calculate_entropy_stride_sampled,
 };
 pub use file_format::{
     EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,
