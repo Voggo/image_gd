@@ -2,6 +2,7 @@ use crate::compression::base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitIncSignatureGroups,
     BaseBitSignatureGroups,
 };
+use crate::compression::entropy::EntropyScoredContext;
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -165,6 +166,20 @@ pub struct SelectBases {
     pub patience: usize,
 }
 
+pub struct BaseSelectionContext {
+    pub bit_data: BitDataSet,
+    pub base_bits: Box<dyn BaseBit>,
+}
+
+impl BaseSelectionContext {
+    pub fn new(bit_data: BitDataSet, base_bits: Box<dyn BaseBit>) -> Self {
+        Self {
+            bit_data,
+            base_bits,
+        }
+    }
+}
+
 /// Profiling-oriented selector that adds every bit position as base bits.
 ///
 /// By default (`split_into_batches = 1`), all positions are added in a single
@@ -194,23 +209,26 @@ pub enum BaseBitImpl {
 }
 
 impl Filter for SelectBases {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Box<dyn BaseBit>);
+    type Input = EntropyScoredContext;
+    type Output = BaseSelectionContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
             "Selecting base bits with patience {}",
             self.patience
         ));
-        let (bit_data, entropy) = input;
-        let base_bit_groups = select_base_bits(&bit_data, entropy, self.patience);
-        Ok((bit_data, Box::new(base_bit_groups)))
+        let EntropyScoredContext {
+            bit_data,
+            entropy_scores,
+        } = input;
+        let base_bit_groups = select_base_bits(&bit_data, entropy_scores, self.patience);
+        Ok(BaseSelectionContext::new(bit_data, Box::new(base_bit_groups)))
     }
 }
 
 impl Filter for SelectBasesProfileAllBits {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Box<dyn BaseBit>);
+    type Input = EntropyScoredContext;
+    type Output = BaseSelectionContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
@@ -218,7 +236,7 @@ impl Filter for SelectBasesProfileAllBits {
             self.split_into_batches, self.base_bit_impl
         ));
 
-        let (bit_data, _entropy) = input;
+        let EntropyScoredContext { bit_data, .. } = input;
         let chunk_size = bit_data.chunk_size();
         let all_bit_positions: Vec<usize> = (0..chunk_size).collect();
         let mut base_bit_groups: Box<dyn BaseBit> = match self.base_bit_impl {
@@ -269,20 +287,23 @@ impl Filter for SelectBasesProfileAllBits {
             "selected base bit mask (profile all bits, compressed size in bytes)"
         );
 
-        Ok((bit_data, base_bit_groups))
+        Ok(BaseSelectionContext::new(bit_data, base_bit_groups))
     }
 }
 
 impl Filter for SelectBasesDebug {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Box<dyn BaseBit>);
+    type Input = EntropyScoredContext;
+    type Output = BaseSelectionContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
             "Selecting base bits with CSV debug and patience {}",
             self.patience
         ));
-        let (bit_data, entropy) = input;
+        let EntropyScoredContext {
+            bit_data,
+            entropy_scores,
+        } = input;
 
         let selected_debug_csv_path = {
             let guard = self
@@ -300,7 +321,7 @@ impl Filter for SelectBasesDebug {
 
         let base_bit_groups = select_base_bits_debug(
             &bit_data,
-            entropy,
+            entropy_scores,
             self.patience,
             selected_debug_csv_path.as_deref(),
         );
@@ -315,7 +336,7 @@ impl Filter for SelectBasesDebug {
             }
         }
 
-        Ok((bit_data, Box::new(base_bit_groups)))
+        Ok(BaseSelectionContext::new(bit_data, Box::new(base_bit_groups)))
     }
 }
 
@@ -469,53 +490,56 @@ pub struct SelectBasesOptimized {
 }
 
 impl Filter for SelectBasesOptimized {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Box<dyn BaseBit>);
+    type Input = EntropyScoredContext;
+    type Output = BaseSelectionContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
             "Selecting base bits in batches with patience {}",
             self.patience
         ));
-        let (bit_data, entropy) = input;
+        let EntropyScoredContext {
+            bit_data,
+            entropy_scores,
+        } = input;
         let base_bit_groups = match self.base_bit_impl {
             BaseBitImpl::Naive => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy,
+                entropy_scores,
                 0.80,
                 self.patience,
             ),
             BaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy,
+                entropy_scores,
                 0.80,
                 self.patience,
             ),
             BaseBitImpl::IncSignatureGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy,
+                entropy_scores,
                 0.80,
                 self.patience,
             ),
             BaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy,
+                entropy_scores,
                 0.80,
                 self.patience,
             ),
             BaseBitImpl::HyperLogLogCount => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy,
+                entropy_scores,
                 0.80,
                 self.patience,
             ),
         };
-        Ok((bit_data, base_bit_groups))
+        Ok(BaseSelectionContext::new(bit_data, base_bit_groups))
     }
 }
 

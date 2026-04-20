@@ -6,6 +6,7 @@ use super::encoding_core::{
 };
 
 use crate::compression::base_bits::BaseBit;
+use crate::compression::base_selection::BaseSelectionContext;
 use crate::compression::base_table::{build_base_layout, project_selected_bases_to_variable};
 use crate::compression::preprocessor::BitDataSet;
 use crate::utils::bits_needed_nonzero;
@@ -14,21 +15,21 @@ use crate::{EntroGdError, Filter, ScopedTimer};
 pub struct EncodeDataFusedDictionary {}
 
 impl Filter for EncodeDataFusedDictionary {
-    type Input = (BitDataSet, Box<dyn BaseBit>);
+    type Input = BaseSelectionContext;
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(
             "Encoding data into compressed format (fused dictionary + id/deviation)",
         );
-        let (bit_data, base_bit_groups) = input;
-        let fused = encode_data_fused_dictionary(&bit_data, base_bit_groups.as_ref());
+        let BaseSelectionContext { bit_data, base_bits } = input;
+        let fused = encode_data_fused_dictionary(&bit_data, base_bits.as_ref());
 
         let mut compressed = CompressedData::new(
             EncodedData::Normal(fused.deviation_data),
             bit_data.info.clone(),
         );
-        let selected_positions = base_bit_groups.get_base_bit_positions().to_vec();
+        let selected_positions = base_bits.get_base_bit_positions().to_vec();
         let layout = build_base_layout(&selected_positions, &fused.base_table);
         compressed.base_table = BaseTable::Raw(project_selected_bases_to_variable(
             &selected_positions,

@@ -15,7 +15,8 @@ pub use base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
 };
 pub use base_selection::{
-    BaseBitImpl, SelectBases, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
+    BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesDebug, SelectBasesOptimized,
+    SelectBasesProfileAllBits,
 };
 pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};
 pub use condensed_samples::GenCondensedSamples;
@@ -32,7 +33,8 @@ pub use encoding::{
     EncodeDataHuffmanBaseIdOnly, EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
-    EntropyBatched, EntropyNaive, EntropyStrideSampled, EntropyStrideSampledBatched,
+    EntropyBatched, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,
+    EntropyStrideSampledBatched,
     calculate_entropy, calculate_entropy_stride_sampled,
 };
 pub use file_format::{

@@ -1,6 +1,7 @@
 use crate::BitDataSet;
-use crate::compression::base_bits::BaseBit;
+use crate::compression::base_selection::BaseSelectionContext;
 use crate::compression::encoding::{CompressedData, EncodedData};
+use crate::compression::entropy::EntropyScoredContext;
 use crate::compression::image_preprocessor::BuildImageBitDataSet;
 use crate::compression::preprocessor::{
     BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, InferFeatureSpecs,
@@ -631,9 +632,9 @@ fn run_image_profile(
 fn select_bases(
     implementation: SelectBasesImpl,
     base_bit_impl: BaseBitImpl,
-    input: (BitDataSet, Vec<(usize, f64)>),
+    input: EntropyScoredContext,
     patience: usize,
-) -> Result<(BitDataSet, Box<dyn BaseBit>), EntroGdError> {
+) -> Result<BaseSelectionContext, EntroGdError> {
     match implementation {
         SelectBasesImpl::Naive => SelectBases { patience }.process(input),
         SelectBasesImpl::Optimized => SelectBasesOptimized {
@@ -681,7 +682,7 @@ fn encode_data(
     implementation: EncodeImpl,
     base_table_impl: BaseTableImpl,
     delta_encode_base_table: bool,
-    input: (BitDataSet, Box<dyn BaseBit>),
+    input: BaseSelectionContext,
 ) -> Result<CompressedData, EntroGdError> {
     match implementation {
         EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
@@ -715,7 +716,7 @@ fn run_entropy(
     implementation: EntropyImpl,
     skip_rows: usize,
     input: BitDataSet,
-) -> Result<(BitDataSet, Vec<(usize, f64)>), EntroGdError> {
+) -> Result<EntropyScoredContext, EntroGdError> {
     match implementation {
         EntropyImpl::Naive => EntropyNaive {}.process(input),
         EntropyImpl::Batched => EntropyBatched {}.process(input),

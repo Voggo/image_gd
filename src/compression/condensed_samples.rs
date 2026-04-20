@@ -1,5 +1,6 @@
 use crate::compression::base_bits::BaseBitGroups;
 use crate::compression::encoding::CondensedSamples;
+use crate::compression::entropy::EntropyScoredContext;
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -50,19 +51,22 @@ pub struct GenCondensedSamples {
 }
 
 impl Filter for GenCondensedSamples {
-    type Input = (BitDataSet, Vec<(usize, f64)>);
-    type Output = (BitDataSet, Vec<(usize, f64)>);
+    type Input = EntropyScoredContext;
+    type Output = EntropyScoredContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info(format!(
             "Generating condensed samples (m_max = {})",
             self.m_max
         ));
-        let (bit_data, entropy) = input;
-        let condensed_samples = select_condensed_samples(&bit_data, &entropy, self.m_max);
-        Ok((
+        let EntropyScoredContext {
+            bit_data,
+            entropy_scores,
+        } = input;
+        let condensed_samples = select_condensed_samples(&bit_data, &entropy_scores, self.m_max);
+        Ok(EntropyScoredContext::new(
             append_condensed_samples(bit_data, condensed_samples),
-            entropy,
+            entropy_scores,
         ))
     }
 }
@@ -493,12 +497,12 @@ mod tests {
         let m_max = 3;
 
         let filter = GenCondensedSamples { m_max };
-        let result = filter.process((bit_data.clone(), entropy.clone()));
+        let result = filter.process(EntropyScoredContext::new(bit_data.clone(), entropy.clone()));
 
         assert!(result.is_ok());
-        let (output_bit_data, output_entropy) = result.unwrap();
-        assert_eq!(output_entropy, entropy); // Entropy should pass through unchanged
-        assert!(output_bit_data.num_rows() >= bit_data.num_rows()); // May have condensed samples added
+        let output = result.unwrap();
+        assert_eq!(output.entropy_scores, entropy); // Entropy should pass through unchanged
+        assert!(output.bit_data.num_rows() >= bit_data.num_rows()); // May have condensed samples added
     }
 
     #[test]
@@ -508,11 +512,11 @@ mod tests {
         let m_max = 5;
 
         let filter = GenCondensedSamples { m_max };
-        let (output_bit_data, _) = filter
-            .process((bit_data, entropy))
+        let output = filter
+            .process(EntropyScoredContext::new(bit_data, entropy))
             .expect("filter should succeed");
 
-        if let Some(weights) = output_bit_data.info.m_condensed_sample_weights() {
+        if let Some(weights) = output.bit_data.info.m_condensed_sample_weights() {
             // Number of condensed samples should respect m_max
             assert!(weights.len() <= m_max);
         }
@@ -524,11 +528,11 @@ mod tests {
         let entropy = create_test_entropy(8);
 
         let filter = GenCondensedSamples { m_max: 2 };
-        let (_, output_entropy) = filter
-            .process((bit_data, entropy.clone()))
+        let output = filter
+            .process(EntropyScoredContext::new(bit_data, entropy.clone()))
             .expect("filter should succeed");
 
-        assert_eq!(output_entropy, entropy);
+        assert_eq!(output.entropy_scores, entropy);
     }
 
     #[test]
@@ -537,7 +541,7 @@ mod tests {
         let entropy = create_test_entropy(8);
 
         let filter = GenCondensedSamples { m_max: 0 };
-        let result = filter.process((bit_data, entropy));
+        let result = filter.process(EntropyScoredContext::new(bit_data, entropy));
 
         assert!(result.is_ok());
     }
@@ -552,9 +556,10 @@ mod tests {
         let entropy = create_entropy_with_zeros(16, 2);
 
         let filter = GenCondensedSamples { m_max: 4 };
-        let (output_bit_data, _) = filter
-            .process((bit_data.clone(), entropy))
+        let output = filter
+            .process(EntropyScoredContext::new(bit_data.clone(), entropy))
             .expect("filter should succeed");
+        let output_bit_data = output.bit_data;
 
         // Verify basic properties
         assert!(output_bit_data.num_rows() >= bit_data.num_rows());
@@ -574,9 +579,10 @@ mod tests {
 
         let entropy = create_test_entropy(chunk_size);
         let filter = GenCondensedSamples { m_max: 3 };
-        let (output_bit_data, _) = filter
-            .process((bit_data, entropy))
+        let output = filter
+            .process(EntropyScoredContext::new(bit_data, entropy))
             .expect("filter should succeed");
+        let output_bit_data = output.bit_data;
 
         assert_eq!(output_bit_data.chunk_size(), chunk_size);
     }

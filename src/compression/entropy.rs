@@ -3,16 +3,31 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
+#[derive(Debug, Clone)]
+pub struct EntropyScoredContext {
+    pub bit_data: BitDataSet,
+    pub entropy_scores: Vec<(usize, f64)>,
+}
+
+impl EntropyScoredContext {
+    pub fn new(bit_data: BitDataSet, entropy_scores: Vec<(usize, f64)>) -> Self {
+        Self {
+            bit_data,
+            entropy_scores,
+        }
+    }
+}
+
 pub struct EntropyNaive;
 
 impl Filter for EntropyNaive {
     type Input = BitDataSet;
-    type Output = (BitDataSet, Vec<(usize, f64)>);
+    type Output = EntropyScoredContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Calculating entropy for each bit position");
         let entropy = calculate_entropy(&input);
-        Ok((input, entropy))
+        Ok(EntropyScoredContext::new(input, entropy))
     }
 }
 
@@ -40,7 +55,7 @@ impl EntropyStrideSampled {
 
 impl Filter for EntropyStrideSampled {
     type Input = BitDataSet;
-    type Output = (BitDataSet, Vec<(usize, f64)>);
+    type Output = EntropyScoredContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         tracing::warn!("This filter is deprecated and will not be used as it limits the ability to use entropy for future calculations. 
@@ -49,7 +64,7 @@ impl Filter for EntropyStrideSampled {
         let _timer =
             ScopedTimer::info("Calculating entropy for each bit position (stride sampled naive)");
         let entropy = calculate_entropy_stride_sampled_naive(&input, self.skip_rows);
-        Ok((input, entropy))
+        Ok(EntropyScoredContext::new(input, entropy))
     }
 }
 
@@ -101,12 +116,12 @@ pub struct EntropyBatched {}
 
 impl Filter for EntropyBatched {
     type Input = BitDataSet;
-    type Output = (BitDataSet, Vec<(usize, f64)>);
+    type Output = EntropyScoredContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Calculating entropy for each bit position (optimized)");
         let entropy = calculate_entropy_optimized(&input);
-        Ok((input, entropy))
+        Ok(EntropyScoredContext::new(input, entropy))
     }
 }
 
@@ -133,7 +148,7 @@ impl EntropyStrideSampledBatched {
 
 impl Filter for EntropyStrideSampledBatched {
     type Input = BitDataSet;
-    type Output = (BitDataSet, Vec<(usize, f64)>);
+    type Output = EntropyScoredContext;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         tracing::warn!("This filter is deprecated and will not be used as it limits the ability to use entropy for future calculations. 
@@ -142,7 +157,7 @@ impl Filter for EntropyStrideSampledBatched {
         let _timer =
             ScopedTimer::info("Calculating entropy for each bit position (stride sampled)");
         let entropy = calculate_entropy_stride_sampled(&input, self.skip_rows);
-        Ok((input, entropy))
+        Ok(EntropyScoredContext::new(input, entropy))
     }
 }
 
@@ -300,9 +315,9 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropy_filter = EntropyNaive;
-        let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
-        tracing::info!("Entropies from pipeline: {:?}", entropies);
-        assert_eq!(entropies.len(), chunk_size);
+        let entropy_scored = entropy_filter.process(bit_data).unwrap();
+        tracing::info!("Entropies from pipeline: {:?}", entropy_scored.entropy_scores);
+        assert_eq!(entropy_scored.entropy_scores.len(), chunk_size);
     }
 
     #[test]
@@ -409,8 +424,8 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropy_filter = EntropyStrideSampledBatched::new(1);
-        let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
-        assert_eq!(entropies.len(), chunk_size);
+        let entropy_scored = entropy_filter.process(bit_data).unwrap();
+        assert_eq!(entropy_scored.entropy_scores.len(), chunk_size);
     }
 
     #[test]
@@ -469,7 +484,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let entropy_filter = EntropyStrideSampled::new(1);
-        let (_bit_data, entropies) = entropy_filter.process(bit_data).unwrap();
-        assert_eq!(entropies.len(), chunk_size);
+        let entropy_scored = entropy_filter.process(bit_data).unwrap();
+        assert_eq!(entropy_scored.entropy_scores.len(), chunk_size);
     }
 }
