@@ -729,7 +729,7 @@ fn run_entropy(
 
 fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBreakdownBits {
     let encoded_stream_total = compressed.encoded_data.get_encoded_size();
-    let variable_base_bits = compressed.layout.variable_base_bit_positions.len();
+    let variable_base_bits = compressed.layout.variable_base_bit_positions().len();
     let base_table_payload_bits = match &compressed.base_table {
         crate::compression::encoding::BaseTable::Raw(rows) => {
             // Matches EgdFile::from_compressed_data raw base-table layout:
@@ -763,7 +763,7 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
 
     let position_width_bits = bits_needed_nonzero(compressed.metadata.chunk_size().max(1));
     let base_bit_positions =
-        compressed.layout.selected_base_bit_positions.len() * position_width_bits;
+        compressed.layout.selected_base_bit_positions().len() * position_width_bits;
 
     let condensed_weights = compressed
         .condensed_sample_weights

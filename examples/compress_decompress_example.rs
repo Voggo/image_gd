@@ -132,7 +132,7 @@ fn main() -> Result<(), EntroGdError> {
     tracing::info!("  Base table entries: {}", compressed.base_table.len());
     tracing::info!(
         "  Base bit positions: {:?}",
-        compressed.layout.selected_base_bit_positions
+        compressed.layout.selected_base_bit_positions()
     );
 
     // Calculate compression ratio

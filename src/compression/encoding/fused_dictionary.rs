@@ -37,17 +37,18 @@ impl Filter for EncodeDataFusedDictionary {
         );
         let selected_positions = base_bits.get_base_bit_positions().to_vec();
         let layout = build_base_layout_from_constant_polarity(
+            bit_data.chunk_size(),
             &selected_positions,
             &constant_bit_polarity.constant_zero_bit_positions,
             &constant_bit_polarity.constant_one_bit_positions,
         );
+        let variable_positions = layout.variable_base_bit_positions();
         compressed.base_table = BaseTable::Raw(project_selected_bases_to_variable(
             &selected_positions,
-            &layout.variable_base_bit_positions,
+            &variable_positions,
             &fused.base_table,
         ));
         compressed.layout = layout;
-        compressed.layout.selected_base_bit_positions = selected_positions;
         compressed.entropy_sorted_column_order = None;
         compressed.condensed_sample_weights = bit_data
             .info

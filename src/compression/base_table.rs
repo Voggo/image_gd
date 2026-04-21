@@ -21,10 +21,93 @@ pub struct PreEncodeContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseLayoutInfo {
-    pub selected_base_bit_positions: Vec<usize>,
-    pub variable_base_bit_positions: Vec<usize>,
-    pub constant_zero_bit_positions: Vec<usize>,
-    pub constant_one_bit_positions: Vec<usize>,
+    pub bit_states: Vec<BaseBitLayoutState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseBitLayoutState {
+    Deviation,
+    Variable,
+    ConstantZero,
+    ConstantOne,
+}
+
+impl BaseLayoutInfo {
+    pub fn from_bit_states(bit_states: Vec<BaseBitLayoutState>) -> Self {
+        Self { bit_states }
+    }
+
+    pub fn chunk_size(&self) -> usize {
+        self.bit_states.len()
+    }
+
+    pub fn state_at(&self, bit_position: usize) -> BaseBitLayoutState {
+        self.bit_states
+            .get(bit_position)
+            .copied()
+            .unwrap_or(BaseBitLayoutState::Deviation)
+    }
+
+    pub fn selected_base_bit_positions(&self) -> Vec<usize> {
+        self.bit_states
+            .iter()
+            .enumerate()
+            .filter_map(|(bit_position, state)| {
+                if matches!(
+                    state,
+                    BaseBitLayoutState::Variable
+                        | BaseBitLayoutState::ConstantZero
+                        | BaseBitLayoutState::ConstantOne
+                ) {
+                    Some(bit_position)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn variable_base_bit_positions(&self) -> Vec<usize> {
+        self.bit_states
+            .iter()
+            .enumerate()
+            .filter_map(|(bit_position, state)| {
+                if *state == BaseBitLayoutState::Variable {
+                    Some(bit_position)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn constant_zero_bit_positions(&self) -> Vec<usize> {
+        self.bit_states
+            .iter()
+            .enumerate()
+            .filter_map(|(bit_position, state)| {
+                if *state == BaseBitLayoutState::ConstantZero {
+                    Some(bit_position)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn constant_one_bit_positions(&self) -> Vec<usize> {
+        self.bit_states
+            .iter()
+            .enumerate()
+            .filter_map(|(bit_position, state)| {
+                if *state == BaseBitLayoutState::ConstantOne {
+                    Some(bit_position)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 pub struct BuildBaseTable {}
@@ -80,13 +163,15 @@ fn build_encode_context(
     let selected_base_table = base_bit_groups.get_bases(&bit_data);
     let base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
     let layout = build_base_layout_from_constant_polarity(
+        bit_data.chunk_size(),
         &base_bit_positions,
         &constant_bit_polarity.constant_zero_bit_positions,
         &constant_bit_polarity.constant_one_bit_positions,
     );
+    let variable_positions = layout.variable_base_bit_positions();
     let variable_base_table = project_selected_bases_to_variable(
         &base_bit_positions,
-        &layout.variable_base_bit_positions,
+        &variable_positions,
         &selected_base_table,
     );
 
@@ -113,30 +198,27 @@ fn build_encode_context(
 }
 
 pub(crate) fn build_base_layout_from_constant_polarity(
+    chunk_size: usize,
     selected_positions: &[usize],
     constant_zero_positions: &[usize],
     constant_one_positions: &[usize],
 ) -> BaseLayoutInfo {
-    let mut variable_base_bit_positions = Vec::new();
-    let mut constant_zero_bit_positions = Vec::new();
-    let mut constant_one_bit_positions = Vec::new();
+    let mut bit_states = vec![BaseBitLayoutState::Deviation; chunk_size];
 
     for &bit_position in selected_positions {
-        if constant_one_positions.contains(&bit_position) {
-            constant_one_bit_positions.push(bit_position);
-        } else if constant_zero_positions.contains(&bit_position) {
-            constant_zero_bit_positions.push(bit_position);
-        } else {
-            variable_base_bit_positions.push(bit_position);
+        if bit_position >= bit_states.len() {
+            continue;
         }
+        bit_states[bit_position] = if constant_one_positions.contains(&bit_position) {
+            BaseBitLayoutState::ConstantOne
+        } else if constant_zero_positions.contains(&bit_position) {
+            BaseBitLayoutState::ConstantZero
+        } else {
+            BaseBitLayoutState::Variable
+        };
     }
 
-    BaseLayoutInfo {
-        selected_base_bit_positions: selected_positions.to_vec(),
-        variable_base_bit_positions,
-        constant_zero_bit_positions,
-        constant_one_bit_positions,
-    }
+    BaseLayoutInfo::from_bit_states(bit_states)
 }
 
 pub(crate) fn project_selected_bases_to_variable(
@@ -350,10 +432,10 @@ mod tests {
             .expect("BuildBaseTable should succeed");
 
         assert_eq!(context.variable_base_table.len(), 4);
-        assert_eq!(context.layout.selected_base_bit_positions, vec![0, 1, 3]);
-        assert_eq!(context.layout.variable_base_bit_positions, vec![0, 1]);
-        assert_eq!(context.layout.constant_one_bit_positions, vec![3]);
-        assert!(context.layout.constant_zero_bit_positions.is_empty());
+        assert_eq!(context.layout.selected_base_bit_positions(), vec![0, 1, 3]);
+        assert_eq!(context.layout.variable_base_bit_positions(), vec![0, 1]);
+        assert_eq!(context.layout.constant_one_bit_positions(), vec![3]);
+        assert!(context.layout.constant_zero_bit_positions().is_empty());
         assert!(context.entropy_sorted_column_order.is_none());
         let mut ids = context.row_to_base_id.clone();
         ids.sort_unstable();
@@ -430,12 +512,12 @@ mod tests {
         let mut context = PreEncodeContext {
             bit_data,
             row_to_base_id: vec![0, 1, 2, 3],
-            layout: BaseLayoutInfo {
-                selected_base_bit_positions: vec![0, 1, 2, 3],
-                variable_base_bit_positions: vec![0, 1, 2, 3],
-                constant_zero_bit_positions: Vec::new(),
-                constant_one_bit_positions: Vec::new(),
-            },
+            layout: BaseLayoutInfo::from_bit_states(vec![
+                BaseBitLayoutState::Variable,
+                BaseBitLayoutState::Variable,
+                BaseBitLayoutState::Variable,
+                BaseBitLayoutState::Variable,
+            ]),
             variable_base_table: vec![
                 (make_bits(&[true, false, true, false]), 1),  // 1010
                 (make_bits(&[false, false, false, true]), 1), // 0001

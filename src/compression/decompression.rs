@@ -45,8 +45,8 @@ pub(crate) fn decompress_samples_batch(
     if let Some(&sample_idx) = indices.iter().find(|&&idx| idx >= original_num_rows) {
         return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
     }
-    let base_bit_positions = &compressed.layout.selected_base_bit_positions;
-    let base_bit_mask = build_base_bit_mask(chunk_size, base_bit_positions);
+    let base_bit_positions = compressed.layout.selected_base_bit_positions();
+    let base_bit_mask = build_base_bit_mask(chunk_size, &base_bit_positions);
     let non_base_positions = (0..chunk_size)
         .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
         .collect::<Vec<_>>();
@@ -65,8 +65,8 @@ pub(crate) fn decompress_samples_batch(
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
                 &non_base_positions,
-                &compressed.layout.variable_base_bit_positions,
-                &compressed.layout.constant_one_bit_positions,
+                &compressed.layout.variable_base_bit_positions(),
+                &compressed.layout.constant_one_bit_positions(),
                 compressed.base_table.as_raw(),
                 chunk_size,
                 sample.deviation.as_bitslice(),
@@ -85,8 +85,8 @@ pub(crate) fn decompress_samples_batch(
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
                 &non_base_positions,
-                &compressed.layout.variable_base_bit_positions,
-                &compressed.layout.constant_one_bit_positions,
+                &compressed.layout.variable_base_bit_positions(),
+                &compressed.layout.constant_one_bit_positions(),
                 compressed.base_table.as_raw(),
                 chunk_size,
                 sample.deviation.as_bitslice(),
@@ -126,7 +126,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let row_padding_bits = stride.saturating_sub(chunk_size);
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let base_bit_mask =
-        build_base_bit_mask(chunk_size, &compressed.layout.selected_base_bit_positions);
+        build_base_bit_mask(chunk_size, &compressed.layout.selected_base_bit_positions());
     let non_base_positions = (0..chunk_size)
         .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
         .collect::<Vec<_>>();
@@ -141,8 +141,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
                     &non_base_positions,
-                    &compressed.layout.variable_base_bit_positions,
-                    &compressed.layout.constant_one_bit_positions,
+                    &compressed.layout.variable_base_bit_positions(),
+                    &compressed.layout.constant_one_bit_positions(),
                     compressed.base_table.as_raw(),
                     chunk_size,
                     sample.deviation,
@@ -159,8 +159,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
                     &non_base_positions,
-                    &compressed.layout.variable_base_bit_positions,
-                    &compressed.layout.constant_one_bit_positions,
+                    &compressed.layout.variable_base_bit_positions(),
+                    &compressed.layout.constant_one_bit_positions(),
                     compressed.base_table.as_raw(),
                     chunk_size,
                     sample.deviation,
@@ -721,12 +721,12 @@ mod tests {
             encoded_data,
             condensed_sample_weights: None,
             base_table: crate::compression::encoding::BaseTable::Raw(base_table),
-            layout: crate::compression::base_table::BaseLayoutInfo {
-                selected_base_bit_positions: base_bit_positions,
-                variable_base_bit_positions: create_base_bit_positions(chunk_size, num_base_bits),
-                constant_zero_bit_positions: Vec::new(),
-                constant_one_bit_positions: Vec::new(),
-            },
+            layout: crate::compression::base_table::build_base_layout_from_constant_polarity(
+                chunk_size,
+                &base_bit_positions,
+                &[],
+                &[],
+            ),
             entropy_sorted_column_order: None,
             metadata,
         }

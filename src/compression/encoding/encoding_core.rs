@@ -3,7 +3,7 @@ use fxhash::FxHashMap;
 
 use super::rle::RLE_LONG_MAX;
 
-use crate::compression::base_table::{BaseLayoutInfo, PreEncodeContext};
+use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo, PreEncodeContext};
 use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo, BitDataSet};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -189,12 +189,10 @@ impl CompressedData {
             encoded_data,
             condensed_sample_weights: None,
             base_table: BaseTable::Raw(Vec::new()),
-            layout: BaseLayoutInfo {
-                selected_base_bit_positions: Vec::new(),
-                variable_base_bit_positions: Vec::new(),
-                constant_zero_bit_positions: Vec::new(),
-                constant_one_bit_positions: Vec::new(),
-            },
+            layout: BaseLayoutInfo::from_bit_states(vec![
+                BaseBitLayoutState::Deviation;
+                metadata.chunk_size()
+            ]),
             entropy_sorted_column_order: None,
             metadata,
         }
@@ -414,13 +412,14 @@ pub(super) fn build_deviation_ranges(
 
 pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContext {
     let chunk_size = input.bit_data.chunk_size();
-    let num_bits_per_base = input.layout.selected_base_bit_positions.len();
+    let selected_positions = input.layout.selected_base_bit_positions();
+    let num_bits_per_base = selected_positions.len();
     let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
     let num_bases = input.variable_base_table.len();
     let l_id = bits_needed_nonzero(num_bases);
 
     let mut base_bit_mask = crate::BitStream::repeat(false, chunk_size);
-    for &bit_pos in &input.layout.selected_base_bit_positions {
+    for &bit_pos in &selected_positions {
         if bit_pos < chunk_size {
             base_bit_mask.set(bit_pos, true);
         }
