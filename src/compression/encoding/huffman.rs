@@ -104,8 +104,12 @@ pub(super) fn encode_data_huffman_base_id_only(
     input: &PreEncodeContext,
 ) -> Result<HuffmanDeviationData, EntroGdError> {
     let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
-
-    let frequencies = build_base_id_frequencies(context);
+    let frequencies = input
+        .variable_base_table
+        .iter()
+        .enumerate()
+        .map(|(id, (_base, count))| (id as u64, *count))
+        .collect();
     let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
     let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
 
@@ -120,7 +124,10 @@ pub(super) fn encode_data_huffman_base_id_only(
         if sample_idx < original_num_samples && sample_idx % row_width == 0 {
             row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
                 EntroGdError::InvalidMetadata {
-                    message: "Huffman row offset does not fit into u32".to_string(),
+                    message: "Huffman row offset does not fit into u32 
+                    Size: of offset much mean that input is above 536 MB
+                    Change how offsets are stored to allow larger inputs"
+                        .to_string(),
                 }
             })?);
         }
@@ -140,6 +147,7 @@ pub(super) fn encode_data_huffman_base_id_only(
                 })?;
         append_code_bits(&mut pixel_bit_stream, code, code_len);
     }
+    tracing::debug!(row_offeset_size = ?row_offsets.len(), "Encoded Huffman row offsets");
 
     HuffmanDeviationData::new_base_id_only(
         pixel_bit_stream,
@@ -176,30 +184,17 @@ fn build_symbol_frequencies(
         *frequencies.entry(symbol).or_insert(0) += 1;
     }
 
-    let mut freq_vec: Vec<(u64, usize)> = frequencies
-        .iter()
-        .map(|(&symbol, &freq)| (symbol, freq))
-        .collect();
-    freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-    tracing::debug!(frequencies = ?freq_vec[0..{if freq_vec.len() > 25 { 25 } else { freq_vec.len() }}], "Built symbol frequencies for Huffman encoding");
-
-    Ok(frequencies)
-}
-
-fn build_base_id_frequencies(input: &PreEncodeContext) -> FxHashMap<u64, usize> {
-    let mut frequencies = FxHashMap::default();
-    for &base_id in &input.row_to_base_id {
-        *frequencies.entry(base_id as u64).or_insert(0) += 1;
+    // this part is only for debug logging, it does not affect the actual frequencies used for encoding
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let mut freq_vec: Vec<(u64, usize)> = frequencies
+            .iter()
+            .map(|(&symbol, &freq)| (symbol, freq))
+            .collect();
+        freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        tracing::debug!(frequencies = ?freq_vec[0..{if freq_vec.len() > 25 { 25 } else { freq_vec.len() }}], "Built symbol frequencies for Huffman encoding");
     }
 
-    let mut freq_vec: Vec<(u64, usize)> = frequencies
-        .iter()
-        .map(|(&symbol, &freq)| (symbol, freq))
-        .collect();
-    freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-    tracing::debug!(frequencies = ?freq_vec[0..{if freq_vec.len() > 25 { 25 } else { freq_vec.len() }}], "Built base-id symbol frequencies for Huffman encoding");
-
-    frequencies
+    Ok(frequencies)
 }
 
 fn symbol_for_row(
