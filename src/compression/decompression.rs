@@ -45,11 +45,8 @@ pub(crate) fn decompress_samples_batch(
     if let Some(&sample_idx) = indices.iter().find(|&&idx| idx >= original_num_rows) {
         return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
     }
-    let base_bit_positions = compressed.layout.selected_base_bit_positions();
-    let base_bit_mask = build_base_bit_mask(chunk_size, &base_bit_positions);
-    let non_base_positions = (0..chunk_size)
-        .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
-        .collect::<Vec<_>>();
+
+    let deviation_positions = compressed.layout.deviation_bit_positions();
 
     let mut reconstructed_bits = crate::BitStream::with_capacity(stride * indices.len());
 
@@ -64,7 +61,7 @@ pub(crate) fn decompress_samples_batch(
 
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
-                &non_base_positions,
+                &deviation_positions,
                 &compressed.layout.variable_base_bit_positions(),
                 &compressed.layout.constant_one_bit_positions(),
                 compressed.base_table.as_raw(),
@@ -84,7 +81,7 @@ pub(crate) fn decompress_samples_batch(
 
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
-                &non_base_positions,
+                &deviation_positions,
                 &compressed.layout.variable_base_bit_positions(),
                 &compressed.layout.constant_one_bit_positions(),
                 compressed.base_table.as_raw(),

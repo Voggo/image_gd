@@ -67,6 +67,20 @@ impl BaseLayoutInfo {
             .collect()
     }
 
+    pub fn deviation_bit_positions(&self) -> Vec<usize> {
+        self.bit_states
+            .iter()
+            .enumerate()
+            .filter_map(|(bit_position, state)| {
+                if *state == BaseBitLayoutState::Deviation {
+                    Some(bit_position)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn variable_base_bit_positions(&self) -> Vec<usize> {
         self.bit_states
             .iter()
