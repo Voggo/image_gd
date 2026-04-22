@@ -26,10 +26,8 @@ pretty_assertions = "1.4.1"
 png = "0.18.1"
 
 [profile.release]
-lto = "fat"
 
 [profile.bench]
-lto = "fat"
 
 [[bench]]
 name = "benchmark"
