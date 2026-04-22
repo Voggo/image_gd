@@ -133,8 +133,8 @@ fn main() -> Result<(), EntroGdError> {
         let mut cumulative_count = 0usize;
 
         println!(
-            "  {:>8} | {:>7} | {:>10} | {:>10}",
-            "bit_len", "count", "cum<=len%", "cum_bits%"
+            "  {:>8} | {:>7} | {:>10} | {:>10} | {:>10}",
+            "bit_len", "count", "cum_count", "cum<=len%", "cum_bits%"
         );
         println!("  ----------------------------------------------");
         for (bit_len, count) in &delta_bit_length_distribution {
@@ -153,8 +153,8 @@ fn main() -> Result<(), EntroGdError> {
             };
 
             println!(
-                "  {:>6}b | {:>7} | {:>9.2}% | {:>9.2}%",
-                bit_len, count, cumulative_count_pct, cumulative_bits_pct
+                "  {:>6}b | {:>7} | {:>10} | {:>9.2}% | {:>9.2}%",
+                bit_len, count, cumulative_count, cumulative_count_pct, cumulative_bits_pct
             );
         }
     }
@@ -167,7 +167,7 @@ fn load_bit_data(input_path: &Path) -> Result<BitDataSet, EntroGdError> {
         BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: 6,
+            pixel_grouping: 4,
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: false,
         }

@@ -15,6 +15,7 @@ use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
     HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
+    get_delta_codec,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -91,16 +92,19 @@ fn decode_adjusted_delta(
     bit_pos: &mut usize,
     lb: usize,
 ) -> Result<crate::BitStream, EntroGdError> {
+    const CODEC: [(usize, u64); 5] = get_delta_codec();
+    let overflow_tier = CODEC.len();
+
     let mut tier = 0usize;
     while *bit_pos < bits.len() && bits[*bit_pos] {
         tier += 1;
         *bit_pos += 1;
-        if tier == 8 {
+        if tier == overflow_tier {
             break;
         }
     }
 
-    if tier < 8 {
+    if tier < overflow_tier {
         if *bit_pos >= bits.len() || bits[*bit_pos] {
             return Err(EntroGdError::InvalidMetadata {
                 message: "invalid delta prefix terminator".to_string(),
@@ -109,21 +113,14 @@ fn decode_adjusted_delta(
         *bit_pos += 1;
     }
 
-    let (payload_width, start): (usize, u64) = match tier {
-        0 => (2, 0),
-        1 => (4, 4),
-        2 => (7, 20),
-        3 => (10, 84),
-        4 => (13, 1108),
-        5 => (16, 9300),
-        6 => (19, 74772),
-        7 => (38, 598068),
-        8 => (lb, 0),
-        _ => {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "invalid delta tier".to_string(),
-            });
-        }
+    let (payload_width, start): (usize, u64) = if tier < CODEC.len() {
+        CODEC[tier]
+    } else if tier == overflow_tier {
+        (lb, 0)
+    } else {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "invalid delta tier".to_string(),
+        });
     };
 
     if *bit_pos + payload_width > bits.len() {
@@ -135,7 +132,7 @@ fn decode_adjusted_delta(
     let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
     *bit_pos += payload_width;
 
-    if tier == 8 {
+    if tier == overflow_tier {
         return Ok(payload.to_bitvec());
     }
 

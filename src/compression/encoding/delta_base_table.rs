@@ -249,6 +249,25 @@ fn write_u64_bits<O: BitOrder>(value: u64, width: usize, out: &mut BitVec<usize,
     out.extend_from_bitslice(&bits[..width]);
 }
 
+// Runs at compile time
+// Used to quickly'ish change the unary prefix lengths and payload bit widths for the delta encoding
+pub const fn get_delta_codec() -> [(usize, u64); 5] {
+    const CODE_NUM: usize = 5;
+    const BIT_WIDTHS: [usize; 5] = [2, 5, 16, 32, 48];
+    let mut codec = [(0usize, 0u64); CODE_NUM];
+    let mut starts = [0u64; CODE_NUM];
+    let mut cumulative = 0u64;
+    let mut i = 0;
+    while i < CODE_NUM {
+        starts[i] = cumulative;
+        cumulative += 1 << BIT_WIDTHS[i];
+        codec[i] = (BIT_WIDTHS[i], starts[i]);
+        i += 1;
+    }
+
+    codec
+}
+
 fn encode_adjusted_delta_bits_with_stats(
     d_bits: &crate::BitView,
     lb: usize,
@@ -261,15 +280,14 @@ fn encode_adjusted_delta_bits_with_stats(
 
     let d_len = d_bits.len();
 
+    const CODEC: [(usize, u64); 5] = get_delta_codec();
+    const OVERFLOW_TIER: usize = CODEC.len();
+
     if d_len <= 38 {
         let d = bits_to_u64(d_bits);
 
-        const STARTS: [u64; 8] = [0, 4, 20, 84, 1108, 9300, 74772, 598068];
-        const WIDTHS: [usize; 8] = [2, 4, 7, 10, 13, 16, 19, 38];
-
-        for tier in 0..8 {
-            let start = STARTS[tier];
-            let width = WIDTHS[tier];
+        for tier in 0..CODEC.len() {
+            let (width, start) = CODEC[tier];
             let max = start + ((1u128 << width) as u64) - 1;
             if d <= max {
                 for _ in 0..tier {
@@ -285,13 +303,13 @@ fn encode_adjusted_delta_bits_with_stats(
         }
     }
 
-    for _ in 0..8 {
+    for _ in 0..OVERFLOW_TIER {
         out.push(true);
     }
     for idx in 0..lb {
         out.push(d_bits.get(idx).map(|b| *b).unwrap_or(false));
     }
-    stats.prefix_bits = 8;
+    stats.prefix_bits = OVERFLOW_TIER;
     stats.payload_bits = lb;
     stats.total_written_bits = stats.prefix_bits + stats.payload_bits;
     stats

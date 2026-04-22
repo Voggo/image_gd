@@ -215,8 +215,9 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
             .then(SelectBases {
                 patience: case.patience,
             })
-            .then(BuildBaseTable {})
-            .then(EncodeDataOptimized {})
+            .then(BuildSortedBaseTable {})
+            .then(EncodeDataHuffmanBaseIdOnly {})
+            .then(DeltaEncodeBaseTable {})
             .process(bit_data)
             .unwrap(),
     }

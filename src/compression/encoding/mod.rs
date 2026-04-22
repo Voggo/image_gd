@@ -4,7 +4,7 @@ mod fused_dictionary;
 mod huffman;
 mod rle;
 
-pub use self::delta_base_table::DeltaEncodeBaseTable;
+pub use self::delta_base_table::{DeltaEncodeBaseTable, get_delta_codec};
 pub(crate) use self::encoding_core::build_base_bit_mask;
 pub use self::encoding_core::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
