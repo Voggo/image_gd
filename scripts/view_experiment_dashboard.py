@@ -18,6 +18,42 @@ def _normalize_header(name: str) -> str:
     return name.strip()
 
 
+def _parse_int(value: str | None, default: int = 0) -> int:
+    if value is None:
+        return default
+    value = value.strip()
+    if not value:
+        return default
+    return int(value)
+
+
+def _parse_float(value: str | None, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    value = value.strip()
+    if not value:
+        return default
+    return float(value)
+
+
+def _parse_optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    return int(value)
+
+
+def _parse_optional_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    return float(value)
+
+
 def _stitch_rows(path: Path) -> list[dict]:
     """Read CSV rows while tolerating whitespace-padded headers and split physical lines.
 
@@ -62,9 +98,13 @@ def _stitch_rows(path: Path) -> list[dict]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="View compression experiment dashboard data")
+    parser = argparse.ArgumentParser(
+        description="View compression experiment dashboard data"
+    )
     parser.add_argument("--input", required=True, help="Path to dashboard CSV")
-    parser.add_argument("--top", type=int, default=5, help="Top-N rows for per-file summaries")
+    parser.add_argument(
+        "--top", type=int, default=5, help="Top-N rows for per-file summaries"
+    )
     parser.add_argument("--plot", action="store_true", help="Show a quick scatter plot")
     return parser.parse_args()
 
@@ -85,7 +125,7 @@ def load_rows(path: Path) -> list[dict]:
             "select_ms",
             "encode_ms",
         ):
-            row[key] = float(row.get(key, "0") or "0")
+            row[key] = _parse_float(row.get(key), default=0.0)
 
         for key in (
             "original_bits",
@@ -105,9 +145,25 @@ def load_rows(path: Path) -> list[dict]:
             "base_bit_positions_bits",
             "condensed_weights_bits",
         ):
-            row[key] = int(row.get(key, "0") or "0")
+            row[key] = _parse_int(row.get(key), default=0)
 
-        row["compression_ratio"] = row["estimated_total_bits"] / max(row["original_bits"], 1)
+        row["png_baseline_bits"] = _parse_optional_int(row.get("png_baseline_bits"))
+        row["png_vs_estimated_ratio"] = _parse_optional_float(
+            row.get("png_vs_estimated_ratio")
+        )
+        if row["png_vs_estimated_ratio"] is None and row["png_baseline_bits"]:
+            row["png_vs_estimated_ratio"] = (
+                row["estimated_total_bits"] / row["png_baseline_bits"]
+            )
+        row["has_png_comparison"] = (
+            row.get("input_kind") == "Image"
+            and row["png_baseline_bits"] is not None
+            and row["png_baseline_bits"] > 0
+        )
+
+        row["compression_ratio"] = row["estimated_total_bits"] / max(
+            row["original_bits"], 1
+        )
 
     return rows
 
@@ -123,17 +179,21 @@ def format_bits(bits: int) -> str:
     return f"{bytes_value:.2f} {units[unit_idx]}"
 
 
-def print_table_header(preset_width: int) -> None:
-    print(
-        f"  {'preset':<{preset_width}} {'enc':<20} {'time(ms)':>10} {'size':>12} {'bits':>14} {'ratio':>8}"
-    )
-    print(
+def print_table_header(preset_width: int, show_png: bool) -> None:
+    header = f"  {'preset':<{preset_width}} {'enc':<20} {'time(ms)':>10} {'size':>12} {'bits':>14} {'ratio':>8}"
+    line = (
         f"  {'-' * preset_width} {'-' * 20} {'-' * 10} {'-' * 12} {'-' * 14} {'-' * 8}"
     )
+    if show_png:
+        header += f" {'vs_png':>8} {'delta_png':>14}"
+        line += f" {'-' * 8} {'-' * 14}"
+
+    print(header)
+    print(line)
 
 
-def print_table_row(row: dict, preset_width: int) -> None:
-    print(
+def print_table_row(row: dict, preset_width: int, show_png: bool) -> None:
+    line = (
         f"  {row['preset']:<{preset_width}} "
         f"{row['encode_impl']:<20} "
         f"{row['total_ms']:>10.2f} "
@@ -141,6 +201,15 @@ def print_table_row(row: dict, preset_width: int) -> None:
         f"{row['estimated_total_bits']:>14} "
         f"{row['compression_ratio']:>8.4f}"
     )
+
+    if show_png:
+        if row["has_png_comparison"] and row["png_vs_estimated_ratio"] is not None:
+            delta_png = row["estimated_total_bits"] - row["png_baseline_bits"]
+            line += f" {row['png_vs_estimated_ratio']:>8.4f} {delta_png:>14}"
+        else:
+            line += f" {'':>8} {'':>14}"
+
+    print(line)
 
 
 def print_summary(rows: list[dict], top_n: int) -> None:
@@ -161,6 +230,7 @@ def print_summary(rows: list[dict], top_n: int) -> None:
     for file_path in sorted(by_file.keys()):
         file_rows = by_file[file_path]
         preset_width = max(32, max(len(row["preset"]) for row in file_rows))
+        show_png = any(row["has_png_comparison"] for row in file_rows)
         print(f"\n=== {file_path} ({len(file_rows)} runs) ===")
 
         fastest = min(file_rows, key=lambda r: r["total_ms"])
@@ -178,15 +248,35 @@ def print_summary(rows: list[dict], top_n: int) -> None:
             f"ratio={smallest['compression_ratio']:.4f}"
         )
 
+        if show_png:
+            png_rows = [r for r in file_rows if r["has_png_comparison"]]
+            baseline_bits = png_rows[0]["png_baseline_bits"]
+            best_vs_png = min(
+                png_rows,
+                key=lambda r: (
+                    r["png_vs_estimated_ratio"]
+                    if r["png_vs_estimated_ratio"] is not None
+                    else float("inf")
+                ),
+            )
+            delta_bits = best_vs_png["estimated_total_bits"] - baseline_bits
+            outcome = "smaller" if delta_bits < 0 else "larger"
+            print(
+                "PNG baseline: "
+                f"size={format_bits(baseline_bits)} ({baseline_bits} bits) | "
+                f"best-vs-png={best_vs_png['png_vs_estimated_ratio']:.4f} "
+                f"({abs(delta_bits)} bits {outcome})"
+            )
+
         print("Top by time:")
-        print_table_header(preset_width)
+        print_table_header(preset_width, show_png)
         for row in sorted(file_rows, key=lambda r: r["total_ms"])[:top_n]:
-            print_table_row(row, preset_width)
+            print_table_row(row, preset_width, show_png)
 
         print("Top by size:")
-        print_table_header(preset_width)
+        print_table_header(preset_width, show_png)
         for row in sorted(file_rows, key=lambda r: r["estimated_total_bits"])[:top_n]:
-            print_table_row(row, preset_width)
+            print_table_row(row, preset_width, show_png)
 
         # print("Direct compare (preset -> time/size):")
         # print_table_header(preset_width)
@@ -217,7 +307,9 @@ def plot(rows: list[dict]) -> None:
     ax.set_xlabel("Total compression time [ms]")
     ax.set_ylabel("Estimated compressed size [bits / scaled bytes]")
     ax.yaxis.set_major_formatter(
-        FuncFormatter(lambda value, _pos: f"{value:.0f}b ({format_bits(int(max(value, 0)))})")
+        FuncFormatter(
+            lambda value, _pos: f"{value:.0f}b ({format_bits(int(max(value, 0)))})"
+        )
     )
     ax.grid(True, alpha=0.25)
     ax.legend()

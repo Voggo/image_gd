@@ -194,6 +194,7 @@ pub struct ImagePipelineProfileConfig {
 pub struct ExperimentRunnerConfigFile {
     pub input_path: Option<String>,
     pub recursive: Option<bool>,
+    pub compare_png: Option<bool>,
     pub csv_profiles: Option<Vec<CsvPipelineProfileConfig>>,
     pub image_profiles: Option<Vec<ImagePipelineProfileConfig>>,
     pub csv_profile_groups: Option<Vec<CsvProfileGroupConfig>>,

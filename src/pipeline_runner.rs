@@ -15,6 +15,8 @@ use crate::pipeline_profiles::{
 };
 use crate::prelude::*;
 use crate::utils::bits_needed_nonzero;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::{ImageEncoder, ImageReader};
 use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -30,6 +32,7 @@ pub enum InputKind {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ExperimentRunOptions {
     pub recursive: bool,
+    pub compare_png: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +78,8 @@ pub struct ExperimentRecord {
     pub stage_ms: CompressionStageDurationsMs,
     pub original_bits: usize,
     pub size_breakdown_bits: CompressedSizeBreakdownBits,
+    pub png_baseline_bits: Option<usize>,
+    pub png_vs_estimated_ratio: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -246,6 +251,75 @@ pub fn detect_input_kind(path: &Path) -> InputKind {
     }
 }
 
+fn is_png_comparison_applicable(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+
+    // Compare only formats that decode to a single image representation.
+    // GIF is excluded because animated/multi-frame semantics make the comparison misleading.
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "bmp"
+    )
+}
+
+fn compute_png_baseline_bits_if_enabled(path: &Path, enabled: bool) -> Option<usize> {
+    if !enabled || !is_png_comparison_applicable(path) {
+        return None;
+    }
+
+    match compute_png_baseline_bits(path) {
+        Ok(bits) => Some(bits),
+        Err(err) => {
+            tracing::warn!("Skipping PNG comparison for '{}': {}", path.display(), err);
+            None
+        }
+    }
+}
+
+fn compute_png_baseline_bits(path: &Path) -> Result<usize, EntroGdError> {
+    let image = ImageReader::open(path)
+        .map_err(|err| EntroGdError::InvalidMetadata {
+            message: format!(
+                "failed to open image '{}' for PNG baseline: {}",
+                path.display(),
+                err
+            ),
+        })?
+        .decode()
+        .map_err(|err| EntroGdError::InvalidMetadata {
+            message: format!(
+                "failed to decode image '{}' for PNG baseline: {}",
+                path.display(),
+                err
+            ),
+        })?;
+
+    let width = image.width();
+    let height = image.height();
+    let color = image.color();
+    let raw_bytes = image.into_bytes();
+
+    let mut encoded_png = Vec::new();
+    let encoder = PngEncoder::new_with_quality(
+        &mut encoded_png,
+        CompressionType::Best,
+        FilterType::Adaptive,
+    );
+    encoder
+        .write_image(&raw_bytes, width, height, color.into())
+        .map_err(|err| EntroGdError::InvalidMetadata {
+            message: format!(
+                "failed to encode PNG baseline for '{}': {}",
+                path.display(),
+                err
+            ),
+        })?;
+
+    Ok(encoded_png.len() * 8)
+}
+
 pub fn collect_input_files(path: &Path, recursive: bool) -> Result<Vec<PathBuf>, EntroGdError> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
@@ -313,9 +387,11 @@ pub fn run_experiments_on_path(
             }
             InputKind::Image => {
                 progress.file_started(display_idx, file, kind, profiles.image.len());
+                let png_baseline_bits =
+                    compute_png_baseline_bits_if_enabled(file, options.compare_png);
                 let mut file_records = Vec::new();
                 for profile in &profiles.image {
-                    let record = run_image_profile(file, profile)?;
+                    let record = run_image_profile(file, profile, png_baseline_bits)?;
                     progress.job_finished(display_idx, &profile.name, record.stage_ms.total);
                     file_records.push(record);
                 }
@@ -349,19 +425,26 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_encode_base_table,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_encode_base_table,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
     )?;
 
     for record in records {
-        writeln!(
-            file,
-            "{},{:?},{},{:?},{:?},{},{},{},{},{},{:?},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            record.file_path.display(),
-            record.kind,
-            record.preset_name,
-            record.select_impl,
-            record.base_bit_impl,
-            record.config.entropy_impl.as_deref().unwrap_or(""),
+        let png_baseline_bits = record
+            .png_baseline_bits
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let png_vs_estimated_ratio = record
+            .png_vs_estimated_ratio
+            .map(|value| format!("{:.6}", value))
+            .unwrap_or_default();
+
+        let row = vec![
+            record.file_path.display().to_string(),
+            format!("{:?}", record.kind),
+            record.preset_name.clone(),
+            format!("{:?}", record.select_impl),
+            format!("{:?}", record.base_bit_impl),
+            record.config.entropy_impl.clone().unwrap_or_default(),
             record
                 .config
                 .entropy_skip_rows
@@ -372,27 +455,27 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
                 .use_condensed_samples
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
-            record.config.base_table_impl.as_deref().unwrap_or(""),
+            record.config.base_table_impl.clone().unwrap_or_default(),
             record
                 .config
                 .delta_encode_base_table
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
-            record.encode_impl,
-            record.m_max,
-            record.patience,
+            format!("{:?}", record.encode_impl),
+            record.m_max.to_string(),
+            record.patience.to_string(),
             record
                 .config
                 .csv_has_headers
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
-            record.config.csv_float_storage.as_deref().unwrap_or(""),
+            record.config.csv_float_storage.clone().unwrap_or_default(),
             record
                 .config
                 .csv_missing_value_policy
-                .as_deref()
-                .unwrap_or(""),
-            record.config.csv_float_scaling.as_deref().unwrap_or(""),
+                .clone()
+                .unwrap_or_default(),
+            record.config.csv_float_scaling.clone().unwrap_or_default(),
             record
                 .config
                 .csv_max_decimal_scale
@@ -403,8 +486,8 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
                 .csv_integer_zero_normalization
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
-            record.config.image_colorspace.as_deref().unwrap_or(""),
-            record.config.image_color_model.as_deref().unwrap_or(""),
+            record.config.image_colorspace.clone().unwrap_or_default(),
+            record.config.image_color_model.clone().unwrap_or_default(),
             record
                 .config
                 .image_pixel_grouping
@@ -413,31 +496,56 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
             record
                 .config
                 .image_grouping_transform
-                .as_deref()
-                .unwrap_or(""),
-            record.original_bits,
-            record.stage_ms.load_input,
-            record.stage_ms.preprocess,
-            record.stage_ms.entropy,
-            record.stage_ms.condensed_samples,
-            record.stage_ms.select_bases,
-            record.stage_ms.encode,
-            record.stage_ms.total,
-            record.size_breakdown_bits.encoded_stream_total,
-            record.size_breakdown_bits.encoded_payload_bits,
-            record.size_breakdown_bits.normal_symbol_stream_bits,
-            record.size_breakdown_bits.rle_symbol_stream_bits,
-            record.size_breakdown_bits.rle_control_stream_bits,
-            record.size_breakdown_bits.rle_packet_count,
-            record.size_breakdown_bits.huffman_pixel_stream_bits,
-            record.size_breakdown_bits.huffman_row_offsets_bits,
-            record.size_breakdown_bits.huffman_symbol_table_bits,
-            record.size_breakdown_bits.huffman_code_lengths_bits,
-            record.size_breakdown_bits.base_table_patterns,
-            record.size_breakdown_bits.base_bit_positions,
-            record.size_breakdown_bits.condensed_weights,
-            record.size_breakdown_bits.estimated_total,
-        )?;
+                .clone()
+                .unwrap_or_default(),
+            record.original_bits.to_string(),
+            format!("{:.6}", record.stage_ms.load_input),
+            format!("{:.6}", record.stage_ms.preprocess),
+            format!("{:.6}", record.stage_ms.entropy),
+            format!("{:.6}", record.stage_ms.condensed_samples),
+            format!("{:.6}", record.stage_ms.select_bases),
+            format!("{:.6}", record.stage_ms.encode),
+            format!("{:.6}", record.stage_ms.total),
+            record.size_breakdown_bits.encoded_stream_total.to_string(),
+            record.size_breakdown_bits.encoded_payload_bits.to_string(),
+            record
+                .size_breakdown_bits
+                .normal_symbol_stream_bits
+                .to_string(),
+            record
+                .size_breakdown_bits
+                .rle_symbol_stream_bits
+                .to_string(),
+            record
+                .size_breakdown_bits
+                .rle_control_stream_bits
+                .to_string(),
+            record.size_breakdown_bits.rle_packet_count.to_string(),
+            record
+                .size_breakdown_bits
+                .huffman_pixel_stream_bits
+                .to_string(),
+            record
+                .size_breakdown_bits
+                .huffman_row_offsets_bits
+                .to_string(),
+            record
+                .size_breakdown_bits
+                .huffman_symbol_table_bits
+                .to_string(),
+            record
+                .size_breakdown_bits
+                .huffman_code_lengths_bits
+                .to_string(),
+            record.size_breakdown_bits.base_table_patterns.to_string(),
+            record.size_breakdown_bits.base_bit_positions.to_string(),
+            record.size_breakdown_bits.condensed_weights.to_string(),
+            record.size_breakdown_bits.estimated_total.to_string(),
+            png_baseline_bits,
+            png_vs_estimated_ratio,
+        ];
+
+        writeln!(file, "{}", row.join(","))?;
     }
 
     Ok(())
@@ -536,12 +644,15 @@ fn run_csv_profile(
         },
         original_bits: compressed.metadata.original_size_bits(),
         size_breakdown_bits,
+        png_baseline_bits: None,
+        png_vs_estimated_ratio: None,
     })
 }
 
 fn run_image_profile(
     file: &Path,
     profile: &ImagePipelineProfile,
+    png_baseline_bits: Option<usize>,
 ) -> Result<ExperimentRecord, EntroGdError> {
     let total_t0 = Instant::now();
 
@@ -593,6 +704,9 @@ fn run_image_profile(
     let encode_ms = encode_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let size_breakdown_bits = estimate_size_breakdown_bits(&compressed);
+    let png_vs_estimated_ratio = png_baseline_bits.and_then(|png_bits| {
+        (png_bits > 0).then_some(size_breakdown_bits.estimated_total as f64 / png_bits as f64)
+    });
 
     Ok(ExperimentRecord {
         file_path: file.to_path_buf(),
@@ -626,6 +740,8 @@ fn run_image_profile(
         },
         original_bits: compressed.metadata.original_size_bits(),
         size_breakdown_bits,
+        png_baseline_bits,
+        png_vs_estimated_ratio,
     })
 }
 

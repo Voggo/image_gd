@@ -13,6 +13,7 @@ fn main() -> Result<(), EntroGdError> {
     let mut input_path: Option<PathBuf> = None;
     let mut config_path: PathBuf = PathBuf::from(DEFAULT_CONFIG_PATH);
     let mut recursive = false;
+    let mut compare_png = false;
     let mut output_path = PathBuf::from("target/experiment-dashboard.csv");
 
     let mut i = 1usize;
@@ -29,6 +30,10 @@ fn main() -> Result<(), EntroGdError> {
             }
             "--recursive" => {
                 recursive = true;
+                i += 1;
+            }
+            "--compare-png" => {
+                compare_png = true;
                 i += 1;
             }
             "--config" => {
@@ -67,6 +72,7 @@ fn main() -> Result<(), EntroGdError> {
 
     let options = ExperimentRunOptions {
         recursive: file_config.recursive.unwrap_or(recursive),
+        compare_png: file_config.compare_png.unwrap_or(compare_png),
     };
 
     let report = run_experiments_on_path(&input_path, &profiles, options)?;
@@ -76,6 +82,7 @@ fn main() -> Result<(), EntroGdError> {
     tracing::info!("Processed files: {}", report.processed_files);
     tracing::info!("Skipped files: {}", report.skipped_files.len());
     tracing::info!("Result rows: {}", report.records.len());
+    tracing::info!("PNG comparison enabled: {}", options.compare_png);
     tracing::info!("Wrote dashboard report to: {}", output_path.display());
 
     Ok(())
