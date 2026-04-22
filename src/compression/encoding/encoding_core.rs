@@ -4,7 +4,7 @@ use fxhash::FxHashMap;
 use super::rle::RLE_LONG_MAX;
 
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo, PreEncodeContext};
-use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo, BitDataSet};
+use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -370,15 +370,6 @@ impl EncodedData {
     }
 }
 
-pub(super) struct EncodingContext {
-    pub(super) l_id: usize,
-    pub(super) num_deviation_bits: usize,
-    pub(super) row_to_group_id: Vec<usize>,
-    pub(super) deviation_ranges: Vec<(usize, usize)>,
-    pub(super) id_bits_per_base: Vec<crate::BitStream>,
-    pub(super) _entropy_sorted_column_order: Option<Vec<usize>>,
-}
-
 pub(super) fn build_deviation_ranges(
     base_bit_mask: &crate::BitView,
     chunk_size: usize,
@@ -410,13 +401,13 @@ pub(super) fn build_deviation_ranges(
     deviation_ranges
 }
 
-pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContext {
+pub(super) fn derive_symbol_layout(
+    input: &PreEncodeContext,
+) -> (usize, usize, Vec<(usize, usize)>) {
     let chunk_size = input.bit_data.chunk_size();
     let selected_positions = input.layout.selected_base_bit_positions();
-    let num_bits_per_base = selected_positions.len();
-    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
-    let num_bases = input.variable_base_table.len();
-    let l_id = bits_needed_nonzero(num_bases);
+    let num_deviation_bits = chunk_size.saturating_sub(selected_positions.len());
+    let l_id = bits_needed_nonzero(input.variable_base_table.len());
 
     let mut base_bit_mask = crate::BitStream::repeat(false, chunk_size);
     for &bit_pos in &selected_positions {
@@ -427,7 +418,11 @@ pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContex
     let deviation_ranges =
         build_deviation_ranges(base_bit_mask.as_bitslice(), chunk_size, num_deviation_bits);
 
-    let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
+    (num_deviation_bits, l_id, deviation_ranges)
+}
+
+pub(super) fn build_id_bits_per_base(l_id: usize, num_bases: usize) -> Vec<crate::BitStream> {
+    let mut id_bits_per_base = Vec::new();
     if l_id > 0 {
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
@@ -439,34 +434,30 @@ pub(super) fn build_encoding_context(input: &PreEncodeContext) -> EncodingContex
         }
     }
 
-    EncodingContext {
-        l_id,
-        num_deviation_bits,
-        row_to_group_id: input.row_to_base_id.clone(),
-        deviation_ranges,
-        id_bits_per_base,
-        _entropy_sorted_column_order: input.entropy_sorted_column_order.clone(),
-    }
+    id_bits_per_base
 }
 
 pub(super) fn encode_rows_as_symbol_stream(
-    bit_data: &BitDataSet,
-    context: &EncodingContext,
+    input: &PreEncodeContext,
+    num_deviation_bits: usize,
+    l_id: usize,
+    deviation_ranges: &[(usize, usize)],
+    id_bits_per_base: &[crate::BitStream],
 ) -> crate::BitStream {
-    let symbol_width = context.num_deviation_bits + context.l_id;
-    let num_rows = bit_data.num_rows();
+    let symbol_width = num_deviation_bits + l_id;
+    let num_rows = input.bit_data.num_rows();
     let mut symbol_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
 
-    for (row, id_ref) in context.row_to_group_id.iter().enumerate().take(num_rows) {
+    for (row, id_ref) in input.row_to_base_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;
-        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
+        let chunk = unsafe { input.bit_data.get_chunk_unchecked(row) };
 
-        for &(start, end) in &context.deviation_ranges {
+        for &(start, end) in deviation_ranges {
             symbol_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
         }
 
-        if context.l_id > 0 {
-            symbol_stream.extend_from_bitslice(context.id_bits_per_base[id].as_bitslice());
+        if l_id > 0 {
+            symbol_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
         }
     }
 
@@ -529,33 +520,41 @@ pub(super) fn build_compressed_data(
 }
 
 fn encode_data(input: &PreEncodeContext) -> DeviationData {
-    let context = build_encoding_context(input);
-    let encoded_bit_stream = encode_rows_as_symbol_stream(&input.bit_data, &context);
+    let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
+    let id_bits_per_base = build_id_bits_per_base(l_id, input.variable_base_table.len());
+    let encoded_bit_stream = encode_rows_as_symbol_stream(
+        input,
+        num_deviation_bits,
+        l_id,
+        &deviation_ranges,
+        &id_bits_per_base,
+    );
 
     DeviationData::new(
         encoded_bit_stream,
         input.bit_data.num_rows(),
-        context.num_deviation_bits,
-        context.l_id,
+        num_deviation_bits,
+        l_id,
     )
 }
 
 fn encode_data_rle(input: &PreEncodeContext) -> RleDeviationData {
-    let context = build_encoding_context(input);
-    let symbol_width = context.num_deviation_bits + context.l_id;
+    let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
+    let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
-    let raw_symbol_stream = encode_rows_as_symbol_stream(&input.bit_data, &context);
+    let id_bits_per_base = build_id_bits_per_base(l_id, input.variable_base_table.len());
+    let raw_symbol_stream = encode_rows_as_symbol_stream(
+        input,
+        num_deviation_bits,
+        l_id,
+        &deviation_ranges,
+        &id_bits_per_base,
+    );
     let mut symbol_stream = crate::BitStream::new();
     let mut rm_values: Vec<(u8, u8)> = Vec::new();
 
     if num_rows == 0 || symbol_width == 0 {
-        return RleDeviationData::new(
-            symbol_stream,
-            rm_values,
-            num_rows,
-            context.num_deviation_bits,
-            context.l_id,
-        );
+        return RleDeviationData::new(symbol_stream, rm_values, num_rows, num_deviation_bits, l_id);
     }
 
     let mut i = 0usize;
@@ -615,13 +614,7 @@ fn encode_data_rle(input: &PreEncodeContext) -> RleDeviationData {
         rm_values.push((r_encoded, literal_count as u8));
     }
 
-    RleDeviationData::new(
-        symbol_stream,
-        rm_values,
-        num_rows,
-        context.num_deviation_bits,
-        context.l_id,
-    )
+    RleDeviationData::new(symbol_stream, rm_values, num_rows, num_deviation_bits, l_id)
 }
 
 fn symbol_slice(

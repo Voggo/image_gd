@@ -3,8 +3,8 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use super::encoding_core::{
-    DeviationData, DeviationSample, DeviationSampleRef, EncodedData, EncodingContext,
-    HuffmanDeviationData, build_compressed_data, build_encoding_context, huffman_row_layout,
+    DeviationData, DeviationSample, DeviationSampleRef, EncodedData, HuffmanDeviationData,
+    build_compressed_data, derive_symbol_layout, huffman_row_layout,
 };
 
 use crate::compression::base_table::PreEncodeContext;
@@ -24,8 +24,7 @@ impl Filter for EncodeDataHuffman {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Encoding data into compressed format (Huffman)");
-        let context = build_encoding_context(&input);
-        let encoded = EncodedData::Huffman(encode_data_huffman(&input.bit_data, &context)?);
+        let encoded = EncodedData::Huffman(encode_data_huffman(&input.bit_data, &input)?);
         Ok(build_compressed_data(input, encoded))
     }
 }
@@ -39,18 +38,20 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer =
             ScopedTimer::info("Encoding data into compressed format (Huffman base-id only)");
-        let context = build_encoding_context(&input);
         let encoded =
-            EncodedData::Huffman(encode_data_huffman_base_id_only(&input.bit_data, &context)?);
+            EncodedData::Huffman(encode_data_huffman_base_id_only(&input.bit_data, &input)?);
         Ok(build_compressed_data(input, encoded))
     }
 }
 
 pub(super) fn encode_data_huffman(
     bit_data: &BitDataSet,
-    context: &EncodingContext,
+    input: &PreEncodeContext,
 ) -> Result<HuffmanDeviationData, EntroGdError> {
-    let frequencies = build_symbol_frequencies(bit_data, context)?;
+    let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
+
+    let frequencies =
+        build_symbol_frequencies(bit_data, input, &deviation_ranges, num_deviation_bits, l_id)?;
     let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
     let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
 
@@ -59,27 +60,22 @@ pub(super) fn encode_data_huffman(
     let mut pixel_bit_stream = crate::BitStream::new();
     let mut row_offsets = Vec::with_capacity(row_count);
 
-    for row_idx in 0..row_count {
-        row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
-            EntroGdError::InvalidMetadata {
-                message: "Huffman row offset does not fit into u32".to_string(),
-            }
-        })?);
-
-        let row_start = row_idx * row_width;
-        for sample_idx in row_start..row_start + row_width {
-            let symbol = symbol_for_row(bit_data, context, sample_idx)?;
-            let (code, code_len) = codes_by_symbol.get(&symbol).copied().ok_or_else(|| {
+    for sample_idx in 0..bit_data.num_rows() {
+        if sample_idx < original_num_samples && sample_idx % row_width == 0 {
+            row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
                 EntroGdError::InvalidMetadata {
-                    message: format!("missing Huffman code for symbol {}", symbol),
+                    message: "Huffman row offset does not fit into u32".to_string(),
                 }
-            })?;
-            append_code_bits(&mut pixel_bit_stream, code, code_len);
+            })?);
         }
-    }
-
-    for sample_idx in original_num_samples..bit_data.num_rows() {
-        let symbol = symbol_for_row(bit_data, context, sample_idx)?;
+        let symbol = symbol_for_row(
+            bit_data,
+            input,
+            &deviation_ranges,
+            num_deviation_bits,
+            l_id,
+            sample_idx,
+        )?;
         let (code, code_len) =
             codes_by_symbol
                 .get(&symbol)
@@ -97,16 +93,18 @@ pub(super) fn encode_data_huffman(
         row_offsets,
         bit_data.num_rows(),
         original_num_samples,
-        context.num_deviation_bits,
-        context.l_id,
+        num_deviation_bits,
+        l_id,
         row_width,
     )
 }
 
 pub(super) fn encode_data_huffman_base_id_only(
     bit_data: &BitDataSet,
-    context: &EncodingContext,
+    input: &PreEncodeContext,
 ) -> Result<HuffmanDeviationData, EntroGdError> {
+    let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
+
     let frequencies = build_base_id_frequencies(context);
     let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
     let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
@@ -115,42 +113,24 @@ pub(super) fn encode_data_huffman_base_id_only(
 
     let mut pixel_bit_stream = crate::BitStream::new();
     let mut raw_deviation_bit_stream =
-        crate::BitStream::with_capacity(bit_data.num_rows() * context.num_deviation_bits);
+        crate::BitStream::with_capacity(bit_data.num_rows() * num_deviation_bits);
     let mut row_offsets = Vec::with_capacity(row_count);
 
-    for row_idx in 0..row_count {
-        row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
-            EntroGdError::InvalidMetadata {
-                message: "Huffman row offset does not fit into u32".to_string(),
-            }
-        })?);
-
-        let row_start = row_idx * row_width;
-        for sample_idx in row_start..row_start + row_width {
-            let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
-            for &(start, end) in &context.deviation_ranges {
-                raw_deviation_bit_stream
-                    .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
-            }
-
-            let symbol = context.row_to_group_id[sample_idx] as u64;
-            let (code, code_len) = codes_by_symbol.get(&symbol).copied().ok_or_else(|| {
+    for sample_idx in 0..bit_data.num_rows() {
+        if sample_idx < original_num_samples && sample_idx % row_width == 0 {
+            row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
                 EntroGdError::InvalidMetadata {
-                    message: format!("missing Huffman code for base-id symbol {}", symbol),
+                    message: "Huffman row offset does not fit into u32".to_string(),
                 }
-            })?;
-            append_code_bits(&mut pixel_bit_stream, code, code_len);
+            })?);
         }
-    }
-
-    for sample_idx in original_num_samples..bit_data.num_rows() {
         let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
-        for &(start, end) in &context.deviation_ranges {
+        for &(start, end) in &deviation_ranges {
             raw_deviation_bit_stream
                 .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
         }
 
-        let symbol = context.row_to_group_id[sample_idx] as u64;
+        let symbol = input.row_to_base_id[sample_idx] as u64;
         let (code, code_len) =
             codes_by_symbol
                 .get(&symbol)
@@ -169,20 +149,30 @@ pub(super) fn encode_data_huffman_base_id_only(
         row_offsets,
         bit_data.num_rows(),
         original_num_samples,
-        context.num_deviation_bits,
-        context.l_id,
+        num_deviation_bits,
+        l_id,
         row_width,
     )
 }
 
 fn build_symbol_frequencies(
     bit_data: &BitDataSet,
-    context: &EncodingContext,
+    input: &PreEncodeContext,
+    deviation_ranges: &[(usize, usize)],
+    num_deviation_bits: usize,
+    l_id: usize,
 ) -> Result<FxHashMap<u64, usize>, EntroGdError> {
     let mut frequencies = FxHashMap::default();
 
     for row in 0..bit_data.num_rows() {
-        let symbol = symbol_for_row(bit_data, context, row)?;
+        let symbol = symbol_for_row(
+            bit_data,
+            input,
+            deviation_ranges,
+            num_deviation_bits,
+            l_id,
+            row,
+        )?;
         *frequencies.entry(symbol).or_insert(0) += 1;
     }
 
@@ -191,14 +181,14 @@ fn build_symbol_frequencies(
         .map(|(&symbol, &freq)| (symbol, freq))
         .collect();
     freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-    tracing::debug!(frequencies = ?freq_vec, "Built symbol frequencies for Huffman encoding");
+    tracing::debug!(frequencies = ?freq_vec[0..{if freq_vec.len() > 25 { 25 } else { freq_vec.len() }}], "Built symbol frequencies for Huffman encoding");
 
     Ok(frequencies)
 }
 
-fn build_base_id_frequencies(context: &EncodingContext) -> FxHashMap<u64, usize> {
+fn build_base_id_frequencies(input: &PreEncodeContext) -> FxHashMap<u64, usize> {
     let mut frequencies = FxHashMap::default();
-    for &base_id in &context.row_to_group_id {
+    for &base_id in &input.row_to_base_id {
         *frequencies.entry(base_id as u64).or_insert(0) += 1;
     }
 
@@ -207,17 +197,20 @@ fn build_base_id_frequencies(context: &EncodingContext) -> FxHashMap<u64, usize>
         .map(|(&symbol, &freq)| (symbol, freq))
         .collect();
     freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-    tracing::debug!(frequencies = ?freq_vec, "Built base-id symbol frequencies for Huffman encoding");
+    tracing::debug!(frequencies = ?freq_vec[0..{if freq_vec.len() > 25 { 25 } else { freq_vec.len() }}], "Built base-id symbol frequencies for Huffman encoding");
 
     frequencies
 }
 
 fn symbol_for_row(
     bit_data: &BitDataSet,
-    context: &EncodingContext,
+    input: &PreEncodeContext,
+    deviation_ranges: &[(usize, usize)],
+    num_deviation_bits: usize,
+    l_id: usize,
     row: usize,
 ) -> Result<u64, EntroGdError> {
-    let symbol_width = context.num_deviation_bits + context.l_id;
+    let symbol_width = num_deviation_bits + l_id;
     if symbol_width > 64 {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
@@ -229,14 +222,14 @@ fn symbol_for_row(
 
     let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
     let mut deviation = 0u64;
-    for &(start, end) in &context.deviation_ranges {
+    for &(start, end) in deviation_ranges {
         for bit in unsafe { chunk.get_unchecked(start..end) } {
             deviation = (deviation << 1) | (*bit as u64);
         }
     }
 
-    let id = context.row_to_group_id[row] as u64;
-    Ok((id << context.num_deviation_bits) | deviation)
+    let id = input.row_to_base_id[row] as u64;
+    Ok((id << num_deviation_bits) | deviation)
 }
 
 #[derive(Debug, Clone, Copy)]
