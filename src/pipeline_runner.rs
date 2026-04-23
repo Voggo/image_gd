@@ -812,10 +812,7 @@ fn encode_data(
                 EncodeImpl::Naive => EncodeData {}.process(base_table_ctx),
                 EncodeImpl::Optimized => EncodeDataOptimized {}.process(base_table_ctx),
                 EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
-                EncodeImpl::Huffman => EncodeDataHuffman {}.process(base_table_ctx),
-                EncodeImpl::HuffmanBaseIdOnly => {
-                    EncodeDataHuffmanBaseIdOnly {}.process(base_table_ctx)
-                }
+                EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffman {}.process(base_table_ctx),
                 EncodeImpl::FusedDictionary => unreachable!(),
             }?;
 

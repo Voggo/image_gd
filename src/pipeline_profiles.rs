@@ -29,7 +29,6 @@ pub enum EncodeImpl {
     Optimized,
     FusedDictionary,
     Rle,
-    Huffman,
     HuffmanBaseIdOnly,
 }
 
@@ -451,7 +450,7 @@ impl PipelineProfileSet {
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
                     delta_encode_base_table: false,
-                    encode_impl: EncodeImpl::Huffman,
+                    encode_impl: EncodeImpl::HuffmanBaseIdOnly,
                 },
             ],
         }
@@ -583,7 +582,7 @@ fn expand_csv_group(
     {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
-                "CSV group '{}' includes Huffman, which is currently disabled for CSV",
+                "CSV group '{}' uses legacy 'huffman'; use 'huffman_base_id_only'",
                 group.name
             ),
         });
@@ -679,7 +678,7 @@ fn expand_csv_group(
             use_condensed_samples: use_condensed_item,
             base_table_impl: base_table_item.clone().into(),
             delta_encode_base_table: delta_base_table_item,
-            encode_impl: encode_item.clone().into(),
+            encode_impl: convert_encode_impl(encode_item.clone())?,
         });
 
         Ok::<(), EntroGdError>(())
@@ -746,6 +745,18 @@ fn expand_image_group(
         .delta_encode_base_table
         .clone()
         .unwrap_or_else(|| vec![false]);
+
+    if encode_impl
+        .iter()
+        .any(|encoding| matches!(encoding, ConfigEncodeImpl::Huffman))
+    {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "image group '{}' uses legacy 'huffman'; use 'huffman_base_id_only'",
+                group.name
+            ),
+        });
+    }
 
     if pixel_grouping.contains(&0) {
         return Err(EntroGdError::InvalidMetadata {
@@ -822,7 +833,7 @@ fn expand_image_group(
             use_condensed_samples: use_condensed_item,
             base_table_impl: base_table_item.clone().into(),
             delta_encode_base_table: delta_base_table_item,
-            encode_impl: encode_item.clone().into(),
+            encode_impl: convert_encode_impl(encode_item.clone())?,
         });
 
         Ok::<(), EntroGdError>(())
@@ -974,15 +985,6 @@ impl_from_enum!(ConfigBaseBitImpl => BaseBitImpl {
     HyperLogLogCount => HyperLogLogCount,
 });
 
-impl_from_enum!(ConfigEncodeImpl => EncodeImpl {
-    Naive => Naive,
-    Optimized => Optimized,
-    FusedDictionary => FusedDictionary,
-    Rle => Rle,
-    Huffman => Huffman,
-    HuffmanBaseIdOnly => HuffmanBaseIdOnly,
-});
-
 impl_from_enum!(ConfigEntropyImpl => EntropyImpl {
     Naive => Naive,
     Batched => Batched,
@@ -1035,7 +1037,7 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
         if matches!(value.encode_impl, ConfigEncodeImpl::Huffman) {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
-                    "CSV profile '{}' uses Huffman, which is currently disabled for CSV",
+                    "CSV profile '{}' uses legacy 'huffman'; use 'huffman_base_id_only'",
                     value.name
                 ),
             });
@@ -1084,7 +1086,7 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
                 .unwrap_or(ConfigBaseTableImpl::Raw)
                 .into(),
             delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
-            encode_impl: value.encode_impl.into(),
+            encode_impl: convert_encode_impl(value.encode_impl)?,
         })
     }
 }
@@ -1093,6 +1095,15 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
     type Error = EntroGdError;
 
     fn try_from(value: ImagePipelineProfileConfig) -> Result<Self, Self::Error> {
+        if matches!(value.encode_impl, ConfigEncodeImpl::Huffman) {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "image profile '{}' uses legacy 'huffman'; use 'huffman_base_id_only'",
+                    value.name
+                ),
+            });
+        }
+
         if value.build.pixel_grouping == 0 {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
@@ -1128,7 +1139,21 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
                 .unwrap_or(ConfigBaseTableImpl::Raw)
                 .into(),
             delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
-            encode_impl: value.encode_impl.into(),
+            encode_impl: convert_encode_impl(value.encode_impl)?,
         })
+    }
+}
+
+fn convert_encode_impl(value: ConfigEncodeImpl) -> Result<EncodeImpl, EntroGdError> {
+    match value {
+        ConfigEncodeImpl::Naive => Ok(EncodeImpl::Naive),
+        ConfigEncodeImpl::Optimized => Ok(EncodeImpl::Optimized),
+        ConfigEncodeImpl::FusedDictionary => Ok(EncodeImpl::FusedDictionary),
+        ConfigEncodeImpl::Rle => Ok(EncodeImpl::Rle),
+        ConfigEncodeImpl::Huffman => Err(EntroGdError::InvalidMetadata {
+            message: "legacy 'huffman' is no longer supported; use 'huffman_base_id_only'"
+                .to_string(),
+        }),
+        ConfigEncodeImpl::HuffmanBaseIdOnly => Ok(EncodeImpl::HuffmanBaseIdOnly),
     }
 }

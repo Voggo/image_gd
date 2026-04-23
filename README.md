@@ -73,7 +73,7 @@ CSV explicit profile fields:
 - `m_max`: integer
 - `patience`: integer
 - `select_impl`: `naive` | `optimized_v1` | `optimized_v2` | `optimized_v3`
-- `encode_impl`: `naive` | `optimized` | `rle` | `huffman` (Huffman is rejected for CSV)
+- `encode_impl`: `naive` | `optimized` | `rle` | `huffman_base_id_only`
 
 Image explicit profile fields:
 - `name`: string
@@ -85,7 +85,7 @@ Image explicit profile fields:
 - `m_max`: integer
 - `patience`: integer
 - `select_impl`: `naive` | `optimized_v1` | `optimized_v2` | `optimized_v3`
-- `encode_impl`: `naive` | `optimized` | `rle` | `huffman`
+- `encode_impl`: `naive` | `optimized` | `rle` | `huffman_base_id_only`
 
 Sweep syntax:
 - Numeric sweep: `{"values": [1, 2, 4]}` or `{"range": {"start": 0, "end": 60, "step": 30}}`

@@ -88,7 +88,7 @@ fn test_image_roundtrip_compression() {
         base_bit_impl: BaseBitImpl::BatchGroups,
     })
     .then(BuildBaseTable {})
-    .then(EncodeDataHuffmanBaseIdOnly {});
+    .then(EncodeDataHuffman {});
 
     let compressed = compression_pipeline
         .process(input_path.clone())

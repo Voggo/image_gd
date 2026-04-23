@@ -3,7 +3,6 @@ use crate::error::EntroGdError;
 
 pub(super) const ENCODING_TAG_NORMAL: u8 = 0;
 pub(super) const ENCODING_TAG_RLE_RM_PACKED: u8 = 1;
-pub(super) const ENCODING_TAG_HUFFMAN_CANONICAL: u8 = 2;
 pub(super) const ENCODING_TAG_HUFFMAN_BASE_ID_ONLY: u8 = 3;
 pub(super) const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
 

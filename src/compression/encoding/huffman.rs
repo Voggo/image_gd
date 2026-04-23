@@ -23,89 +23,14 @@ impl Filter for EncodeDataHuffman {
     type Output = super::encoding_core::CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info("Encoding data into compressed format (Huffman)");
+        let _timer =
+            ScopedTimer::info("Encoding data into compressed format (Huffman base-id only)");
         let encoded = EncodedData::Huffman(encode_data_huffman(&input.bit_data, &input)?);
         Ok(build_compressed_data(input, encoded))
     }
 }
 
-pub struct EncodeDataHuffmanBaseIdOnly {}
-
-impl Filter for EncodeDataHuffmanBaseIdOnly {
-    type Input = PreEncodeContext;
-    type Output = super::encoding_core::CompressedData;
-
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer =
-            ScopedTimer::info("Encoding data into compressed format (Huffman base-id only)");
-        let encoded =
-            EncodedData::Huffman(encode_data_huffman_base_id_only(&input.bit_data, &input)?);
-        Ok(build_compressed_data(input, encoded))
-    }
-}
-
-// in general this is a bad idea since most of the structure is in the id's, the added noise will make it worse overall
-// also it does not support very long chunk sizes and it does not seem to be worth it to add it.
 pub(super) fn encode_data_huffman(
-    bit_data: &BitDataSet,
-    input: &PreEncodeContext,
-) -> Result<HuffmanDeviationData, EntroGdError> {
-    let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
-
-    let frequencies =
-        build_symbol_frequencies(bit_data, input, &deviation_ranges, num_deviation_bits, l_id)?
-            .iter()
-            .map(|(&symbol, &frequency)| SymbolFrequency { symbol, frequency })
-            .collect();
-
-    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(frequencies)?;
-    let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
-
-    let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
-
-    let mut pixel_bit_stream = crate::BitStream::new();
-    let mut row_offsets = Vec::with_capacity(row_count);
-
-    for sample_idx in 0..bit_data.num_rows() {
-        if sample_idx < original_num_samples && sample_idx % row_width == 0 {
-            row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
-                EntroGdError::InvalidMetadata {
-                    message: "Huffman row offset does not fit into u32".to_string(),
-                }
-            })?);
-        }
-        let symbol = symbol_for_row(
-            bit_data,
-            input,
-            &deviation_ranges,
-            num_deviation_bits,
-            l_id,
-            sample_idx,
-        )?;
-        let (code, code_len) =
-            codes_by_symbol
-                .get(&symbol)
-                .copied()
-                .ok_or_else(|| EntroGdError::InvalidMetadata {
-                    message: format!("missing Huffman code for symbol {}", symbol),
-                })?;
-        append_code_bits(&mut pixel_bit_stream, code, code_len);
-    }
-
-    HuffmanDeviationData::new(
-        pixel_bit_stream,
-        canonical_symbols,
-        canonical_code_lengths,
-        row_offsets,
-        bit_data.num_rows(),
-        original_num_samples,
-        num_deviation_bits,
-        l_id,
-        row_width,
-    )
-}
-
-pub(super) fn encode_data_huffman_base_id_only(
     bit_data: &BitDataSet,
     input: &PreEncodeContext,
 ) -> Result<HuffmanDeviationData, EntroGdError> {
@@ -158,7 +83,7 @@ pub(super) fn encode_data_huffman_base_id_only(
     }
     tracing::debug!(row_offeset_size = ?row_offsets.len(), "Encoded Huffman row offsets");
 
-    HuffmanDeviationData::new_base_id_only(
+    HuffmanDeviationData::new(
         pixel_bit_stream,
         raw_deviation_bit_stream,
         canonical_symbols,
@@ -172,70 +97,6 @@ pub(super) fn encode_data_huffman_base_id_only(
     )
 }
 
-fn build_symbol_frequencies(
-    bit_data: &BitDataSet,
-    input: &PreEncodeContext,
-    deviation_ranges: &[(usize, usize)],
-    num_deviation_bits: usize,
-    l_id: usize,
-) -> Result<FxHashMap<u64, usize>, EntroGdError> {
-    let mut frequencies = FxHashMap::default();
-
-    for row in 0..bit_data.num_rows() {
-        let symbol = symbol_for_row(
-            bit_data,
-            input,
-            deviation_ranges,
-            num_deviation_bits,
-            l_id,
-            row,
-        )?;
-        *frequencies.entry(symbol).or_insert(0) += 1;
-    }
-
-    // this part is only for debug logging, it does not affect the actual frequencies used for encoding
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        let mut freq_vec: Vec<(u64, usize)> = frequencies
-            .iter()
-            .map(|(&symbol, &freq)| (symbol, freq))
-            .collect();
-        freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-        tracing::debug!(frequencies = ?freq_vec[0..{if freq_vec.len() > 25 { 25 } else { freq_vec.len() }}], "Built symbol frequencies for Huffman encoding");
-    }
-
-    Ok(frequencies)
-}
-
-fn symbol_for_row(
-    bit_data: &BitDataSet,
-    input: &PreEncodeContext,
-    deviation_ranges: &[(usize, usize)],
-    num_deviation_bits: usize,
-    l_id: usize,
-    row: usize,
-) -> Result<u64, EntroGdError> {
-    let symbol_width = num_deviation_bits + l_id;
-    if symbol_width > 64 {
-        return Err(EntroGdError::InvalidMetadata {
-            message: format!(
-                "Huffman symbol width {} exceeds supported 64-bit range",
-                symbol_width
-            ),
-        });
-    }
-
-    let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
-    let mut deviation = 0u64;
-    for &(start, end) in deviation_ranges {
-        for bit in unsafe { chunk.get_unchecked(start..end) } {
-            deviation = (deviation << 1) | (*bit as u64);
-        }
-    }
-
-    let id = input.row_to_base_id[row] as u64;
-    Ok((id << num_deviation_bits) | deviation)
-}
-
 #[derive(Debug, Clone, Copy)]
 struct HuffmanCode {
     symbol: u64,
@@ -247,33 +108,6 @@ impl HuffmanDeviationData {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         pixel_bit_stream: crate::BitStream,
-        canonical_symbols: Vec<u64>,
-        canonical_code_lengths: Vec<u8>,
-        row_offsets: Vec<u32>,
-        num_samples: usize,
-        original_num_samples: usize,
-        num_deviation_bits: usize,
-        num_id_bits: usize,
-        row_width: usize,
-    ) -> Result<Self, EntroGdError> {
-        Self::new_internal(
-            pixel_bit_stream,
-            None,
-            canonical_symbols,
-            canonical_code_lengths,
-            row_offsets,
-            num_samples,
-            original_num_samples,
-            num_deviation_bits,
-            num_deviation_bits,
-            num_id_bits,
-            row_width,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_base_id_only(
-        pixel_bit_stream: crate::BitStream,
         raw_deviation_bit_stream: crate::BitStream,
         canonical_symbols: Vec<u64>,
         canonical_code_lengths: Vec<u8>,
@@ -281,35 +115,6 @@ impl HuffmanDeviationData {
         num_samples: usize,
         original_num_samples: usize,
         num_deviation_bits: usize,
-        num_id_bits: usize,
-        row_width: usize,
-    ) -> Result<Self, EntroGdError> {
-        Self::new_internal(
-            pixel_bit_stream,
-            Some(raw_deviation_bit_stream),
-            canonical_symbols,
-            canonical_code_lengths,
-            row_offsets,
-            num_samples,
-            original_num_samples,
-            num_deviation_bits,
-            0,
-            num_id_bits,
-            row_width,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn new_internal(
-        pixel_bit_stream: crate::BitStream,
-        raw_deviation_bit_stream: Option<crate::BitStream>,
-        canonical_symbols: Vec<u64>,
-        canonical_code_lengths: Vec<u8>,
-        row_offsets: Vec<u32>,
-        num_samples: usize,
-        original_num_samples: usize,
-        num_deviation_bits: usize,
-        huffman_symbol_num_deviation_bits: usize,
         num_id_bits: usize,
         row_width: usize,
     ) -> Result<Self, EntroGdError> {
@@ -353,20 +158,13 @@ impl HuffmanDeviationData {
             });
         }
 
-        let symbol_width = huffman_symbol_num_deviation_bits + num_id_bits;
+        let symbol_width = num_id_bits;
         if symbol_width > 64 {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
                     "Huffman symbol width {} exceeds supported 64-bit range",
                     symbol_width
                 ),
-            });
-        }
-
-        if huffman_symbol_num_deviation_bits > num_deviation_bits {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "Huffman symbol deviation width cannot exceed declared deviation width"
-                    .to_string(),
             });
         }
 
@@ -377,23 +175,14 @@ impl HuffmanDeviationData {
                 }
             })?;
 
-        if let Some(raw) = raw_deviation_bit_stream.as_ref() {
-            if raw.len() != expected_raw_deviation_len {
-                return Err(EntroGdError::InvalidMetadata {
-                    message: format!(
-                        "raw deviation stream length mismatch: expected {}, got {}",
-                        expected_raw_deviation_len,
-                        raw.len()
-                    ),
-                });
-            }
-            if huffman_symbol_num_deviation_bits != 0 {
-                return Err(EntroGdError::InvalidMetadata {
-                    message:
-                        "raw deviation stream can only be used with base-id-only Huffman symbols"
-                            .to_string(),
-                });
-            }
+        if raw_deviation_bit_stream.len() != expected_raw_deviation_len {
+            return Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "raw deviation stream length mismatch: expected {}, got {}",
+                    expected_raw_deviation_len,
+                    raw_deviation_bit_stream.len()
+                ),
+            });
         }
 
         let max_symbol = if symbol_width >= 64 {
@@ -465,7 +254,6 @@ impl HuffmanDeviationData {
             num_samples,
             original_num_samples,
             num_deviation_bits,
-            huffman_symbol_num_deviation_bits,
             num_id_bits,
             row_width,
             max_code_length,
@@ -495,12 +283,8 @@ impl HuffmanDeviationData {
         &self.pixel_bit_stream
     }
 
-    pub fn raw_deviation_bit_stream(&self) -> Option<&crate::BitStream> {
-        self.raw_deviation_bit_stream.as_ref()
-    }
-
-    pub fn huffman_symbol_num_deviation_bits(&self) -> usize {
-        self.huffman_symbol_num_deviation_bits
+    pub fn raw_deviation_bit_stream(&self) -> &crate::BitStream {
+        &self.raw_deviation_bit_stream
     }
 
     pub fn canonical_symbols(&self) -> &[u64] {
@@ -552,17 +336,15 @@ impl HuffmanDeviationData {
             bit_pos += decoded_len;
         }
 
-        let deviation = if let Some(raw_deviation) = &self.raw_deviation_bit_stream {
-            let start = sample_idx.checked_mul(self.num_deviation_bits)?;
-            let end = start.checked_add(self.num_deviation_bits)?;
-            debug_assert!(end <= raw_deviation.len());
-            unsafe { raw_deviation.get_unchecked(start..end) }.to_bitvec()
-        } else {
-            let deviation_mask = bit_mask(self.num_deviation_bits);
-            let deviation_value = symbol & deviation_mask;
-            bitvec_from_u64(deviation_value, self.num_deviation_bits)
+        let start = sample_idx.checked_mul(self.num_deviation_bits)?;
+        let end = start.checked_add(self.num_deviation_bits)?;
+        debug_assert!(end <= self.raw_deviation_bit_stream.len());
+        let deviation = unsafe {
+            self.raw_deviation_bit_stream
+                .get_unchecked(start..end)
+                .to_bitvec()
         };
-        let id_value = symbol >> self.huffman_symbol_num_deviation_bits;
+        let id_value = symbol;
 
         Some(DeviationSample {
             deviation,
@@ -583,17 +365,13 @@ impl HuffmanDeviationData {
     }
 
     pub fn get_encoded_size(&self) -> usize {
-        let symbol_width = self.huffman_symbol_num_deviation_bits + self.num_id_bits;
+        let symbol_width = self.num_id_bits;
         16 + 8
             + 8
             + 32
             + self.row_offsets.len() * 32
             + self.canonical_symbols.len() * (symbol_width + HUFFMAN_CODE_LENGTH_BITS)
-            + self
-                .raw_deviation_bit_stream
-                .as_ref()
-                .map(|raw| raw.len())
-                .unwrap_or(0)
+            + self.raw_deviation_bit_stream.len()
             + self.pixel_bit_stream.len()
     }
 
@@ -609,30 +387,20 @@ impl HuffmanDeviationData {
 
         let mut bit_pos = 0usize;
         let mut id_bits_buffer = crate::BitStream::with_capacity(self.num_id_bits);
-        let mut deviation_bits_buffer = crate::BitStream::with_capacity(self.num_deviation_bits);
 
         for sample_idx in 0..capped_limit {
             let (symbol, consumed_bits) = self.decode_one(bit_pos)?;
             bit_pos += consumed_bits;
 
-            let deviation_bits = if let Some(raw_deviation) = &self.raw_deviation_bit_stream {
-                let deviation_start = sample_idx * self.num_deviation_bits;
-                let deviation_end = deviation_start + self.num_deviation_bits;
-                unsafe { raw_deviation.get_unchecked(deviation_start..deviation_end) }
-            } else {
-                deviation_bits_buffer.clear();
-                let deviation_value = symbol & bit_mask(self.num_deviation_bits);
-                append_symbol_bits(
-                    &mut deviation_bits_buffer,
-                    deviation_value,
-                    self.num_deviation_bits,
-                );
-                deviation_bits_buffer.as_bitslice()
+            let deviation_start = sample_idx * self.num_deviation_bits;
+            let deviation_end = deviation_start + self.num_deviation_bits;
+            let deviation_bits = unsafe {
+                self.raw_deviation_bit_stream
+                    .get_unchecked(deviation_start..deviation_end)
             };
 
             id_bits_buffer.clear();
-            let id_value = symbol >> self.huffman_symbol_num_deviation_bits;
-            append_symbol_bits(&mut id_bits_buffer, id_value, self.num_id_bits);
+            append_symbol_bits(&mut id_bits_buffer, symbol, self.num_id_bits);
 
             f(DeviationSampleRef {
                 deviation: deviation_bits,
@@ -656,17 +424,13 @@ impl HuffmanDeviationData {
         for sample_idx in 0..self.num_samples {
             let (symbol, consumed_bits) = self.decode_one(bit_pos)?;
 
-            if let Some(raw_deviation) = &self.raw_deviation_bit_stream {
-                let deviation_start = sample_idx * self.num_deviation_bits;
-                let deviation_end = deviation_start + self.num_deviation_bits;
-                raw.extend_from_bitslice(&raw_deviation[deviation_start..deviation_end]);
-            } else {
-                let deviation_value = symbol & bit_mask(self.num_deviation_bits);
-                append_symbol_bits(&mut raw, deviation_value, self.num_deviation_bits);
-            }
+            let deviation_start = sample_idx * self.num_deviation_bits;
+            let deviation_end = deviation_start + self.num_deviation_bits;
+            raw.extend_from_bitslice(
+                &self.raw_deviation_bit_stream[deviation_start..deviation_end],
+            );
 
-            let id_value = symbol >> self.huffman_symbol_num_deviation_bits;
-            append_symbol_bits(&mut raw, id_value, self.num_id_bits);
+            append_symbol_bits(&mut raw, symbol, self.num_id_bits);
             bit_pos += consumed_bits;
         }
 
@@ -692,12 +456,7 @@ impl HuffmanDeviationData {
     }
 
     fn decode_one(&self, bit_pos: usize) -> Result<(u64, usize), EntroGdError> {
-        if self.max_code_length == 0 {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "attempted to decode from an empty Huffman table".to_string(),
-            });
-        }
-
+        debug_assert!(self.max_code_length != 0, "cannot decode from an empty Huffman code table");
         let mut code = 0u32;
         for len in 1..=self.max_code_length as usize {
             let next_bit_pos = bit_pos + len - 1;
@@ -785,16 +544,6 @@ fn build_huffman_code_map(
         }
     }
     Ok(codes_by_symbol)
-}
-
-fn bit_mask(width: usize) -> u64 {
-    if width == 0 {
-        0
-    } else if width >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << width) - 1
-    }
 }
 
 fn bitvec_from_u64(value: u64, width: usize) -> crate::BitStream {

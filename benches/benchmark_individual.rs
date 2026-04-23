@@ -233,7 +233,6 @@ enum EncodeImpl {
     Optimized,
     Rle,
     FusedDictionary,
-    Huffman,
     HuffmanBaseIdOnly,
 }
 
@@ -244,7 +243,6 @@ impl EncodeImpl {
             EncodeImpl::Optimized => "optimized",
             EncodeImpl::Rle => "rle",
             EncodeImpl::FusedDictionary => "fused_dictionary",
-            EncodeImpl::Huffman => "huffman",
             EncodeImpl::HuffmanBaseIdOnly => "huffman_base_id_only",
         }
     }
@@ -258,10 +256,7 @@ impl EncodeImpl {
                     EncodeImpl::Naive => EncodeData {}.process(base_table_ctx),
                     EncodeImpl::Optimized => EncodeDataOptimized {}.process(base_table_ctx),
                     EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
-                    EncodeImpl::Huffman => EncodeDataHuffman {}.process(base_table_ctx),
-                    EncodeImpl::HuffmanBaseIdOnly => {
-                        EncodeDataHuffmanBaseIdOnly {}.process(base_table_ctx)
-                    }
+                    EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffman {}.process(base_table_ctx),
                     EncodeImpl::FusedDictionary => unreachable!(),
                 }
             }
@@ -278,12 +273,8 @@ fn id_bits_needed(num_bases: usize) -> usize {
 }
 
 fn huffman_symbol_width(input: &BaseSelectionContext) -> usize {
-    let chunk_size = input.bit_data.chunk_size();
-    let base_bits = input.base_bits.get_num_bits_per_base();
     let num_bases = input.base_bits.get_num_bases();
-    let num_deviation_bits = chunk_size.saturating_sub(base_bits);
-    let num_id_bits = id_bits_needed(num_bases);
-    num_deviation_bits + num_id_bits
+    id_bits_needed(num_bases)
 }
 
 #[allow(unused)]
@@ -525,12 +516,11 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
     SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups),
     SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount),
 ];
-const ENCODE_IMPLS: [EncodeImpl; 6] = [
+const ENCODE_IMPLS: [EncodeImpl; 5] = [
     EncodeImpl::Naive,
     EncodeImpl::Optimized,
     EncodeImpl::Rle,
     EncodeImpl::FusedDictionary,
-    EncodeImpl::Huffman,
     EncodeImpl::HuffmanBaseIdOnly,
 ];
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
@@ -682,7 +672,7 @@ impl PreparedCase {
 
 fn encode_impl_supported(implementation: EncodeImpl, case: &PreparedCase) -> bool {
     match implementation {
-        EncodeImpl::Huffman | EncodeImpl::HuffmanBaseIdOnly => case.supports_huffman_encoding(),
+        EncodeImpl::HuffmanBaseIdOnly => case.supports_huffman_encoding(),
         _ => true,
     }
 }

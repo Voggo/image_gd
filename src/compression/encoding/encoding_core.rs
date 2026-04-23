@@ -70,14 +70,13 @@ pub struct RleDeviationData {
 #[derive(Debug, Clone)]
 pub struct HuffmanDeviationData {
     pub(super) pixel_bit_stream: crate::BitStream,
-    pub(super) raw_deviation_bit_stream: Option<crate::BitStream>,
+    pub(super) raw_deviation_bit_stream: crate::BitStream,
     pub(super) canonical_symbols: Vec<u64>,
     pub(super) canonical_code_lengths: Vec<u8>,
     pub(super) row_offsets: Vec<u32>,
     pub(super) num_samples: usize,
     pub(super) original_num_samples: usize,
     pub(super) num_deviation_bits: usize,
-    pub(super) huffman_symbol_num_deviation_bits: usize,
     pub(super) num_id_bits: usize,
     pub(super) row_width: usize,
     pub(super) max_code_length: u8,
