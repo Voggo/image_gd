@@ -1,4 +1,3 @@
-use fxhash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -72,13 +71,16 @@ pub(super) fn encode_data_huffman(
         }
 
         let symbol = input.row_to_base_id[sample_idx] as u64;
-        let (code, code_len) =
-            codes_by_symbol
-                .get(&symbol)
-                .copied()
-                .ok_or_else(|| EntroGdError::InvalidMetadata {
-                    message: format!("missing Huffman code for base-id symbol {}", symbol),
-                })?;
+        let idx = symbol as usize;
+        let entry = codes_by_symbol
+            .get(idx)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: format!("Huffman symbol {} exceeds symbol table bounds", symbol),
+            })?;
+        let (code, code_len) = entry
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: format!("missing Huffman code for base-id symbol {}", symbol),
+            })?;
         append_code_bits(&mut pixel_bit_stream, code, code_len);
     }
     tracing::debug!(row_offeset_size = ?row_offsets.len(), "Encoded Huffman row offsets");
@@ -203,19 +205,34 @@ impl HuffmanDeviationData {
 
         let codes = rebuild_huffman_codes(&canonical_symbols, &canonical_code_lengths)?;
         let max_code_length = codes.iter().map(|code| code.len).max().unwrap_or(0);
-        let mut decode_by_length = vec![FxHashMap::default(); max_code_length as usize + 1];
+
+        let mut min_code_by_len = vec![u32::MAX; max_code_length as usize + 1];
+        let mut max_code_by_len = vec![0u32; max_code_length as usize + 1];
+        let mut first_symbol_index_by_len = vec![usize::MAX; max_code_length as usize + 1];
+        let mut canonical_symbols_by_len: Vec<Vec<u64>> = vec![Vec::new(); max_code_length as usize + 1];
 
         for code in &codes {
-            if decode_by_length[code.len as usize]
-                .insert(code.code, code.symbol)
-                .is_some()
-            {
-                return Err(EntroGdError::InvalidMetadata {
-                    message: format!(
-                        "duplicate Huffman code {} with length {}",
-                        code.code, code.len
-                    ),
-                });
+            canonical_symbols_by_len[code.len as usize].push(code.symbol);
+        }
+
+        let mut current_index = 0usize;
+        let mut symbols_in_order: Vec<u64> = Vec::with_capacity(canonical_symbols.len());
+        for len in 1..=max_code_length as usize {
+            symbols_in_order.extend(canonical_symbols_by_len[len].clone());
+            if !canonical_symbols_by_len[len].is_empty() {
+                let codes_at_len: Vec<u32> = codes.iter()
+                    .filter(|c| c.len as usize == len)
+                    .map(|c| c.code)
+                    .collect();
+
+                if let Some(&first_code) = codes_at_len.first() {
+                    min_code_by_len[len] = first_code;
+                }
+                if let Some(&last_code) = codes_at_len.last() {
+                    max_code_by_len[len] = last_code;
+                }
+                first_symbol_index_by_len[len] = current_index;
+                current_index += canonical_symbols_by_len[len].len();
             }
         }
 
@@ -257,7 +274,10 @@ impl HuffmanDeviationData {
             num_id_bits,
             row_width,
             max_code_length,
-            decode_by_length,
+            min_code_by_len,
+            max_code_by_len,
+            first_symbol_index_by_len,
+            decode_symbols: symbols_in_order,
             original_stream_end_offset_bits: 0,
         };
 
@@ -456,7 +476,10 @@ impl HuffmanDeviationData {
     }
 
     fn decode_one(&self, bit_pos: usize) -> Result<(u64, usize), EntroGdError> {
-        debug_assert!(self.max_code_length != 0, "cannot decode from an empty Huffman code table");
+        debug_assert!(
+            self.max_code_length != 0,
+            "cannot decode from an empty Huffman code table"
+        );
         let mut code = 0u32;
         for len in 1..=self.max_code_length as usize {
             let next_bit_pos = bit_pos + len - 1;
@@ -468,8 +491,14 @@ impl HuffmanDeviationData {
 
             code = (code << 1)
                 | u32::from(unsafe { *self.pixel_bit_stream.get_unchecked(next_bit_pos) });
-            if let Some(symbol) = self.decode_by_length[len].get(&code) {
-                return Ok((*symbol, len));
+
+            let min_code = self.min_code_by_len[len];
+            let max_code = self.max_code_by_len[len];
+            if min_code != u32::MAX && code >= min_code && code <= max_code {
+                let symbol_index = self.first_symbol_index_by_len[len] + (code - min_code) as usize;
+                if let Some(&symbol) = self.decode_symbols.get(symbol_index) {
+                    return Ok((symbol, len));
+                }
             }
         }
 
@@ -531,17 +560,19 @@ fn rebuild_huffman_codes(
 fn build_huffman_code_map(
     canonical_symbols: &[u64],
     canonical_code_lengths: &[u8],
-) -> Result<FxHashMap<u64, (u32, u8)>, EntroGdError> {
-    let mut codes_by_symbol = FxHashMap::default();
-    for code in rebuild_huffman_codes(canonical_symbols, canonical_code_lengths)? {
-        if codes_by_symbol
-            .insert(code.symbol, (code.code, code.len))
-            .is_some()
-        {
+) -> Result<Vec<Option<(u32, u8)>>, EntroGdError> {
+    let codes = rebuild_huffman_codes(canonical_symbols, canonical_code_lengths)?;
+    let max_symbol = canonical_symbols.iter().copied().max().unwrap_or(0) as usize;
+    let mut codes_by_symbol = vec![None; max_symbol + 1];
+
+    for code in codes {
+        let idx = code.symbol as usize;
+        if codes_by_symbol[idx].is_some() {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!("duplicate Huffman symbol {}", code.symbol),
             });
         }
+        codes_by_symbol[idx] = Some((code.code, code.len));
     }
     Ok(codes_by_symbol)
 }
