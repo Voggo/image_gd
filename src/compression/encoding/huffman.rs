@@ -44,6 +44,8 @@ impl Filter for EncodeDataHuffmanBaseIdOnly {
     }
 }
 
+// in general this is a bad idea since most of the structure is in the id's, the added noise will make it worse overall
+// also it does not support very long chunk sizes and it does not seem to be worth it to add it.
 pub(super) fn encode_data_huffman(
     bit_data: &BitDataSet,
     input: &PreEncodeContext,
@@ -51,8 +53,12 @@ pub(super) fn encode_data_huffman(
     let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
 
     let frequencies =
-        build_symbol_frequencies(bit_data, input, &deviation_ranges, num_deviation_bits, l_id)?;
-    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
+        build_symbol_frequencies(bit_data, input, &deviation_ranges, num_deviation_bits, l_id)?
+            .iter()
+            .map(|(&symbol, &frequency)| SymbolFrequency { symbol, frequency })
+            .collect();
+
+    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(frequencies)?;
     let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
@@ -104,13 +110,16 @@ pub(super) fn encode_data_huffman_base_id_only(
     input: &PreEncodeContext,
 ) -> Result<HuffmanDeviationData, EntroGdError> {
     let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
-    let frequencies = input
+    let frequencies: Vec<SymbolFrequency> = input
         .variable_base_table
         .iter()
         .enumerate()
-        .map(|(id, (_base, count))| (id as u64, *count))
+        .map(|(id, (_base, count))| SymbolFrequency {
+            symbol: id as u64,
+            frequency: *count,
+        })
         .collect();
-    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(&frequencies)?;
+    let (canonical_symbols, canonical_code_lengths) = build_canonical_huffman_table(frequencies)?;
     let codes_by_symbol = build_huffman_code_map(&canonical_symbols, &canonical_code_lengths)?;
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
@@ -801,33 +810,28 @@ fn append_symbol_bits(out: &mut crate::BitStream, value: u64, width: usize) {
 }
 
 fn build_canonical_huffman_table(
-    frequencies: &FxHashMap<u64, usize>,
+    mut symbol_frequencies: Vec<SymbolFrequency>,
 ) -> Result<(Vec<u64>, Vec<u8>), EntroGdError> {
-    if frequencies.is_empty() {
+    if symbol_frequencies.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-    if frequencies.len() > u32::MAX as usize {
+    if symbol_frequencies.len() > u32::MAX as usize {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
                 "Huffman symbol table has {} entries, exceeding u32::MAX",
-                frequencies.len()
+                symbol_frequencies.len()
             ),
         });
     }
+    symbol_frequencies.sort_unstable_by(|a, b| a.symbol.cmp(&b.symbol));
 
-    let mut symbols: Vec<SymbolFrequency> = frequencies
-        .iter()
-        .map(|(&symbol, &frequency)| SymbolFrequency { symbol, frequency })
-        .collect();
-    symbols.sort_unstable_by(|a, b| a.symbol.cmp(&b.symbol));
-
-    if symbols.len() == 1 {
-        return Ok((vec![symbols[0].symbol], vec![1]));
+    if symbol_frequencies.len() == 1 {
+        return Ok((vec![symbol_frequencies[0].symbol], vec![1]));
     }
 
-    let raw_lengths = build_huffman_code_lengths(&symbols)?;
+    let raw_lengths = build_huffman_code_lengths(&symbol_frequencies)?;
 
-    let mut canonical_entries: Vec<(u64, u8)> = symbols
+    let mut canonical_entries: Vec<(u64, u8)> = symbol_frequencies
         .iter()
         .zip(raw_lengths.iter())
         .map(|(symbol, &len)| (symbol.symbol, len as u8))
