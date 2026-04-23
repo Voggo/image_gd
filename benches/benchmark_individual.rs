@@ -636,6 +636,18 @@ fn infer_feature_specs_seed(dataset: &Dataset) -> Vec<FeatureSpec> {
     .1
 }
 
+struct CompressedDataWrapper {
+    normal: CompressedData,
+    rle: CompressedData,
+    huffman_base_id_only: CompressedData,
+}
+
+struct CompressedRowsWrapper {
+    normal: (Arc<CompressedData>, Vec<usize>),
+    rle: (Arc<CompressedData>, Vec<usize>),
+    huffman_base_id_only: (Arc<CompressedData>, Vec<usize>),
+}
+
 struct PreparedCase {
     name: String,
     data_file_path: &'static str,
@@ -649,11 +661,11 @@ struct PreparedCase {
     entropy_seed: EntropyScoredContext,
     condensed_seed: EntropyScoredContext,
     huffman_symbol_width_seed: usize,
-    compressed_seed: CompressedData,
-    loaded_compressed_seed: CompressedData,
+    compressed_seeds: CompressedDataWrapper,
+    loaded_compressed_seeds: CompressedDataWrapper,
     egd_path: PathBuf,
     igd_path: Option<PathBuf>,
-    rows_input_seed: (Arc<CompressedData>, Vec<usize>),
+    rows_input_seeds: CompressedRowsWrapper,
 }
 
 impl PreparedCase {
@@ -698,7 +710,20 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     .unwrap();
     let huffman_symbol_width_seed = huffman_symbol_width(&selected_seed);
     let base_table_ctx_seed = BuildBaseTable {}.process(selected_seed).unwrap();
-    let compressed_seed = EncodeDataOptimized {}.process(base_table_ctx_seed).unwrap();
+    let compressed_seed = EncodeDataOptimized {}
+        .process(base_table_ctx_seed.clone())
+        .unwrap();
+    let compressed_seed_rle = EncodeDataRLE {}
+        .process(base_table_ctx_seed.clone())
+        .unwrap();
+    let compressed_seed_huffman = EncodeDataHuffman {}
+        .process(base_table_ctx_seed.clone())
+        .unwrap();
+    let compressed_seeds = CompressedDataWrapper {
+        normal: compressed_seed.clone(),
+        rle: compressed_seed_rle.clone(),
+        huffman_base_id_only: compressed_seed_huffman.clone(),
+    };
 
     let egd_path = output_egd_path(case);
     let _saved_once = SaveEgdFile {
@@ -707,7 +732,23 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     .process(compressed_seed.clone())
     .unwrap();
     let loaded_compressed_seed = LoadEgdFile {}.process(egd_path.clone()).unwrap();
-
+    let _saved_once = SaveEgdFile {
+        output_path: egd_path.clone(),
+    }
+    .process(compressed_seed_rle.clone())
+    .unwrap();
+    let loaded_compressed_seed_rle = LoadEgdFile {}.process(egd_path.clone()).unwrap();
+    let _saved_once = SaveEgdFile {
+        output_path: egd_path.clone(),
+    }
+    .process(compressed_seed_huffman.clone())
+    .unwrap();
+    let loaded_compressed_seed_huffman = LoadEgdFile {}.process(egd_path.clone()).unwrap();
+    let loaded_compressed_seeds = CompressedDataWrapper {
+        normal: loaded_compressed_seed.clone(),
+        rle: loaded_compressed_seed_rle.clone(),
+        huffman_base_id_only: loaded_compressed_seed_huffman.clone(),
+    };
     let igd_path = match case.input {
         StepBenchInput::Image { .. } => {
             let path = output_igd_path(case);
@@ -722,7 +763,20 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     };
 
     let rows_seed = (0..bit_data_seed.data.num_rows).collect::<Vec<usize>>();
-    let rows_input_seed = (Arc::new(loaded_compressed_seed.clone()), rows_seed);
+    let rows_input_seed = (Arc::new(loaded_compressed_seed.clone()), rows_seed.clone());
+    let rows_input_rle_seed = (
+        Arc::new(loaded_compressed_seed_rle.clone()),
+        rows_seed.clone(),
+    );
+    let rows_input_huffman_seed = (
+        Arc::new(loaded_compressed_seed_huffman.clone()),
+        rows_seed.clone(),
+    );
+    let rows_input_seeds = CompressedRowsWrapper {
+        normal: rows_input_seed,
+        rle: rows_input_rle_seed,
+        huffman_base_id_only: rows_input_huffman_seed,
+    };
 
     PreparedCase {
         name: case_label(case),
@@ -737,11 +791,11 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
         entropy_seed,
         condensed_seed,
         huffman_symbol_width_seed,
-        compressed_seed,
-        loaded_compressed_seed,
+        compressed_seeds,
+        loaded_compressed_seeds,
         egd_path,
         igd_path,
-        rows_input_seed,
+        rows_input_seeds,
     }
 }
 
@@ -907,11 +961,35 @@ fn benchmark_filter_steps(c: &mut Criterion) {
 
     bench_step_group(
         c,
-        "Step/SaveEgdFile.process",
+        "Step/SaveEgdFileNormalEncode.process",
         &prepared_cases,
         &SAVE_IMPLS,
         SaveImpl::label,
-        |case| case.compressed_seed.clone(),
+        |case| case.compressed_seeds.normal.clone(),
+        |implementation, input, case| implementation.process(input, case.egd_path.clone()),
+        |_| true,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/SaveEgdFileRleEncode.process",
+        &prepared_cases,
+        &SAVE_IMPLS,
+        SaveImpl::label,
+        |case| case.compressed_seeds.rle.clone(),
+        |implementation, input, case| implementation.process(input, case.egd_path.clone()),
+        |_| true,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/SaveEgdFileHuffmanBaseIdOnlyEncode.process",
+        &prepared_cases,
+        &SAVE_IMPLS,
+        SaveImpl::label,
+        |case| case.compressed_seeds.huffman_base_id_only.clone(),
         |implementation, input, case| implementation.process(input, case.egd_path.clone()),
         |_| true,
         |_, _| true,
@@ -931,11 +1009,48 @@ fn benchmark_filter_steps(c: &mut Criterion) {
 
     bench_step_group(
         c,
-        "Step/SaveIgdFile.process",
+        "Step/SaveIgdFileNormalEncode.process",
         &prepared_cases,
         &SAVE_IGD_IMPLS,
         SaveIgdImpl::label,
-        |case| case.compressed_seed.clone(),
+        |case| case.compressed_seeds.normal.clone(),
+        |implementation, input, case| {
+            implementation.process(
+                input,
+                case.igd_path
+                    .clone()
+                    .expect("igd path should be available for image cases"),
+            )
+        },
+        PreparedCase::is_image,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/SaveIgdFileRleEncode.process",
+        &prepared_cases,
+        &SAVE_IGD_IMPLS,
+        SaveIgdImpl::label,
+        |case| case.compressed_seeds.rle.clone(),
+        |implementation, input, case| {
+            implementation.process(
+                input,
+                case.igd_path
+                    .clone()
+                    .expect("igd path should be available for image cases"),
+            )
+        },
+        PreparedCase::is_image,
+        |_, _| true,
+    );
+    bench_step_group(
+        c,
+        "Step/SaveIgdFileHuffmanBaseIdOnlyEncode.process",
+        &prepared_cases,
+        &SAVE_IGD_IMPLS,
+        SaveIgdImpl::label,
+        |case| case.compressed_seeds.huffman_base_id_only.clone(),
         |implementation, input, case| {
             implementation.process(
                 input,
@@ -964,16 +1079,17 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         |_, _| true,
     );
 
+    // Needs refactoring perhaps...
     bench_step_group(
         c,
-        "Step/DecompressRowsData.process",
+        "Step/DecompressRowsDataNormalEncode.process",
         &prepared_cases,
         &DECOMPRESS_ROWS_IMPLS,
         DecompressRowsImpl::label,
         |case| {
             (
-                case.rows_input_seed.0.clone(),
-                case.rows_input_seed.1.clone(),
+                case.rows_input_seeds.normal.0.clone(),
+                case.rows_input_seeds.normal.1.clone(),
             )
         },
         |implementation, input, _case| implementation.process(input),
@@ -983,11 +1099,67 @@ fn benchmark_filter_steps(c: &mut Criterion) {
 
     bench_step_group(
         c,
-        "Step/DecompressFileData.process",
+        "Step/DecompressRowsDataRleEncode.process",
+        &prepared_cases,
+        &DECOMPRESS_ROWS_IMPLS,
+        DecompressRowsImpl::label,
+        |case| {
+            (
+                case.rows_input_seeds.rle.0.clone(),
+                case.rows_input_seeds.rle.1.clone(),
+            )
+        },
+        |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/DecompressRowsDataHuffmanBaseIdOnlyEncode.process",
+        &prepared_cases,
+        &DECOMPRESS_ROWS_IMPLS,
+        DecompressRowsImpl::label,
+        |case| {
+            (
+                case.rows_input_seeds.huffman_base_id_only.0.clone(),
+                case.rows_input_seeds.huffman_base_id_only.1.clone(),
+            )
+        },
+        |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
+    );
+
+    bench_step_group(
+        c,
+        "Step/DecompressFileDataNormalEncode.process",
         &prepared_cases,
         &DECOMPRESS_FILE_IMPLS,
         DecompressFileImpl::label,
-        |case| case.loaded_compressed_seed.clone(),
+        |case| case.loaded_compressed_seeds.normal.clone(),
+        |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
+    );
+    bench_step_group(
+        c,
+        "Step/DecompressFileDataRleEncode.process",
+        &prepared_cases,
+        &DECOMPRESS_FILE_IMPLS,
+        DecompressFileImpl::label,
+        |case| case.loaded_compressed_seeds.rle.clone(),
+        |implementation, input, _case| implementation.process(input),
+        |_| true,
+        |_, _| true,
+    );
+    bench_step_group(
+        c,
+        "Step/DecompressFileDataHuffmanBaseIdOnlyEncode.process",
+        &prepared_cases,
+        &DECOMPRESS_FILE_IMPLS,
+        DecompressFileImpl::label,
+        |case| case.loaded_compressed_seeds.huffman_base_id_only.clone(),
         |implementation, input, _case| implementation.process(input),
         |_| true,
         |_, _| true,
@@ -999,7 +1171,7 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         &prepared_cases,
         &DECOMPRESS_ANALYTICS_IMPLS,
         DecompressAnalyticsImpl::label,
-        |case| case.compressed_seed.clone(),
+        |case| case.compressed_seeds.normal.clone(),
         |implementation, input, _case| implementation.process(input),
         |_| true,
         |_, _| true,
