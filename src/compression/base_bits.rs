@@ -1,6 +1,7 @@
 use crate::compression::preprocessor::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
+use rayon::prelude::*;
 
 use fxhash::{FxHashMap, FxHashSet};
 use once_cell::unsync::OnceCell;
@@ -64,6 +65,47 @@ fn initial_groups(num_rows: usize, step: usize) -> Vec<Vec<usize>> {
 
 fn count_non_empty_groups(groups: &[Vec<usize>]) -> usize {
     groups.iter().filter(|group| !group.is_empty()).count()
+}
+
+fn split_group_by_bit(
+    bit_data: &BitDataSet,
+    bit_position: usize,
+    group: &mut Vec<usize>,
+) -> Option<Vec<usize>> {
+    if group.len() <= 1 {
+        return None;
+    }
+
+    let mut group_ones = Vec::with_capacity(group.len() / 2 + 1);
+    group.retain(|&row| {
+        if unsafe { bit_data.get_bit_unchecked(row, bit_position) } {
+            group_ones.push(row);
+            false
+        } else {
+            true
+        }
+    });
+
+    if group.is_empty() {
+        *group = group_ones;
+        None
+    } else if group_ones.is_empty() {
+        None
+    } else {
+        Some(group_ones)
+    }
+}
+
+fn should_split_groups_in_parallel(groups: &[Vec<usize>]) -> bool {
+    const MIN_GROUPS_FOR_PARALLEL: usize = 16;
+    const MIN_TOTAL_ROWS_FOR_PARALLEL: usize = 1_024;
+
+    if groups.len() < MIN_GROUPS_FOR_PARALLEL {
+        return false;
+    }
+
+    let total_rows: usize = groups.iter().map(Vec::len).sum();
+    total_rows >= MIN_TOTAL_ROWS_FOR_PARALLEL
 }
 
 fn collect_new_bit_positions(
@@ -269,33 +311,27 @@ impl BaseBitGroups {
         self.num_bits_per_base += 1;
         self.base_bit_positions.push(bit_position);
 
-        // Collect split-off groups and append after iteration.
-        // This avoids repeated growth/reallocation of `self.groups` while iterating.
+        // Small workloads are faster sequentially than paying rayon scheduling overhead.
         let mut new_groups = Vec::new();
-
-        for group in &mut self.groups {
-            if group.len() <= 1 {
-                continue;
-            }
-
-            // Keep zero-bit rows in place; move one-bit rows into a side vector.
-            // This avoids allocating a second vector for zeros.
-            let mut group_ones = Vec::with_capacity(group.len() / 2 + 1);
-            group.retain(|&row| {
-                if unsafe { bit_data.get_bit_unchecked(row, bit_position) } {
-                    group_ones.push(row);
-                    false
-                } else {
-                    true
+        if should_split_groups_in_parallel(&self.groups) {
+            new_groups = self
+                .groups
+                .par_iter_mut()
+                .fold(Vec::new, |mut local_new_groups, group| {
+                    if let Some(group_ones) = split_group_by_bit(bit_data, bit_position, group) {
+                        local_new_groups.push(group_ones);
+                    }
+                    local_new_groups
+                })
+                .reduce(Vec::new, |mut left, right| {
+                    left.extend(right);
+                    left
+                });
+        } else {
+            for group in &mut self.groups {
+                if let Some(group_ones) = split_group_by_bit(bit_data, bit_position, group) {
+                    new_groups.push(group_ones);
                 }
-            });
-
-            if group.is_empty() {
-                // All rows had bit=1.
-                *group = group_ones;
-            } else if !group_ones.is_empty() {
-                // Mixed group: keep zeros in place and append ones as a new group.
-                new_groups.push(group_ones);
             }
         }
 
