@@ -108,6 +108,106 @@ fn should_split_groups_in_parallel(groups: &[Vec<usize>]) -> bool {
     total_rows >= MIN_TOTAL_ROWS_FOR_PARALLEL
 }
 
+fn split_group_by_bits(
+    bit_data: &BitDataSet,
+    bit_chunk: &[usize],
+    group: &[usize],
+) -> Vec<Vec<usize>> {
+    if group.len() <= 1 {
+        return vec![group.to_vec()];
+    }
+
+    let bucket_count = 1usize << bit_chunk.len();
+    let mut buckets: Vec<Vec<usize>> = (0..bucket_count).map(|_| Vec::new()).collect();
+
+    for &row in group {
+        let mut bucket_id = 0usize;
+        for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
+            bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) } as usize)
+                << bit_idx;
+        }
+        buckets[bucket_id].push(row);
+    }
+
+    buckets.into_iter().filter(|bucket| !bucket.is_empty()).collect()
+}
+
+fn split_groups_by_bits_sequential(
+    bit_data: &BitDataSet,
+    bit_chunk: &[usize],
+    groups: &[Vec<usize>],
+) -> Vec<Vec<usize>> {
+    let bucket_count = 1usize << bit_chunk.len();
+    let mut counts = [0usize; 1usize << 8];
+    let mut offsets = [0usize; 1usize << 8];
+    let mut write_positions = [0usize; 1usize << 8];
+    let mut scratch_rows: Vec<usize> = Vec::new();
+    let mut scratch_bucket_ids: Vec<usize> = Vec::new();
+    let mut next_groups: Vec<Vec<usize>> = Vec::with_capacity(groups.len() * bucket_count);
+
+    for group in groups {
+        if group.is_empty() {
+            continue;
+        }
+
+        if group.len() <= 1 {
+            next_groups.push(group.clone());
+            continue;
+        }
+
+        counts[..bucket_count].fill(0);
+
+        if scratch_bucket_ids.len() < group.len() {
+            scratch_bucket_ids.resize(group.len(), 0);
+        }
+        let bucket_ids = &mut scratch_bucket_ids[..group.len()];
+
+        for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
+            let mut bucket_id = 0usize;
+            for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
+                bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) } as usize)
+                    << bit_idx;
+            }
+            *bucket_id_slot = bucket_id;
+            unsafe {
+                *counts.get_unchecked_mut(bucket_id) += 1;
+            }
+        }
+
+        let mut running = 0usize;
+        for bucket_id in 0..bucket_count {
+            offsets[bucket_id] = running;
+            running += counts[bucket_id];
+        }
+
+        if scratch_rows.len() < group.len() {
+            scratch_rows.resize(group.len(), 0);
+        }
+
+        write_positions[..bucket_count].copy_from_slice(&offsets[..bucket_count]);
+
+        for (&row, &bucket_id) in group.iter().zip(bucket_ids.iter()) {
+            let write_idx = unsafe { *write_positions.get_unchecked(bucket_id) };
+            scratch_rows[write_idx] = row;
+            unsafe {
+                *write_positions.get_unchecked_mut(bucket_id) = write_idx + 1;
+            }
+        }
+
+        for bucket_id in 0..bucket_count {
+            let count = counts[bucket_id];
+            if count == 0 {
+                continue;
+            }
+            let start = offsets[bucket_id];
+            let end = start + count;
+            next_groups.push(scratch_rows[start..end].to_vec());
+        }
+    }
+
+    next_groups
+}
+
 fn collect_new_bit_positions(
     base_bit_mask: &crate::BitView,
     bit_positions: &[usize],
@@ -473,77 +573,18 @@ impl BaseBitBatchGroups {
         }
 
         const BIT_LIMIT: usize = 8;
-        const MAX_BUCKETS: usize = 1usize << BIT_LIMIT;
-        let mut counts = [0usize; MAX_BUCKETS];
-        let mut offsets = [0usize; MAX_BUCKETS];
-        let mut write_positions = [0usize; MAX_BUCKETS];
-        let mut scratch_rows: Vec<usize> = Vec::new();
-        let mut scratch_bucket_ids: Vec<usize> = Vec::new();
 
         for bit_chunk in new_bit_positions.chunks(BIT_LIMIT) {
-            let bucket_count = 1usize << bit_chunk.len();
-            let mut next_groups: Vec<Vec<usize>> = Vec::with_capacity(self.groups.len());
-
-            for group in &self.groups {
-                if group.is_empty() {
-                    continue;
-                }
-
-                if group.len() <= 1 {
-                    next_groups.push(group.clone());
-                    continue;
-                }
-
-                counts[..bucket_count].fill(0);
-
-                if scratch_bucket_ids.len() < group.len() {
-                    scratch_bucket_ids.resize(group.len(), 0);
-                }
-                let bucket_ids = &mut scratch_bucket_ids[..group.len()];
-
-                for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
-                    let mut bucket_id = 0usize;
-                    for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
-                        bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) }
-                            as usize)
-                            << bit_idx;
-                    }
-                    *bucket_id_slot = bucket_id;
-                    unsafe {
-                        *counts.get_unchecked_mut(bucket_id) += 1;
-                    }
-                }
-
-                let mut running = 0usize;
-                for bucket_id in 0..bucket_count {
-                    offsets[bucket_id] = running;
-                    running += counts[bucket_id];
-                }
-
-                if scratch_rows.len() < group.len() {
-                    scratch_rows.resize(group.len(), 0);
-                }
-
-                write_positions[..bucket_count].copy_from_slice(&offsets[..bucket_count]);
-
-                for (&row, &bucket_id) in group.iter().zip(bucket_ids.iter()) {
-                    let write_idx = unsafe { *write_positions.get_unchecked(bucket_id) };
-                    scratch_rows[write_idx] = row;
-                    unsafe {
-                        *write_positions.get_unchecked_mut(bucket_id) = write_idx + 1;
-                    }
-                }
-
-                for bucket_id in 0..bucket_count {
-                    let count = counts[bucket_id];
-                    if count == 0 {
-                        continue;
-                    }
-                    let start = offsets[bucket_id];
-                    let end = start + count;
-                    next_groups.push(scratch_rows[start..end].to_vec());
-                }
-            }
+            let next_groups = if should_split_groups_in_parallel(&self.groups) {
+                let split_groups: Vec<Vec<Vec<usize>>> = self
+                    .groups
+                    .par_iter()
+                    .map(|group| split_group_by_bits(bit_data, bit_chunk, group))
+                    .collect();
+                split_groups.into_iter().flatten().collect()
+            } else {
+                split_groups_by_bits_sequential(bit_data, bit_chunk, &self.groups)
+            };
 
             let added_count = apply_selected_bit_positions(
                 &mut self.base_bit_mask,
@@ -708,6 +749,7 @@ impl BaseBitIncSignatureGroups {
     /// Refine current signature classes using one batch of at most 64 bit positions.
     fn refine_signatures_batch(&mut self, bit_data: &BitDataSet, bit_positions_batch: &[usize]) {
         debug_assert!(bit_positions_batch.len() <= 64);
+        const MIN_ROWS_FOR_PARALLEL: usize = 1_024;
 
         // Key packs `(old_signature, mini_signature)` to reduce tuple-hash overhead.
         let mut transitions = FxHashMap::<u128, (u64, usize)>::with_capacity_and_hasher(
@@ -717,14 +759,28 @@ impl BaseBitIncSignatureGroups {
 
         let mut mini_signatures = vec![0u64; self.row_signatures.len()];
 
-        for row in 0..self.row_signatures.len() {
-            let mut mini_signature = 0u64;
-            for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
-                let bit = unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u64;
-                mini_signature |= bit << i;
-            }
+        if self.row_signatures.len() >= MIN_ROWS_FOR_PARALLEL {
+            mini_signatures
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(row, mini_signature)| {
+                    let mut computed = 0u64;
+                    for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
+                        let bit = unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u64;
+                        computed |= bit << i;
+                    }
+                    *mini_signature = computed;
+                });
+        } else {
+            for row in 0..self.row_signatures.len() {
+                let mut mini_signature = 0u64;
+                for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
+                    let bit = unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u64;
+                    mini_signature |= bit << i;
+                }
 
-            mini_signatures[row] = mini_signature;
+                mini_signatures[row] = mini_signature;
+            }
         }
 
         for (row_signature, mini_signature) in self
@@ -776,9 +832,9 @@ impl BaseBitIncSignatureGroups {
             return self.get_num_bases();
         }
 
-        for batch in new_bit_positions.chunks(64) {
+        new_bit_positions.chunks(64).for_each(|batch| {
             self.refine_signatures_batch(bit_data, batch);
-        }
+        });
 
         let added_count = apply_selected_bit_positions(
             &mut self.base_bit_mask,
@@ -1033,6 +1089,7 @@ impl BaseBitHyperLogLogCount {
 
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
+        const MIN_ROWS_FOR_PARALLEL: usize = 20_000;
 
         let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
         if new_bit_positions.is_empty() {
@@ -1056,31 +1113,77 @@ impl BaseBitHyperLogLogCount {
 
         let new_bit_positions = new_bit_positions.as_slice();
 
-        for row in 0..self.row_hashes.len() {
-            let row_start = row * stride;
+        if self.row_hashes.len() >= MIN_ROWS_FOR_PARALLEL {
+            let reduced_registers = self
+                .row_hashes
+                .par_iter_mut()
+                .enumerate()
+                .fold(
+                    || [0u8; 1usize << Self::HLL_PRECISION],
+                    |mut local_registers, (row, row_hash)| {
+                        let row_start = row * stride;
 
-            let row_hash = unsafe { self.row_hashes.get_unchecked_mut(row) };
+                        for &bit_position in new_bit_positions {
+                            let bit = unsafe {
+                                bit_data
+                                    .data
+                                    .get_bit_linear_unchecked(row_start + bit_position)
+                            } as u64;
+                            let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
+                            let bit_mask = 0u64.wrapping_sub(bit);
+                            *row_hash ^= hash_word & bit_mask;
+                        }
 
-            for &bit_position in new_bit_positions {
-                let bit = unsafe {
-                    bit_data
-                        .data
-                        .get_bit_linear_unchecked(row_start + bit_position)
-                } as u64;
-                let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
-                let bit_mask = 0u64.wrapping_sub(bit);
-                *row_hash ^= hash_word & bit_mask;
+                        let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
+                        let bucket = (mixed >> bucket_shift) as usize;
+
+                        let suffix = mixed << Self::HLL_PRECISION;
+                        let rank = (suffix.leading_zeros() as usize + 1)
+                            .min((64 - Self::HLL_PRECISION as usize) + 1)
+                            as u8;
+
+                        local_registers[bucket] = local_registers[bucket].max(rank);
+                        local_registers
+                    },
+                )
+                .reduce(
+                    || [0u8; 1usize << Self::HLL_PRECISION],
+                    |mut left, right| {
+                        for (left_reg, right_reg) in left.iter_mut().zip(right.iter()) {
+                            *left_reg = (*left_reg).max(*right_reg);
+                        }
+                        left
+                    },
+                );
+
+            self.registers.copy_from_slice(&reduced_registers);
+        } else {
+            for row in 0..self.row_hashes.len() {
+                let row_start = row * stride;
+
+                let row_hash = unsafe { self.row_hashes.get_unchecked_mut(row) };
+
+                for &bit_position in new_bit_positions {
+                    let bit = unsafe {
+                        bit_data
+                            .data
+                            .get_bit_linear_unchecked(row_start + bit_position)
+                    } as u64;
+                    let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
+                    let bit_mask = 0u64.wrapping_sub(bit);
+                    *row_hash ^= hash_word & bit_mask;
+                }
+
+                let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
+                let bucket = (mixed >> bucket_shift) as usize;
+
+                let suffix = mixed << Self::HLL_PRECISION;
+                let rank = (suffix.leading_zeros() as usize + 1)
+                    .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
+
+                let register = unsafe { self.registers.get_unchecked_mut(bucket) };
+                *register = (*register).max(rank);
             }
-
-            let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
-            let bucket = (mixed >> bucket_shift) as usize;
-
-            let suffix = mixed << Self::HLL_PRECISION;
-            let rank = (suffix.leading_zeros() as usize + 1)
-                .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
-
-            let register = unsafe { self.registers.get_unchecked_mut(bucket) };
-            *register = (*register).max(rank);
         }
 
         self.num_bases_estimate =
