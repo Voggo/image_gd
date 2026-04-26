@@ -1,5 +1,5 @@
 use super::encoding_core::{DeviationData, DeviationSample, DeviationSampleRef, RleDeviationData};
-use crate::error::EntroGdError;
+use crate::{ScopedTimer, error::EntroGdError};
 
 pub(crate) const RLE_SHORT_MAX: u8 = 7;
 pub(crate) const RLE_LONG_MIN: u8 = 8;
@@ -197,6 +197,7 @@ impl RleDeviationData {
     }
 
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
+        let _timer = ScopedTimer::debug("Converting RLE deviation data to raw deviation data");
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
         let expected_raw_bits = self.num_samples.checked_mul(symbol_width).ok_or_else(|| {
             EntroGdError::InvalidMetadata {

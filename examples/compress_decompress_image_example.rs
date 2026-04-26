@@ -10,7 +10,7 @@ use std::path::Path;
 fn main() -> Result<(), EntroGdError> {
     unsafe {
         env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
-        env::set_var("RUST_LOG", "info");
+        env::set_var("RUST_LOG", "debug");
     }
     let _log_handle = init_logging();
     let _timer =
@@ -69,7 +69,7 @@ fn main() -> Result<(), EntroGdError> {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: 2,
+        pixel_grouping: 4,
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }

@@ -10,7 +10,8 @@ use super::tags::{
     encode_data_type,
 };
 
-use crate::compression::base_table::BaseBitLayoutState;
+use crate::ScopedTimer;
+use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
@@ -32,6 +33,7 @@ fn decode_delta_base_rows(
     delta_count: usize,
     delta_bit_stream: &crate::BitView,
 ) -> Result<Vec<(crate::BitStream, usize)>, EntroGdError> {
+    let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
     if num_bases == 0 {
         return Ok(Vec::new());
     }
@@ -1016,7 +1018,7 @@ impl EgdFile {
             encoded_data,
             condensed_sample_weights: if m == 0 { None } else { Some(weights) },
             base_table,
-            layout: crate::compression::base_table::BaseLayoutInfo::from_bit_states(bit_states),
+            layout: BaseLayoutInfo::from_bit_states(bit_states),
             entropy_sorted_column_order,
             metadata,
         })
