@@ -70,6 +70,66 @@ fn test_csv_roundtrip_compression() {
 }
 
 #[test]
+fn test_csv_roundtrip_compression_rle() {
+    let input_path = "data/tabular/data-10000-8-int.csv";
+    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
+    let loaded = loader.load(input_path).expect("Failed to load CSV");
+
+    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+
+    let compression_pipeline = EntropyBatched {}
+        .then(GenCondensedSamples { m_max: 50 })
+        .then(SelectBasesOptimized {
+            patience: 10,
+            base_bit_impl: BaseBitImpl::BatchGroups,
+        })
+        .then(BuildBaseTable {})
+        .then(EncodeDataRLE {});
+
+    let compressed = compression_pipeline
+        .process(bit_data.clone())
+        .expect("Failed to compress CSV with RLE");
+
+    let temp_egd_path = env::temp_dir().join("test_roundtrip_rle.egd");
+
+    let saved_path = SaveEgdFile {
+        output_path: temp_egd_path.clone(),
+    }
+    .process(compressed)
+    .expect("Failed to save EGD file");
+
+    let loaded_compressed = LoadEgdFile {}
+        .process(saved_path)
+        .expect("Failed to load EGD file");
+
+    let decompressed = DecompressFileData {}
+        .process(loaded_compressed)
+        .expect("Failed to decompress data");
+
+    assert_eq!(
+        bit_data.data.total_bits(),
+        decompressed.data.total_bits(),
+        "Decompressed BitData total bits does not match original"
+    );
+    assert_eq!(
+        bit_data.data.chunk_size, decompressed.data.chunk_size,
+        "Decompressed BitData chunk size does not match original"
+    );
+    assert_eq!(
+        bit_data.data.num_rows, decompressed.data.num_rows,
+        "Decompressed BitData num rows does not match original"
+    );
+    assert_eq!(
+        bit_data.data.data, decompressed.data.data,
+        "Decompressed BitData content does not perfectly match original"
+    );
+
+    if temp_egd_path.exists() {
+        std::fs::remove_file(temp_egd_path).ok();
+    }
+}
+
+#[test]
 fn test_image_roundtrip_compression() {
     let input_path = std::path::PathBuf::from("data/images/rustacean.png");
     assert!(input_path.exists(), "Image file not found");

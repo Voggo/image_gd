@@ -14,8 +14,7 @@ use crate::compression::base_table::BaseBitLayoutState;
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
-    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD, RleDeviationData,
-    get_delta_codec,
+    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationData, get_delta_codec,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -785,26 +784,48 @@ impl EgdFile {
             ENCODING_TAG_RLE_RM_PACKED => {
                 let mut rm_values: Vec<(u8, u8)> = Vec::new();
                 let mut flat_values: Vec<u8> = Vec::new();
-                loop {
+                let mut decoded_samples = 0usize;
+                while decoded_samples < num_samples {
                     let is_long_packet = reader.read_bit()?;
-                    if !is_long_packet {
-                        let val = reader.read_usize_bits(3)? as u8;
-                        flat_values.push(val);
-                        continue;
-                    }
-
-                    let payload = reader.read_usize_bits(7)? as u8;
-                    if payload == RLE_TERMINATOR_PAYLOAD {
-                        break;
-                    }
-
-                    let val = payload.saturating_add(8);
-                    if !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&val) {
-                        return Err(EntroGdError::InvalidMetadata {
-                            message: "invalid rm control packet value".to_string(),
-                        });
-                    }
+                    let val = if !is_long_packet {
+                        reader.read_usize_bits(3)? as u8
+                    } else {
+                        let payload = reader.read_usize_bits(7)? as u8;
+                        let val = payload.saturating_add(8);
+                        if !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&val) {
+                            return Err(EntroGdError::InvalidMetadata {
+                                message: "invalid rm control packet value".to_string(),
+                            });
+                        }
+                        val
+                    };
                     flat_values.push(val);
+
+                    if flat_values.len().is_multiple_of(2) {
+                        let r = flat_values[flat_values.len() - 2];
+                        let m_val = flat_values[flat_values.len() - 1];
+                        let run_samples = if r > 0 { (r as usize) + 1 } else { 0usize };
+                        let literal_samples = m_val as usize;
+                        let pair_samples =
+                            run_samples.checked_add(literal_samples).ok_or_else(|| {
+                                EntroGdError::InvalidMetadata {
+                                    message: "rm pair sample count overflow".to_string(),
+                                }
+                            })?;
+                        decoded_samples =
+                            decoded_samples.checked_add(pair_samples).ok_or_else(|| {
+                                EntroGdError::InvalidMetadata {
+                                    message: "decoded sample count overflow".to_string(),
+                                }
+                            })?;
+
+                        if decoded_samples > num_samples {
+                            return Err(EntroGdError::InvalidMetadata {
+                                message: "rm control stream decodes more samples than header count"
+                                    .to_string(),
+                            });
+                        }
+                    }
                 }
 
                 if !flat_values.len().is_multiple_of(2) {

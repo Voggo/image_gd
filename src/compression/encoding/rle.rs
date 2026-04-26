@@ -3,8 +3,7 @@ use crate::error::EntroGdError;
 
 pub(crate) const RLE_SHORT_MAX: u8 = 7;
 pub(crate) const RLE_LONG_MIN: u8 = 8;
-pub(crate) const RLE_LONG_MAX: u8 = 134;
-pub(crate) const RLE_TERMINATOR_PAYLOAD: u8 = 0x7F;
+pub(crate) const RLE_LONG_MAX: u8 = 135;
 
 impl RleDeviationData {
     pub fn new(
@@ -18,11 +17,6 @@ impl RleDeviationData {
         for &(r, m) in &rm_values {
             write_rle_control_value(&mut rm_control_stream, r);
             write_rle_control_value(&mut rm_control_stream, m);
-        }
-        // Terminator packet: 1-bit long-packet flag + 7-bit reserved payload (= 127) -> 0xFF.
-        rm_control_stream.push(true);
-        for shift in (0..7).rev() {
-            rm_control_stream.push(((RLE_TERMINATOR_PAYLOAD >> shift) & 1) == 1);
         }
 
         RleDeviationData {

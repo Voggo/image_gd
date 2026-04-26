@@ -13,4 +13,4 @@ pub use self::encoding_core::{
 };
 pub use self::fused_dictionary::EncodeDataFusedDictionary;
 pub use self::huffman::EncodeDataHuffman;
-pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX, RLE_TERMINATOR_PAYLOAD};
+pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX};

@@ -76,7 +76,7 @@ fn main() -> Result<(), EntroGdError> {
     .then(EntropyNaive {})
     .then(SelectBases { patience: 30 })
     .then(BuildSortedBaseTable {})
-    .then(EncodeDataHuffman {})
+    .then(EncodeDataRLE {})
     .then(DeltaEncodeBaseTable {});
 
     for image_file in files_to_process {
