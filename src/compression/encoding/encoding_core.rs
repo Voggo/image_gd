@@ -1,5 +1,4 @@
 use bitvec::prelude::*;
-use fxhash::FxHashMap;
 
 use super::rle::RLE_LONG_MAX;
 
@@ -80,7 +79,10 @@ pub struct HuffmanDeviationData {
     pub(super) num_id_bits: usize,
     pub(super) row_width: usize,
     pub(super) max_code_length: u8,
-    pub(super) decode_by_length: Vec<FxHashMap<u32, u64>>,
+    pub(super) min_code_by_len: Vec<u32>,
+    pub(super) max_code_by_len: Vec<u32>,
+    pub(super) first_symbol_index_by_len: Vec<usize>,
+    pub(super) decode_symbols: Vec<u64>,
     pub(super) original_stream_end_offset_bits: usize,
 }
 
