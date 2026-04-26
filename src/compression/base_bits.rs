@@ -123,13 +123,16 @@ fn split_group_by_bits(
     for &row in group {
         let mut bucket_id = 0usize;
         for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
-            bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) } as usize)
-                << bit_idx;
+            bucket_id |=
+                (unsafe { bit_data.get_bit_unchecked(row, bit_position) } as usize) << bit_idx;
         }
         buckets[bucket_id].push(row);
     }
 
-    buckets.into_iter().filter(|bucket| !bucket.is_empty()).collect()
+    buckets
+        .into_iter()
+        .filter(|bucket| !bucket.is_empty())
+        .collect()
 }
 
 fn split_groups_by_bits_sequential(
@@ -165,8 +168,8 @@ fn split_groups_by_bits_sequential(
         for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
             let mut bucket_id = 0usize;
             for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
-                bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) } as usize)
-                    << bit_idx;
+                bucket_id |=
+                    (unsafe { bit_data.get_bit_unchecked(row, bit_position) } as usize) << bit_idx;
             }
             *bucket_id_slot = bucket_id;
             unsafe {
@@ -1089,7 +1092,7 @@ impl BaseBitHyperLogLogCount {
 
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
-        const MIN_ROWS_FOR_PARALLEL: usize = 20_000;
+        const MIN_ROWS_FOR_PARALLEL: usize = 1_024;
 
         let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
         if new_bit_positions.is_empty() {
@@ -1129,7 +1132,8 @@ impl BaseBitHyperLogLogCount {
                                     .data
                                     .get_bit_linear_unchecked(row_start + bit_position)
                             } as u64;
-                            let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
+                            let hash_word =
+                                unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
                             let bit_mask = 0u64.wrapping_sub(bit);
                             *row_hash ^= hash_word & bit_mask;
                         }

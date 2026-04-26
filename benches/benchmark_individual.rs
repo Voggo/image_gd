@@ -491,6 +491,14 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             0,
             20,
         ),
+        StepBenchCase::image_with_transform(
+            "data/images/wikipedia_008.png",
+            ImageColorModel::YCoCgR,
+            4,
+            ImageGroupingTransform::ForFirstPixel,
+            0,
+            20,
+        ),
     ]
 }
 
