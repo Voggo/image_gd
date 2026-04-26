@@ -77,10 +77,9 @@ pub(super) fn encode_data_huffman(
             .ok_or_else(|| EntroGdError::InvalidMetadata {
                 message: format!("Huffman symbol {} exceeds symbol table bounds", symbol),
             })?;
-        let (code, code_len) = entry
-            .ok_or_else(|| EntroGdError::InvalidMetadata {
-                message: format!("missing Huffman code for base-id symbol {}", symbol),
-            })?;
+        let (code, code_len) = entry.ok_or_else(|| EntroGdError::InvalidMetadata {
+            message: format!("missing Huffman code for base-id symbol {}", symbol),
+        })?;
         append_code_bits(&mut pixel_bit_stream, code, code_len);
     }
     tracing::debug!(row_offeset_size = ?row_offsets.len(), "Encoded Huffman row offsets");
@@ -209,7 +208,8 @@ impl HuffmanDeviationData {
         let mut min_code_by_len = vec![u32::MAX; max_code_length as usize + 1];
         let mut max_code_by_len = vec![0u32; max_code_length as usize + 1];
         let mut first_symbol_index_by_len = vec![usize::MAX; max_code_length as usize + 1];
-        let mut canonical_symbols_by_len: Vec<Vec<u64>> = vec![Vec::new(); max_code_length as usize + 1];
+        let mut canonical_symbols_by_len: Vec<Vec<u64>> =
+            vec![Vec::new(); max_code_length as usize + 1];
 
         for code in &codes {
             canonical_symbols_by_len[code.len as usize].push(code.symbol);
@@ -220,7 +220,8 @@ impl HuffmanDeviationData {
         for len in 1..=max_code_length as usize {
             symbols_in_order.extend(canonical_symbols_by_len[len].clone());
             if !canonical_symbols_by_len[len].is_empty() {
-                let codes_at_len: Vec<u32> = codes.iter()
+                let codes_at_len: Vec<u32> = codes
+                    .iter()
                     .filter(|c| c.len as usize == len)
                     .map(|c| c.code)
                     .collect();
