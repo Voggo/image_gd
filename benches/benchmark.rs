@@ -48,7 +48,7 @@ enum RoundtripInput {
     Image {
         colorspace: ImageColorSpace,
         color_model: ImageColorModel,
-        pixel_grouping: u32,
+        pixel_grouping: PixelGrouping,
         grouping_transform: ImageGroupingTransform,
     },
 }
@@ -82,7 +82,7 @@ impl RoundtripCase {
             input: RoundtripInput::Image {
                 colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                 color_model: ImageColorModel::YCoCgR,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping::new(1, 1),
                 grouping_transform: ImageGroupingTransform::Raw,
             },
             m_max,

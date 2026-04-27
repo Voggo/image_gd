@@ -97,7 +97,8 @@ pub struct ExperimentConfigColumns {
     pub delta_encode_base_table: Option<bool>,
     pub image_colorspace: Option<String>,
     pub image_color_model: Option<String>,
-    pub image_pixel_grouping: Option<u32>,
+    pub image_pixel_grouping_width: Option<u32>,
+    pub image_pixel_grouping_height: Option<u32>,
     pub image_grouping_transform: Option<String>,
 }
 
@@ -425,7 +426,7 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_encode_base_table,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_encode_base_table,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping_width,image_pixel_grouping_height,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
     )?;
 
     for record in records {
@@ -490,7 +491,12 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
             record.config.image_color_model.clone().unwrap_or_default(),
             record
                 .config
-                .image_pixel_grouping
+                .image_pixel_grouping_width
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record
+                .config
+                .image_pixel_grouping_height
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
             record
@@ -715,7 +721,8 @@ fn run_image_profile(
         config: ExperimentConfigColumns {
             image_colorspace: Some(format!("{:?}", profile.build.colorspace)),
             image_color_model: Some(format!("{:?}", profile.build.color_model)),
-            image_pixel_grouping: Some(profile.build.pixel_grouping),
+            image_pixel_grouping_width: Some(profile.build.pixel_grouping.width()),
+            image_pixel_grouping_height: Some(profile.build.pixel_grouping.height()),
             image_grouping_transform: Some(format!("{:?}", profile.build.grouping_transform)),
             entropy_impl: Some(format!("{:?}", profile.entropy_impl)),
             entropy_skip_rows: Some(profile.entropy_skip_rows),

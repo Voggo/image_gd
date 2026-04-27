@@ -137,7 +137,7 @@ fn test_image_roundtrip_compression() {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: 3,
+        pixel_grouping: PixelGrouping::new(3, 1),
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: true,
     }

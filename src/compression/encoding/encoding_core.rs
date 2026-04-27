@@ -145,22 +145,26 @@ pub(crate) fn huffman_row_layout(
     let original_num_samples = metadata.original_size_bits() / chunk_size;
     match metadata.reconstruction {
         BitDataReconstructionInfo::Image(info) => {
-            let row_count = info.height as usize;
-            let pixel_grouping = info.pixel_grouping as usize;
-            if pixel_grouping == 0 {
+            let grouped_width = info.pixel_grouping.width() as usize;
+            let grouped_height = info.pixel_grouping.height() as usize;
+            if grouped_width == 0 || grouped_height == 0 {
                 return Err(EntroGdError::InvalidMetadata {
-                    message: "image pixel_grouping must be > 0".to_string(),
+                    message: "image pixel_grouping width and height must be > 0".to_string(),
                 });
             }
-            let row_width = (info.width as usize).div_ceil(pixel_grouping);
+            let row_count = (info.height as usize).div_ceil(grouped_height);
+            let row_width = (info.width as usize).div_ceil(grouped_width);
             if row_count == 0 && original_num_samples == 0 {
                 return Ok((0, 0, 0));
             }
             if row_count == 0 || row_width == 0 {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
-                        "invalid image row layout width={} height={} pixel_grouping={}",
-                        info.width, info.height, info.pixel_grouping
+                        "invalid image row layout width={} height={} pixel_grouping={}x{}",
+                        info.width,
+                        info.height,
+                        info.pixel_grouping.width(),
+                        info.pixel_grouping.height()
                     ),
                 });
             }
@@ -173,7 +177,7 @@ pub(crate) fn huffman_row_layout(
             if expected_samples != original_num_samples {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
-                        "image row layout mismatch: height * ceil(width / pixel_grouping) = {}, original samples = {}",
+                        "image row layout mismatch: ceil(height / group_height) * ceil(width / group_width) = {}, original samples = {}",
                         expected_samples, original_num_samples
                     ),
                 });

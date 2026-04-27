@@ -163,7 +163,7 @@ fn image_build_options() -> BuildImageBitDataSet {
     BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: 8,
+        pixel_grouping: PixelGrouping::new(8, 1),
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: false,
     }

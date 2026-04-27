@@ -69,8 +69,8 @@ fn main() -> Result<(), EntroGdError> {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: 4,
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pixel_grouping: PixelGrouping::new(2, 2),
+        grouping_transform: ImageGroupingTransform::ForMin,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
@@ -102,9 +102,8 @@ fn main() -> Result<(), EntroGdError> {
         }
         .process(compressed.clone())?;
 
-        let bit_data =decompression_pipeline.process(compressed_path.clone())?;
+        let bit_data = decompression_pipeline.process(compressed_path.clone())?;
         write_bitdata_as_image(&bit_data, &decompressed_path)?;
-
 
         tracing::info!(
             "Compression done: original={} bits, encoded={} bits",

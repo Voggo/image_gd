@@ -1,6 +1,7 @@
 use crate::compression::image_preprocessor::ImageColorSpace;
-use crate::compression::preprocessor::PreprocessOptions;
-use crate::compression::preprocessor::{FloatScalingMode, ImageColorModel, ImageGroupingTransform};
+use crate::compression::preprocessor::{
+    FloatScalingMode, ImageColorModel, ImageGroupingTransform, PixelGrouping, PreprocessOptions,
+};
 use crate::data_loader::{FloatStorage, MissingValuePolicy};
 use crate::error::EntroGdError;
 use serde::Deserialize;
@@ -169,8 +170,14 @@ pub struct CsvPipelineProfileConfig {
 pub struct ImageBuildConfigSerializable {
     pub colorspace: ConfigImageColorSpace,
     pub color_model: ConfigImageColorModel,
-    pub pixel_grouping: u32,
+    pub pixel_grouping: ImageGroupingConfig,
     pub grouping_transform: ConfigImageGroupingTransform,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageGroupingConfig {
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -269,7 +276,7 @@ pub struct CsvProfileGroupConfig {
 pub struct ImageBuildSweepConfig {
     pub colorspace: Option<Vec<ConfigImageColorSpace>>,
     pub color_model: Option<Vec<ConfigImageColorModel>>,
-    pub pixel_grouping: Option<IntegerSweepU32>,
+    pub pixel_grouping: Option<Vec<ImageGroupingConfig>>,
     pub grouping_transform: Option<Vec<ConfigImageGroupingTransform>>,
 }
 
@@ -312,7 +319,7 @@ pub struct CsvPipelineProfile {
 pub struct ImageBuildConfig {
     pub colorspace: ImageColorSpace,
     pub color_model: ImageColorModel,
-    pub pixel_grouping: u32,
+    pub pixel_grouping: PixelGrouping,
     pub grouping_transform: ImageGroupingTransform,
 }
 
@@ -400,7 +407,7 @@ impl PipelineProfileSet {
                     build: ImageBuildConfig {
                         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                         color_model: ImageColorModel::Rgb,
-                        pixel_grouping: 1,
+                        pixel_grouping: PixelGrouping::new(1, 1),
                         grouping_transform: ImageGroupingTransform::Raw,
                     },
                     m_max: 0,
@@ -419,7 +426,7 @@ impl PipelineProfileSet {
                     build: ImageBuildConfig {
                         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                         color_model: ImageColorModel::YCoCgR,
-                        pixel_grouping: 1,
+                        pixel_grouping: PixelGrouping::new(1, 1),
                         grouping_transform: ImageGroupingTransform::ForFirstPixel,
                     },
                     m_max: 25,
@@ -438,7 +445,7 @@ impl PipelineProfileSet {
                     build: ImageBuildConfig {
                         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                         color_model: ImageColorModel::YCoCgR,
-                        pixel_grouping: 2,
+                        pixel_grouping: PixelGrouping::new(2, 1),
                         grouping_transform: ImageGroupingTransform::ForMin,
                     },
                     m_max: 75,
@@ -709,7 +716,9 @@ fn expand_image_group(
     let color_model = build
         .color_model
         .unwrap_or_else(|| vec![ConfigImageColorModel::Rgb]);
-    let pixel_grouping = expand_u32_sweep(build.pixel_grouping.as_ref(), 1)?;
+    let pixel_grouping = build
+        .pixel_grouping
+        .unwrap_or_else(|| vec![ImageGroupingConfig { width: 1, height: 1 }]);
     let grouping_transform = build
         .grouping_transform
         .unwrap_or_else(|| vec![ConfigImageGroupingTransform::Raw]);
@@ -758,9 +767,12 @@ fn expand_image_group(
         });
     }
 
-    if pixel_grouping.contains(&0) {
+    if pixel_grouping
+        .iter()
+        .any(|grouping| grouping.width == 0 || grouping.height == 0)
+    {
         return Err(EntroGdError::InvalidMetadata {
-            message: format!("image group '{}' has invalid pixel_grouping=0", group.name),
+            message: format!("image group '{}' has invalid pixel_grouping dimensions", group.name),
         });
     }
 
@@ -785,7 +797,7 @@ fn expand_image_group(
     for_each_combination(&axis_lengths, |indices| {
         let colorspace_item = &colorspace[indices[0]];
         let color_model_item = &color_model[indices[1]];
-        let pixel_grouping_item = pixel_grouping[indices[2]];
+        let pixel_grouping_item = &pixel_grouping[indices[2]];
         let grouping_transform_item = &grouping_transform[indices[3]];
         let m_max_item = m_max[indices[4]];
         let patience_item = patience[indices[5]];
@@ -800,11 +812,12 @@ fn expand_image_group(
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_cm{:?}_pg{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
+            "{}__{:03}_cm{:?}_pg{}x{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
             group.name,
             run_idx,
             color_model_item,
-            pixel_grouping_item,
+            pixel_grouping_item.width,
+            pixel_grouping_item.height,
             grouping_transform_item,
             select_item,
             base_bit_item,
@@ -821,7 +834,10 @@ fn expand_image_group(
             build: ImageBuildConfig {
                 colorspace: colorspace_item.clone().into(),
                 color_model: color_model_item.clone().into(),
-                pixel_grouping: pixel_grouping_item,
+                pixel_grouping: PixelGrouping::new(
+                    pixel_grouping_item.width,
+                    pixel_grouping_item.height,
+                ),
                 grouping_transform: grouping_transform_item.clone().into(),
             },
             m_max: m_max_item,
@@ -943,13 +959,6 @@ impl_expand_numeric_sweep!(
     usize,
     expand_usize_sweep,
     expand_usize_range
-);
-impl_expand_numeric_sweep!(
-    IntegerSweepU32,
-    IntegerRangeU32,
-    u32,
-    expand_u32_sweep,
-    expand_u32_range
 );
 impl_expand_numeric_sweep!(
     IntegerSweepU8,
@@ -1104,10 +1113,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
             });
         }
 
-        if value.build.pixel_grouping == 0 {
+        if value.build.pixel_grouping.width == 0 || value.build.pixel_grouping.height == 0 {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
-                    "image profile '{}' has invalid pixel_grouping=0",
+                    "image profile '{}' has invalid pixel_grouping dimensions",
                     value.name
                 ),
             });
@@ -1118,7 +1127,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
             build: ImageBuildConfig {
                 colorspace: value.build.colorspace.into(),
                 color_model: value.build.color_model.into(),
-                pixel_grouping: value.build.pixel_grouping,
+                pixel_grouping: PixelGrouping::new(
+                    value.build.pixel_grouping.width,
+                    value.build.pixel_grouping.height,
+                ),
                 grouping_transform: value.build.grouping_transform.into(),
             },
             m_max: value.m_max,

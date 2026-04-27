@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::path::Path;
 use tracing::{debug, info, trace};
 
@@ -10,6 +10,39 @@ use crate::timing::ScopedTimer;
 
 const MAX_DECIMAL_SCALE: u8 = 9;
 pub const DEFAULT_ALIGN_ROWS_TO_WORD: bool = false;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelGrouping(pub u32, pub u32);
+
+impl PixelGrouping {
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self(width, height)
+    }
+
+    pub const fn width(self) -> u32 {
+        self.0
+    }
+
+    pub const fn height(self) -> u32 {
+        self.1
+    }
+
+    pub const fn total_pixels(self) -> u32 {
+        self.0 * self.1
+    }
+}
+
+impl Default for PixelGrouping {
+    fn default() -> Self {
+        Self(1, 1)
+    }
+}
+
+impl Display for PixelGrouping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}x{}", self.0, self.1)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatScalingMode {
@@ -528,7 +561,7 @@ pub struct ImageReconstructionInfo {
     pub height: u32,
     pub channels: u8,
     pub color_model: ImageColorModel,
-    pub pixel_grouping: u32,
+    pub pixel_grouping: PixelGrouping,
     pub grouping_transform: ImageGroupingTransform,
     /// 0 = sRGB + linear alpha, 1 = all linear
     pub colorspace: u8,

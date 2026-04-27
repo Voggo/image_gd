@@ -4,7 +4,7 @@ use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader};
 use entro_gd::{
     BitDataSet, BuildImageBitDataSet, EntroGdError, Filter, ImageColorModel, ImageColorSpace,
-    ImageGroupingTransform, calculate_entropy, init_logging,
+    ImageGroupingTransform, PixelGrouping, calculate_entropy, init_logging,
 };
 use std::env;
 use std::fs::File;
@@ -162,7 +162,7 @@ fn load_bit_data(options: &CliOptions) -> Result<BitDataSet, EntroGdError> {
         InputKind::Image => BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::Raw,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }

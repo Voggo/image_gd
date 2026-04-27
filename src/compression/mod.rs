@@ -47,5 +47,6 @@ pub use image_preprocessor::{
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
     BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, FeatureSpec, FeatureTransform, FloatScalingMode,
-    ImageReconstructionInfo, InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
+    ImageReconstructionInfo, InferFeatureSpecs, PixelGrouping, PreprocessOptions,
+    decode_value_from_bits,
 };
