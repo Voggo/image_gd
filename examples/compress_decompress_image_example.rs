@@ -75,12 +75,10 @@ fn main() -> Result<(), EntroGdError> {
     }
     .then(EntropyNaive {})
     .then(SelectBasesOptimized {
-        patience: 10,
-        base_bit_impl: BaseBitImpl::Naive,
+        patience: 5,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
     })
-    .then(BuildSortedBaseTable {})
-    .then(EncodeDataHuffman {})
-    .then(DeltaEncodeBaseTable {});
+    .then(EncodeDataFusedDictionary {});
 
     let decompression_pipeline = LoadIgdFile {}.then(DecompressFileData {});
 

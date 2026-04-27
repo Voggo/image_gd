@@ -134,7 +134,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     let mut row_to_group_id = Vec::with_capacity(num_rows);
     let mut representative_rows: Vec<usize> = Vec::new();
     let mut base_counts: Vec<usize> = Vec::new();
-
+    let _timer = ScopedTimer::info("Grouping rows by base signatures for fused dictionary encoding");
     for row in 0..num_rows {
         let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
         let signature = build_signature_key(chunk, selected_bit_positions);
@@ -150,7 +150,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         };
         row_to_group_id.push(id);
     }
-
+    drop(_timer);
+    let _timer = ScopedTimer::info("Building encoded bit stream for fused dictionary encoding");
     let num_bases = representative_rows.len();
     let l_id = bits_needed_nonzero(num_bases);
     let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
@@ -164,7 +165,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
             id_bits_per_base.push(id_bits);
         }
     }
-
+    drop(_timer);
+    let _timer = ScopedTimer::info("Constructing final deviation bit stream for fused dictionary encoding");
     let symbol_width = num_deviation_bits + l_id;
     let mut encoded_bit_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
     for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
@@ -179,7 +181,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
             encoded_bit_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
         }
     }
-
+    drop(_timer);
+    let _timer = ScopedTimer::info("Building base table for fused dictionary encoding");
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
         let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
