@@ -1,4 +1,4 @@
-use entro_gd::compression::BaseBitBatchGroups;
+use entro_gd::compression::BaseBitHyperLogLogCount;
 use entro_gd::compression::base_bits::BaseBitGroups;
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader};
@@ -162,8 +162,8 @@ fn load_bit_data(options: &CliOptions) -> Result<BitDataSet, EntroGdError> {
         InputKind::Image => BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: PixelGrouping::new(1, 1),
-            grouping_transform: ImageGroupingTransform::Raw,
+            pixel_grouping: PixelGrouping::new(2, 2),
+            grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
         .process(options.input.clone()),
@@ -196,8 +196,8 @@ fn main() -> Result<(), EntroGdError> {
         "step,bit_position,entropy,is_constant,exact_num_bases,approx_num_bases,abs_error,relative_error"
     )?;
 
-    let mut exact = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-    let mut approx = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+    let mut exact = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+    let mut approx = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
 
     let mut sum_abs_rel = 0.0f64;
     let mut sum_sq_rel = 0.0f64;

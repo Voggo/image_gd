@@ -951,14 +951,6 @@ impl BaseBitHyperLogLogCount {
         z ^ (z >> 31)
     }
 
-    fn avalanche_hash(mut value: u64) -> u64 {
-        value ^= value >> 33;
-        value = value.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-        value ^= value >> 33;
-        value = value.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
-        value ^ (value >> 33)
-    }
-
     fn hll_alpha(num_registers: usize) -> f64 {
         match num_registers {
             16 => 0.673,
@@ -1044,10 +1036,9 @@ impl BaseBitHyperLogLogCount {
                             *row_hash ^= hash_word & bit_mask;
                         }
 
-                        let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
-                        let bucket = (mixed >> bucket_shift) as usize;
+                        let bucket = (*row_hash >> bucket_shift) as usize;
 
-                        let suffix = mixed << Self::HLL_PRECISION;
+                        let suffix = *row_hash << Self::HLL_PRECISION;
                         let rank = (suffix.leading_zeros() as usize + 1)
                             .min((64 - Self::HLL_PRECISION as usize) + 1)
                             as u8;
@@ -1084,10 +1075,9 @@ impl BaseBitHyperLogLogCount {
                     *row_hash ^= hash_word & bit_mask;
                 }
 
-                let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
-                let bucket = (mixed >> bucket_shift) as usize;
+                let bucket = (*row_hash >> bucket_shift) as usize;
 
-                let suffix = mixed << Self::HLL_PRECISION;
+                let suffix = *row_hash << Self::HLL_PRECISION;
                 let rank = (suffix.leading_zeros() as usize + 1)
                     .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
 
