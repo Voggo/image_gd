@@ -26,11 +26,11 @@ pub use decompression::{
 };
 pub use encoding::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
-    DeviationSample, EncodedData, RleDeviationData,
+    DeviationSample, EncodedData, RleDeviationData, RleDeviationOffsetData,
 };
 pub use encoding::{
     DeltaEncodeBaseTable, EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman,
-    EncodeDataOptimized, EncodeDataRLE,
+    EncodeDataOffsetRLE, EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
     EntropyBatched, EntropyBitScore, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,

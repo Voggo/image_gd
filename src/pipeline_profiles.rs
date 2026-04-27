@@ -30,6 +30,7 @@ pub enum EncodeImpl {
     Optimized,
     FusedDictionary,
     Rle,
+    OffsetRle,
     HuffmanBaseIdOnly,
 }
 
@@ -74,6 +75,7 @@ pub enum ConfigEncodeImpl {
     Optimized,
     FusedDictionary,
     Rle,
+    OffsetRle,
     Huffman,
     HuffmanBaseIdOnly,
 }
@@ -716,9 +718,12 @@ fn expand_image_group(
     let color_model = build
         .color_model
         .unwrap_or_else(|| vec![ConfigImageColorModel::Rgb]);
-    let pixel_grouping = build
-        .pixel_grouping
-        .unwrap_or_else(|| vec![ImageGroupingConfig { width: 1, height: 1 }]);
+    let pixel_grouping = build.pixel_grouping.unwrap_or_else(|| {
+        vec![ImageGroupingConfig {
+            width: 1,
+            height: 1,
+        }]
+    });
     let grouping_transform = build
         .grouping_transform
         .unwrap_or_else(|| vec![ConfigImageGroupingTransform::Raw]);
@@ -772,7 +777,10 @@ fn expand_image_group(
         .any(|grouping| grouping.width == 0 || grouping.height == 0)
     {
         return Err(EntroGdError::InvalidMetadata {
-            message: format!("image group '{}' has invalid pixel_grouping dimensions", group.name),
+            message: format!(
+                "image group '{}' has invalid pixel_grouping dimensions",
+                group.name
+            ),
         });
     }
 
@@ -1162,6 +1170,7 @@ fn convert_encode_impl(value: ConfigEncodeImpl) -> Result<EncodeImpl, EntroGdErr
         ConfigEncodeImpl::Optimized => Ok(EncodeImpl::Optimized),
         ConfigEncodeImpl::FusedDictionary => Ok(EncodeImpl::FusedDictionary),
         ConfigEncodeImpl::Rle => Ok(EncodeImpl::Rle),
+        ConfigEncodeImpl::OffsetRle => Ok(EncodeImpl::OffsetRle),
         ConfigEncodeImpl::Huffman => Err(EntroGdError::InvalidMetadata {
             message: "legacy 'huffman' is no longer supported; use 'huffman_base_id_only'"
                 .to_string(),
