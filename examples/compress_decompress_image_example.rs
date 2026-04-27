@@ -2,7 +2,7 @@ use entro_gd::ImageColorModel;
 use entro_gd::ScopedTimer;
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::prelude::*;
-use entro_gd::{EntroGdError, decompress_igd_to_image, init_logging};
+use entro_gd::{EntroGdError, init_logging, write_bitdata_as_image};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -74,10 +74,13 @@ fn main() -> Result<(), EntroGdError> {
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBases { patience: 30 })
-    .then(BuildSortedBaseTable {})
-    .then(EncodeDataRLE {})
-    .then(DeltaEncodeBaseTable {});
+    .then(SelectBasesOptimized {
+        patience: 10,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+    })
+    .then(EncodeDataFusedDictionary {});
+
+    let decompression_pipeline = LoadIgdFile {}.then(DecompressFileData {});
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());
@@ -99,7 +102,9 @@ fn main() -> Result<(), EntroGdError> {
         }
         .process(compressed.clone())?;
 
-        decompress_igd_to_image(&compressed_path, &decompressed_path)?;
+        let bit_data =decompression_pipeline.process(compressed_path.clone())?;
+        write_bitdata_as_image(&bit_data, &decompressed_path)?;
+
 
         tracing::info!(
             "Compression done: original={} bits, encoded={} bits",
