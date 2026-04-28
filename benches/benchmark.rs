@@ -19,14 +19,16 @@ use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRowsData};
 #[derive(Clone, Copy)]
 enum CompressionVariant {
     BaselineV1,
-    ImageBaselineV1,
+    ImageBestRatio,
+    ImageFast,
 }
 
 impl CompressionVariant {
     fn label(self) -> &'static str {
         match self {
             CompressionVariant::BaselineV1 => "baseline-v1",
-            CompressionVariant::ImageBaselineV1 => "image-baseline-v1",
+            CompressionVariant::ImageBestRatio => "image-best-ratio",
+            CompressionVariant::ImageFast => "image-fast",
         }
     }
 }
@@ -82,8 +84,8 @@ impl RoundtripCase {
             input: RoundtripInput::Image {
                 colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                 color_model: ImageColorModel::YCoCgR,
-                pixel_grouping: PixelGrouping::new(1, 1),
-                grouping_transform: ImageGroupingTransform::Raw,
+                pixel_grouping: PixelGrouping::new(2, 2),
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
             },
             m_max,
             patience,
@@ -120,7 +122,13 @@ fn roundtrip_cases() -> Vec<RoundtripCase> {
         ),
         RoundtripCase::image(
             "data/images/kodim10.png",
-            CompressionVariant::ImageBaselineV1,
+            CompressionVariant::ImageBestRatio,
+            0,
+            10,
+        ),
+        RoundtripCase::image(
+            "data/images/kodim10.png",
+            CompressionVariant::ImageFast,
             0,
             10,
         ),
@@ -211,13 +219,21 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
             .then(EncodeDataOptimized {})
             .process(bit_data)
             .unwrap(),
-        CompressionVariant::ImageBaselineV1 => EntropyNaive {}
+        CompressionVariant::ImageBestRatio => EntropyNaive {}
             .then(SelectBases {
                 patience: case.patience,
             })
             .then(BuildSortedBaseTable {})
             .then(EncodeDataHuffman {})
             .then(DeltaEncodeBaseTable {})
+            .process(bit_data)
+            .unwrap(),
+        CompressionVariant::ImageFast => EntropyNaive {}
+            .then(SelectBasesOptimized {
+                patience: case.patience,
+                base_bit_impl: BaseBitImpl::HyperLogLogCount,
+            })
+            .then(EncodeDataFusedDictionary {})
             .process(bit_data)
             .unwrap(),
     }
