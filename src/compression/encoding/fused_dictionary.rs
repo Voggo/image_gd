@@ -158,7 +158,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
             let mut id_bits = crate::BitStream::with_capacity(l_id);
-            for shift in (0..l_id).rev() {
+            for shift in 0..l_id {
                 id_bits.push(((id >> shift) & 1) == 1);
             }
             id_bits_per_base.push(id_bits);

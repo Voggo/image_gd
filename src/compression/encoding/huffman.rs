@@ -585,7 +585,7 @@ fn bitvec_from_u64(value: u64, width: usize) -> crate::BitStream {
 }
 
 fn append_symbol_bits(out: &mut crate::BitStream, value: u64, width: usize) {
-    for shift in (0..width).rev() {
+    for shift in 0..width {
         out.push(((value >> shift) & 1) == 1);
     }
 }

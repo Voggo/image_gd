@@ -1,4 +1,5 @@
 use fxhash::FxHashMap;
+use bitvec::field::BitField;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -1138,10 +1139,7 @@ impl EgdFile {
                     }
                 })?;
 
-                let mut base_id = 0usize;
-                for bit in sample.id.iter() {
-                    base_id = (base_id << 1) | (*bit as usize);
-                }
+                let base_id = sample.id.load::<usize>();
 
                 if base_id >= num_bases {
                     return Err(EntroGdError::InvalidMetadata {

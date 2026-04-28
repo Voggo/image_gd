@@ -8,6 +8,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
+use bitvec::field::BitField;
 use image::{RgbImage, RgbaImage};
 use std::fs::File;
 use std::io::Write;
@@ -202,7 +203,7 @@ fn append_reconstructed_chunk(
     deviation_bits: &crate::BitView,
     id_bits: &crate::BitView,
 ) -> Result<(), EntroGdError> {
-    let base_id = decode_base_id(id_bits);
+    let base_id = id_bits.load::<usize>();
     if base_id >= base_table.len() {
         return Err(EntroGdError::InvalidBaseId {
             base_id,
@@ -241,12 +242,6 @@ fn append_reconstructed_chunk(
     }
 
     Ok(())
-}
-
-fn decode_base_id(id_bits: &crate::BitView) -> usize {
-    id_bits
-        .iter()
-        .fold(0usize, |base_id, bit| (base_id << 1) | usize::from(*bit))
 }
 
 pub struct DecompressAnalytics {}
@@ -975,6 +970,15 @@ mod tests {
         assert_eq!(result.info.chunk_size(), chunk_size);
         assert_eq!(result.info.n_data_samples(), 2); // We decompressed 2 samples
         assert_eq!(result.info.original_size_bits(), chunk_size * 2);
+    }
+
+    #[test]
+    fn test_base_id_lsb0_load_semantics() {
+        let mut id_bits = crate::BitStream::with_capacity(8);
+        id_bits.push(true);
+        id_bits.extend([false; 7]);
+
+        assert_eq!(id_bits.load::<usize>(), 1);
     }
 
     #[test]
