@@ -13,7 +13,7 @@
       "entropy_skip_rows": { "values": [0] },
       "use_condensed_samples": [true],
       "base_table_impl": ["raw"],
-      "delta_encode_base_table": [false],
+      "delta_codec_impl": ["none"],
       "encode_impl": ["optimized", "rle"],
       "m_max": { "range": { "start": 0, "end": 60, "step": 30 } },
       "patience": { "values": [10] },
@@ -30,7 +30,7 @@
       "build": {
         "colorspace": ["srgb_with_linear_alpha"],
         "color_model": ["y_co_cg_r"],
-        "pixel_grouping": [{ "width": 1, "height": 1 }, { "width": 2, "height": 2 }],
+        "pixel_grouping": [{ "width": 3, "height": 1 }, { "width": 2, "height": 2 }],
         "grouping_transform": ["raw", "for_min", "for_first_pixel"]
       },
       "m_max": { "values": [0] },
@@ -41,7 +41,7 @@
       "entropy_skip_rows": { "values": [0] },
       "use_condensed_samples": [false],
       "base_table_impl": ["sorted"],
-      "delta_encode_base_table": [true, false],
+      "delta_codec_impl": ["none", "unary", "fixed"],
       "encode_impl": ["offset_rle", "rle", "huffman_base_id_only"]
     }
   ]

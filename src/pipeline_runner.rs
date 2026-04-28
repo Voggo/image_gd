@@ -10,8 +10,8 @@ use crate::data_loader::{CsvDataLoader, DataLoader};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::pipeline_profiles::{
-    BaseBitImpl, BaseTableImpl, CsvPipelineProfile, EncodeImpl, EntropyImpl, ImagePipelineProfile,
-    PipelineProfileSet, SelectBasesImpl,
+    BaseBitImpl, BaseTableImpl, CsvPipelineProfile, DeltaCodecImpl, EncodeImpl, EntropyImpl,
+    ImagePipelineProfile, PipelineProfileSet, SelectBasesImpl,
 };
 use crate::prelude::*;
 use crate::utils::bits_needed_nonzero;
@@ -94,7 +94,7 @@ pub struct ExperimentConfigColumns {
     pub entropy_skip_rows: Option<usize>,
     pub use_condensed_samples: Option<bool>,
     pub base_table_impl: Option<String>,
-    pub delta_encode_base_table: Option<bool>,
+    pub delta_codec_impl: Option<String>,
     pub image_colorspace: Option<String>,
     pub image_color_model: Option<String>,
     pub image_pixel_grouping_width: Option<u32>,
@@ -426,7 +426,7 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_encode_base_table,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping_width,image_pixel_grouping_height,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_codec_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping_width,image_pixel_grouping_height,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
     )?;
 
     for record in records {
@@ -457,11 +457,7 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
             record.config.base_table_impl.clone().unwrap_or_default(),
-            record
-                .config
-                .delta_encode_base_table
-                .map(|v| v.to_string())
-                .unwrap_or_default(),
+            record.config.delta_codec_impl.clone().unwrap_or_default(),
             format!("{:?}", record.encode_impl),
             record.m_max.to_string(),
             record.patience.to_string(),
@@ -609,7 +605,7 @@ fn run_csv_profile(
     let compressed = encode_data(
         profile.encode_impl,
         profile.base_table_impl,
-        profile.delta_encode_base_table,
+        profile.delta_codec_impl,
         selected,
     )?;
     let encode_ms = encode_t0.elapsed().as_secs_f64() * 1_000.0;
@@ -631,7 +627,7 @@ fn run_csv_profile(
             entropy_skip_rows: Some(profile.entropy_skip_rows),
             use_condensed_samples: Some(profile.use_condensed_samples),
             base_table_impl: Some(format!("{:?}", profile.base_table_impl)),
-            delta_encode_base_table: Some(profile.delta_encode_base_table),
+            delta_codec_impl: Some(format!("{:?}", profile.delta_codec_impl)),
             ..ExperimentConfigColumns::default()
         },
         select_impl: profile.select_impl,
@@ -704,7 +700,7 @@ fn run_image_profile(
     let compressed = encode_data(
         profile.encode_impl,
         profile.base_table_impl,
-        profile.delta_encode_base_table,
+        profile.delta_codec_impl,
         selected,
     )?;
     let encode_ms = encode_t0.elapsed().as_secs_f64() * 1_000.0;
@@ -728,7 +724,7 @@ fn run_image_profile(
             entropy_skip_rows: Some(profile.entropy_skip_rows),
             use_condensed_samples: Some(profile.use_condensed_samples),
             base_table_impl: Some(format!("{:?}", profile.base_table_impl)),
-            delta_encode_base_table: Some(profile.delta_encode_base_table),
+            delta_codec_impl: Some(format!("{:?}", profile.delta_codec_impl)),
             ..ExperimentConfigColumns::default()
         },
         select_impl: profile.select_impl,
@@ -804,7 +800,7 @@ fn select_bases(
 fn encode_data(
     implementation: EncodeImpl,
     base_table_impl: BaseTableImpl,
-    delta_encode_base_table: bool,
+    delta_codec_impl: DeltaCodecImpl,
     input: BaseSelectionContext,
 ) -> Result<CompressedData, EntroGdError> {
     match implementation {
@@ -824,10 +820,10 @@ fn encode_data(
                 EncodeImpl::FusedDictionary => unreachable!(),
             }?;
 
-            if delta_encode_base_table {
-                DeltaEncodeBaseTable {}.process(compressed)
-            } else {
-                Ok(compressed)
+            match delta_codec_impl {
+                DeltaCodecImpl::None => Ok(compressed),
+                DeltaCodecImpl::Unary => DeltaEncodeBaseTable {}.process(compressed),
+                DeltaCodecImpl::Fixed => DeltaEncodeBaseTableFixed {}.process(compressed),
             }
         }
     }

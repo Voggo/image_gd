@@ -121,6 +121,8 @@ pub struct DeltaBaseTableData {
     pub delta_bit_stream: crate::BitStream,
     pub delta_count: usize,
     pub sort_column_order: Vec<usize>,
+    /// Codec tag: 1 for unary prefix, 2 for fixed prefix
+    pub codec_id: u8,
 }
 
 impl BaseTable {

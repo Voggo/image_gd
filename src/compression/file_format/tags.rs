@@ -8,7 +8,8 @@ pub(super) const ENCODING_TAG_HUFFMAN_BASE_ID_ONLY: u8 = 3;
 pub(super) const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
 
 pub(super) const BASE_TABLE_TAG_RAW: u8 = 0;
-pub(super) const BASE_TABLE_TAG_DELTA: u8 = 1;
+pub(super) const BASE_TABLE_TAG_DELTA_UNARY: u8 = 1;
+pub(super) const BASE_TABLE_TAG_DELTA_FIXED: u8 = 2;
 
 pub(super) fn encode_data_type(data_type: FeatureDataType) -> u8 {
     match data_type {

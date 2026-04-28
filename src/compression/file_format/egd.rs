@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::bit_io::{BitReader, BitWriter};
 use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
 use super::tags::{
-    BASE_TABLE_TAG_DELTA, BASE_TABLE_TAG_RAW, ENCODING_TAG_HUFFMAN_BASE_ID_ONLY,
+    BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_RAW, ENCODING_TAG_HUFFMAN_BASE_ID_ONLY,
     ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET, ENCODING_TAG_RLE_RM_PACKED,
     HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
@@ -16,7 +16,7 @@ use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
     HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationData, RleDeviationOffsetData,
-    get_delta_codec,
+    get_delta_codec, get_delta_codec_fixed,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -99,6 +99,7 @@ fn decode_delta_base_rows(
     first_sort_key: &crate::BitView,
     delta_count: usize,
     delta_bit_stream: &crate::BitView,
+    codec_tag: u8,
 ) -> Result<Vec<(crate::BitStream, usize)>, EntroGdError> {
     let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
     if num_bases == 0 {
@@ -127,7 +128,7 @@ fn decode_delta_base_rows(
 
     let mut bit_pos = 0usize;
     for _ in 0..delta_count {
-        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb)?;
+        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb, codec_tag)?;
         let delta = add_one(d.as_bitslice());
         let next_key = subtract_unsigned(prev_key.as_bitslice(), delta.as_bitslice());
         rows.push((sort_key_to_row(&next_key, order, lb), 0usize));
@@ -156,6 +157,21 @@ fn sort_key_to_row(sort_key: &crate::BitStream, order: &[usize], lb: usize) -> c
 }
 
 fn decode_adjusted_delta(
+    bits: &crate::BitView,
+    bit_pos: &mut usize,
+    lb: usize,
+    codec_tag: u8,
+) -> Result<crate::BitStream, EntroGdError> {
+    match codec_tag {
+        BASE_TABLE_TAG_DELTA_UNARY => decode_adjusted_delta_unary(bits, bit_pos, lb),
+        BASE_TABLE_TAG_DELTA_FIXED => decode_adjusted_delta_fixed(bits, bit_pos, lb),
+        other => Err(EntroGdError::InvalidMetadata {
+            message: format!("unsupported delta codec tag {}", other),
+        }),
+    }
+}
+
+fn decode_adjusted_delta_unary(
     bits: &crate::BitView,
     bit_pos: &mut usize,
     lb: usize,
@@ -201,6 +217,73 @@ fn decode_adjusted_delta(
     *bit_pos += payload_width;
 
     if tier == overflow_tier {
+        return Ok(payload.to_bitvec());
+    }
+
+    let mut payload_value = 0u64;
+    for idx in 0..payload_width {
+        if payload[idx] {
+            payload_value |= 1u64 << idx;
+        }
+    }
+    let value = start + payload_value;
+
+    let mut out = crate::BitStream::new();
+    let mut v = value;
+    while v > 0 {
+        out.push((v & 1) == 1);
+        v >>= 1;
+    }
+    Ok(out)
+}
+
+fn decode_adjusted_delta_fixed(
+    bits: &crate::BitView,
+    bit_pos: &mut usize,
+    lb: usize,
+) -> Result<crate::BitStream, EntroGdError> {
+    const CODEC: [(usize, u64); 16] = get_delta_codec_fixed();
+    const PREFIX_BITS: usize = 4; // log2(16) = 4 bits for tier ID
+    const OVERFLOW_TIER: usize = CODEC.len() - 1;
+
+    // Read fixed-width tier ID
+    if *bit_pos + PREFIX_BITS > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "insufficient bits for delta tier ID".to_string(),
+        });
+    }
+
+    let mut tier = 0usize;
+    for i in 0..PREFIX_BITS {
+        if bits[*bit_pos + i] {
+            tier |= 1usize << i;
+        }
+    }
+    *bit_pos += PREFIX_BITS;
+
+    if tier >= CODEC.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta tier ID out of range".to_string(),
+        });
+    }
+
+    let (payload_width, start): (usize, u64) = if tier < CODEC.len() - 1 {
+        CODEC[tier]
+    } else {
+        // Overflow tier uses lb bits
+        (lb, 0)
+    };
+
+    if *bit_pos + payload_width > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta payload exceeds bitstream".to_string(),
+        });
+    }
+
+    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
+    *bit_pos += payload_width;
+
+    if tier == OVERFLOW_TIER {
         return Ok(payload.to_bitvec());
     }
 
@@ -446,7 +529,7 @@ impl EgdFile {
                 }
             }
             BaseTable::Delta(delta) => {
-                writer.write_u8(BASE_TABLE_TAG_DELTA);
+                writer.write_u8(delta.codec_id); // 1 for UNARY, 2 for FIXED
                 let num_bases = u64::try_from(delta.raw_rows.len()).map_err(|_| {
                     EntroGdError::InvalidMetadata {
                         message: "num_bases does not fit into u64".to_string(),
@@ -777,7 +860,7 @@ impl EgdFile {
                 }
                 BaseTable::Raw(rows)
             }
-            BASE_TABLE_TAG_DELTA => {
+            BASE_TABLE_TAG_DELTA_UNARY | BASE_TABLE_TAG_DELTA_FIXED => {
                 let order_len = usize::try_from(reader.read_u64()?).map_err(|_| {
                     EntroGdError::InvalidMetadata {
                         message: "sort_column_order length does not fit into usize".to_string(),
@@ -821,6 +904,7 @@ impl EgdFile {
                     first_sort_key.as_bitslice(),
                     delta_count,
                     delta_bit_stream.as_bitslice(),
+                    base_table_tag,
                 )?;
                 entropy_sorted_column_order = Some(order.clone());
                 BaseTable::Delta(DeltaBaseTableData {
@@ -829,6 +913,7 @@ impl EgdFile {
                     delta_bit_stream,
                     delta_count,
                     sort_column_order: order,
+                    codec_id: base_table_tag, // 1 for UNARY, 2 for FIXED
                 })
             }
             other => {

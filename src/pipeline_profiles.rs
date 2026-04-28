@@ -48,6 +48,13 @@ pub enum BaseTableImpl {
     Sorted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaCodecImpl {
+    None,
+    Unary,
+    Fixed,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigSelectBasesImpl {
@@ -95,6 +102,14 @@ pub enum ConfigEntropyImpl {
 pub enum ConfigBaseTableImpl {
     Raw,
     Sorted,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigDeltaCodecImpl {
+    None,
+    Unary,
+    Fixed,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,7 +179,7 @@ pub struct CsvPipelineProfileConfig {
     pub entropy_skip_rows: Option<usize>,
     pub use_condensed_samples: Option<bool>,
     pub base_table_impl: Option<ConfigBaseTableImpl>,
-    pub delta_encode_base_table: Option<bool>,
+    pub delta_codec_impl: Option<ConfigDeltaCodecImpl>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -194,7 +209,7 @@ pub struct ImagePipelineProfileConfig {
     pub entropy_skip_rows: Option<usize>,
     pub use_condensed_samples: Option<bool>,
     pub base_table_impl: Option<ConfigBaseTableImpl>,
-    pub delta_encode_base_table: Option<bool>,
+    pub delta_codec_impl: Option<ConfigDeltaCodecImpl>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -270,7 +285,7 @@ pub struct CsvProfileGroupConfig {
     pub entropy_skip_rows: Option<IntegerSweepUsize>,
     pub use_condensed_samples: Option<Vec<bool>>,
     pub base_table_impl: Option<Vec<ConfigBaseTableImpl>>,
-    pub delta_encode_base_table: Option<Vec<bool>>,
+    pub delta_codec_impl: Option<Vec<ConfigDeltaCodecImpl>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -294,7 +309,7 @@ pub struct ImageProfileGroupConfig {
     pub entropy_skip_rows: Option<IntegerSweepUsize>,
     pub use_condensed_samples: Option<Vec<bool>>,
     pub base_table_impl: Option<Vec<ConfigBaseTableImpl>>,
-    pub delta_encode_base_table: Option<Vec<bool>>,
+    pub delta_codec_impl: Option<Vec<ConfigDeltaCodecImpl>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -313,7 +328,7 @@ pub struct CsvPipelineProfile {
     pub entropy_skip_rows: usize,
     pub use_condensed_samples: bool,
     pub base_table_impl: BaseTableImpl,
-    pub delta_encode_base_table: bool,
+    pub delta_codec_impl: DeltaCodecImpl,
     pub encode_impl: EncodeImpl,
 }
 
@@ -337,7 +352,7 @@ pub struct ImagePipelineProfile {
     pub entropy_skip_rows: usize,
     pub use_condensed_samples: bool,
     pub base_table_impl: BaseTableImpl,
-    pub delta_encode_base_table: bool,
+    pub delta_codec_impl: DeltaCodecImpl,
     pub encode_impl: EncodeImpl,
 }
 
@@ -365,7 +380,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 CsvPipelineProfile {
@@ -382,7 +397,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Rle,
                 },
                 CsvPipelineProfile {
@@ -399,7 +414,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Rle,
                 },
             ],
@@ -420,7 +435,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 ImagePipelineProfile {
@@ -439,7 +454,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Rle,
                 },
                 ImagePipelineProfile {
@@ -458,7 +473,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::HuffmanBaseIdOnly,
                 },
             ],
@@ -580,10 +595,10 @@ fn expand_csv_group(
         .base_table_impl
         .clone()
         .unwrap_or_else(|| vec![ConfigBaseTableImpl::Raw]);
-    let delta_encode_base_table = group
-        .delta_encode_base_table
+    let delta_codec_impl = group
+        .delta_codec_impl
         .clone()
-        .unwrap_or_else(|| vec![false]);
+        .unwrap_or_else(|| vec![ConfigDeltaCodecImpl::None]);
 
     if encode_impl
         .iter()
@@ -629,7 +644,7 @@ fn expand_csv_group(
         entropy_skip_rows.len(),
         use_condensed_samples.len(),
         base_table_impl.len(),
-        delta_encode_base_table.len(),
+        delta_codec_impl.len(),
         encode_impl.len(),
     ];
 
@@ -648,12 +663,12 @@ fn expand_csv_group(
         let entropy_skip_rows_item = entropy_skip_rows[indices[11]];
         let use_condensed_item = use_condensed_samples[indices[12]];
         let base_table_item = &base_table_impl[indices[13]];
-        let delta_base_table_item = delta_encode_base_table[indices[14]];
+        let delta_codec_item = &delta_codec_impl[indices[14]];
         let encode_item = &encode_impl[indices[15]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
+            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
             group.name,
             run_idx,
             m_max_item,
@@ -664,7 +679,7 @@ fn expand_csv_group(
             entropy_skip_rows_item,
             use_condensed_item,
             base_table_item,
-            delta_base_table_item,
+            delta_codec_item,
             encode_item
         );
 
@@ -686,7 +701,7 @@ fn expand_csv_group(
             entropy_skip_rows: entropy_skip_rows_item,
             use_condensed_samples: use_condensed_item,
             base_table_impl: base_table_item.clone().into(),
-            delta_encode_base_table: delta_base_table_item,
+            delta_codec_impl: delta_codec_item.clone().into(),
             encode_impl: convert_encode_impl(encode_item.clone())?,
         });
 
@@ -755,10 +770,10 @@ fn expand_image_group(
         .base_table_impl
         .clone()
         .unwrap_or_else(|| vec![ConfigBaseTableImpl::Raw]);
-    let delta_encode_base_table = group
-        .delta_encode_base_table
+    let delta_codec_impl = group
+        .delta_codec_impl
         .clone()
-        .unwrap_or_else(|| vec![false]);
+        .unwrap_or_else(|| vec![ConfigDeltaCodecImpl::None]);
 
     if encode_impl
         .iter()
@@ -798,7 +813,7 @@ fn expand_image_group(
         entropy_skip_rows.len(),
         use_condensed_samples.len(),
         base_table_impl.len(),
-        delta_encode_base_table.len(),
+        delta_codec_impl.len(),
         encode_impl.len(),
     ];
 
@@ -815,12 +830,12 @@ fn expand_image_group(
         let entropy_skip_rows_item = entropy_skip_rows[indices[9]];
         let use_condensed_item = use_condensed_samples[indices[10]];
         let base_table_item = &base_table_impl[indices[11]];
-        let delta_base_table_item = delta_encode_base_table[indices[12]];
+        let delta_codec_item = &delta_codec_impl[indices[12]];
         let encode_item = &encode_impl[indices[13]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_cm{:?}_pg{}x{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
+            "{}__{:03}_cm{:?}_pg{}x{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
             group.name,
             run_idx,
             color_model_item,
@@ -833,7 +848,7 @@ fn expand_image_group(
             entropy_skip_rows_item,
             use_condensed_item,
             base_table_item,
-            delta_base_table_item,
+            delta_codec_item,
             encode_item
         );
 
@@ -856,7 +871,7 @@ fn expand_image_group(
             entropy_skip_rows: entropy_skip_rows_item,
             use_condensed_samples: use_condensed_item,
             base_table_impl: base_table_item.clone().into(),
-            delta_encode_base_table: delta_base_table_item,
+            delta_codec_impl: delta_codec_item.clone().into(),
             encode_impl: convert_encode_impl(encode_item.clone())?,
         });
 
@@ -1047,6 +1062,12 @@ impl_from_enum!(ConfigImageGroupingTransform => ImageGroupingTransform {
     ForMin => ForMin,
 });
 
+impl_from_enum!(ConfigDeltaCodecImpl => DeltaCodecImpl {
+    None => None,
+    Unary => Unary,
+    Fixed => Fixed,
+});
+
 impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
     type Error = EntroGdError;
 
@@ -1102,7 +1123,10 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
                 .base_table_impl
                 .unwrap_or(ConfigBaseTableImpl::Raw)
                 .into(),
-            delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
+            delta_codec_impl: value
+                .delta_codec_impl
+                .unwrap_or(ConfigDeltaCodecImpl::None)
+                .into(),
             encode_impl: convert_encode_impl(value.encode_impl)?,
         })
     }
@@ -1158,7 +1182,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
                 .base_table_impl
                 .unwrap_or(ConfigBaseTableImpl::Raw)
                 .into(),
-            delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
+            delta_codec_impl: value
+                .delta_codec_impl
+                .unwrap_or(ConfigDeltaCodecImpl::None)
+                .into(),
             encode_impl: convert_encode_impl(value.encode_impl)?,
         })
     }
