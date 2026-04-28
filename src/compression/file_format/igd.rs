@@ -8,13 +8,13 @@ use crate::compression::decompression::{decompress_file, write_bitdata_as_image}
 use crate::compression::encoding::CompressedData;
 use crate::compression::preprocessor::{
     BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
-    ImageReconstructionInfo,
+    ImageReconstructionInfo, PixelGrouping,
 };
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 
 pub const IMAGE_MAGIC_BYTES: [u8; 3] = *b"IGD";
-pub const IMAGE_FORMAT_VERSION: u8 = 3;
+pub const IMAGE_FORMAT_VERSION: u8 = 4;
 
 /// In-memory IGD file contents (image + compressed payload) that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +40,7 @@ impl IgdFile {
                 message: "IGD payload length does not fit into u64".to_string(),
             })?;
 
-        let mut bytes = Vec::with_capacity(28 + payload.len());
+        let mut bytes = Vec::with_capacity(32 + payload.len());
         bytes.extend_from_slice(&IMAGE_MAGIC_BYTES);
         bytes.push(IMAGE_FORMAT_VERSION);
         bytes.extend_from_slice(&image_info.width.to_be_bytes());
@@ -49,7 +49,8 @@ impl IgdFile {
         bytes.push(image_info.colorspace);
         bytes.push(image_info.color_model.as_u8());
         bytes.push(image_info.grouping_transform.as_u8());
-        bytes.extend_from_slice(&image_info.pixel_grouping.to_be_bytes());
+        bytes.extend_from_slice(&image_info.pixel_grouping.width().to_be_bytes());
+        bytes.extend_from_slice(&image_info.pixel_grouping.height().to_be_bytes());
         bytes.extend_from_slice(&payload_len.to_be_bytes());
         bytes.extend_from_slice(payload);
 
@@ -66,7 +67,7 @@ impl IgdFile {
     }
 
     pub fn to_compressed_data(&self) -> Result<CompressedData, EntroGdError> {
-        const HEADER_LEN: usize = 28;
+        const HEADER_LEN: usize = 32;
         if self.bytes.len() < HEADER_LEN {
             return Err(EntroGdError::InvalidMetadata {
                 message: "IGD file too short".to_string(),
@@ -102,27 +103,33 @@ impl IgdFile {
 
         let grouping_transform = ImageGroupingTransform::from_u8(self.bytes[15])?;
 
-        let pixel_grouping = u32::from_be_bytes([
+        let pixel_grouping_width = u32::from_be_bytes([
             self.bytes[16],
             self.bytes[17],
             self.bytes[18],
             self.bytes[19],
         ]);
-        if pixel_grouping == 0 {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "IGD pixel_grouping must be > 0".to_string(),
-            });
-        }
-
-        let payload_len = u64::from_be_bytes([
+        let pixel_grouping_height = u32::from_be_bytes([
             self.bytes[20],
             self.bytes[21],
             self.bytes[22],
             self.bytes[23],
+        ]);
+        if pixel_grouping_width == 0 || pixel_grouping_height == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "IGD pixel_grouping width and height must be > 0".to_string(),
+            });
+        }
+
+        let payload_len = u64::from_be_bytes([
             self.bytes[24],
             self.bytes[25],
             self.bytes[26],
             self.bytes[27],
+            self.bytes[28],
+            self.bytes[29],
+            self.bytes[30],
+            self.bytes[31],
         ]) as usize;
 
         let payload_start = HEADER_LEN;
@@ -154,7 +161,7 @@ impl IgdFile {
                 height,
                 channels,
                 color_model,
-                pixel_grouping,
+                pixel_grouping: PixelGrouping::new(pixel_grouping_width, pixel_grouping_height),
                 grouping_transform,
                 colorspace,
             });

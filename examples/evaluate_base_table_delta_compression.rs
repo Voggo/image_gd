@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
+use csv::Writer;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{
@@ -22,8 +23,10 @@ fn main() -> Result<(), EntroGdError> {
 
     let input_path = PathBuf::from(&args[1]);
     let use_sorted = !args.iter().any(|arg| arg == "--unsorted");
+    let image_build_options = image_build_options();
 
     let bit_data = load_bit_data(&input_path)?;
+    let output_path = build_output_csv_path(&input_path, use_sorted, &image_build_options);
 
     let context = if use_sorted {
         EntropyBatched {}
@@ -74,8 +77,10 @@ fn main() -> Result<(), EntroGdError> {
         .map(|key| bits_needed_unsigned(key))
         .sum();
 
-    let (delta_bits_signed_prev, delta_bit_length_distribution) =
-        estimate_delta_bits_signed_prev_with_distribution(&sort_key_views);
+    let (delta_bits_prev, delta_rows, delta_metric_label) =
+        build_delta_distribution_rows(&sort_key_views, use_sorted);
+
+    write_delta_distribution_csv(&output_path, &delta_rows)?;
 
     println!("=== Base-table delta lower-bound quick evaluation ===");
     println!("Input: {}", input_path.display());
@@ -105,9 +110,10 @@ fn main() -> Result<(), EntroGdError> {
         absolute_per_row_bits as f64 / 8.0
     );
     println!(
-        "  Delta-to-previous row, signed minimal width: {} bits ({:.2} bytes)",
-        delta_bits_signed_prev,
-        delta_bits_signed_prev as f64 / 8.0
+        "  Delta-to-previous row, {} minimal width: {} bits ({:.2} bytes)",
+        delta_metric_label,
+        delta_bits_prev,
+        delta_bits_prev as f64 / 8.0
     );
     println!();
     println!("Ratios vs fixed-width baseline:");
@@ -117,44 +123,26 @@ fn main() -> Result<(), EntroGdError> {
     );
     println!(
         "  Delta minimal / fixed:    {:.4}",
-        delta_bits_signed_prev as f64 / fixed_raw_bits as f64
+        delta_bits_prev as f64 / fixed_raw_bits as f64
     );
     println!();
-    println!("Delta signed-bit-length distribution (per delta to previous row):");
-    if delta_bit_length_distribution.is_empty() {
+    println!("CSV output written to: {}", output_path.display());
+    println!(
+        "Delta {}-bit-length distribution (per delta to previous row):",
+        delta_metric_label
+    );
+    if delta_rows.is_empty() {
         println!("  (no deltas)");
     } else {
-        let total_delta_bits_only: usize = delta_bit_length_distribution
-            .iter()
-            .map(|(bit_len, count)| bit_len * count)
-            .sum();
-        let total_deltas: usize = delta_bit_length_distribution.values().sum();
-        let mut cumulative_bits = 0usize;
-        let mut cumulative_count = 0usize;
-
         println!(
             "  {:>8} | {:>7} | {:>10} | {:>10} | {:>10}",
             "bit_len", "count", "cum_count", "cum<=len%", "cum_bits%"
         );
         println!("  ----------------------------------------------");
-        for (bit_len, count) in &delta_bit_length_distribution {
-            cumulative_count += count;
-            cumulative_bits += bit_len * count;
-
-            let cumulative_count_pct = if total_deltas == 0 {
-                0.0
-            } else {
-                100.0 * cumulative_count as f64 / total_deltas as f64
-            };
-            let cumulative_bits_pct = if total_delta_bits_only == 0 {
-                0.0
-            } else {
-                100.0 * cumulative_bits as f64 / total_delta_bits_only as f64
-            };
-
+        for row in &delta_rows {
             println!(
                 "  {:>6}b | {:>7} | {:>10} | {:>9.2}% | {:>9.2}%",
-                bit_len, count, cumulative_count, cumulative_count_pct, cumulative_bits_pct
+                row.bit_len, row.count, row.cum_count, row.cum_len_pct, row.cum_bits_pct
             );
         }
     }
@@ -162,16 +150,93 @@ fn main() -> Result<(), EntroGdError> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DeltaDistributionRow {
+    bit_len: usize,
+    count: usize,
+    cum_count: usize,
+    cum_len_pct: f64,
+    cum_bits_pct: f64,
+}
+
+fn image_build_options() -> BuildImageBitDataSet {
+    BuildImageBitDataSet {
+        colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+        color_model: ImageColorModel::YCoCgR,
+        pixel_grouping: PixelGrouping::new(8, 1),
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pad_rows_to_word: false,
+    }
+}
+
+fn build_output_csv_path(
+    input_path: &Path,
+    use_sorted: bool,
+    image_options: &BuildImageBitDataSet,
+) -> PathBuf {
+    let output_dir = PathBuf::from("target/base_table_delta_compression");
+    let input_label = if is_image_path(input_path) {
+        input_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("image_dataset")
+            .to_string()
+    } else {
+        input_path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("dataset")
+            .to_string()
+    };
+
+    let order_label = if use_sorted { "sorted" } else { "unsorted" };
+    let delta_label = if use_sorted { "unsigned" } else { "signed" };
+    let file_name = if is_image_path(input_path) {
+        format!(
+            "{}__{}__{}__cs-{:?}__cm-{:?}__pg-{}__gt-{:?}.csv",
+            input_label,
+            order_label,
+            delta_label,
+            image_options.colorspace,
+            image_options.color_model,
+            image_options.pixel_grouping,
+            image_options.grouping_transform,
+        )
+    } else {
+        format!("{}__{}__{}__csv.csv", input_label, order_label, delta_label)
+    };
+
+    output_dir.join(file_name)
+}
+
+fn write_delta_distribution_csv(
+    output_path: &Path,
+    rows: &[DeltaDistributionRow],
+) -> Result<(), EntroGdError> {
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut writer = Writer::from_path(output_path)?;
+    writer.write_record(["bit_len", "count", "cum_count", "cum<=len%", "cum_bits%"])?;
+
+    for row in rows {
+        writer.write_record([
+            row.bit_len.to_string(),
+            row.count.to_string(),
+            row.cum_count.to_string(),
+            format!("{:.2}", row.cum_len_pct),
+            format!("{:.2}", row.cum_bits_pct),
+        ])?;
+    }
+
+    writer.flush()?;
+    Ok(())
+}
+
 fn load_bit_data(input_path: &Path) -> Result<BitDataSet, EntroGdError> {
     if is_image_path(input_path) {
-        BuildImageBitDataSet {
-            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
-            color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: 4,
-            grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: false,
-        }
-        .process(input_path.to_path_buf())
+        image_build_options().process(input_path.to_path_buf())
     } else {
         let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
         let loaded = loader.load(input_path)?;
@@ -196,11 +261,16 @@ fn is_image_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn estimate_delta_bits_signed_prev_with_distribution(
+fn build_delta_distribution_rows(
     rows: &[&entro_gd::BitView],
-) -> (usize, BTreeMap<usize, usize>) {
+    use_sorted: bool,
+) -> (usize, Vec<DeltaDistributionRow>, &'static str) {
     if rows.is_empty() {
-        return (0, BTreeMap::new());
+        return (
+            0,
+            Vec::new(),
+            if use_sorted { "unsigned" } else { "signed" },
+        );
     }
 
     let mut distribution: BTreeMap<usize, usize> = BTreeMap::new();
@@ -216,17 +286,57 @@ fn estimate_delta_bits_signed_prev_with_distribution(
         let magnitude_bits = bits_needed_unsigned(magnitude.as_bitslice());
 
         // Lower-bound signed representation: 0 bits for zero delta, else sign + magnitude bits.
-        let signed_bits = if magnitude_bits == 0 {
+        let delta_bits = if use_sorted {
+            magnitude_bits
+        } else if magnitude_bits == 0 {
             0
         } else {
             1 + magnitude_bits
         };
 
-        *distribution.entry(signed_bits).or_insert(0) += 1;
-        total_bits += signed_bits;
+        *distribution.entry(delta_bits).or_insert(0) += 1;
+        total_bits += delta_bits;
     }
 
-    (total_bits, distribution)
+    let total_deltas: usize = distribution.values().sum();
+    let total_delta_bits_only: usize = distribution
+        .iter()
+        .map(|(bit_len, count)| bit_len * count)
+        .sum();
+
+    let mut cumulative_bits = 0usize;
+    let mut cumulative_count = 0usize;
+    let mut rows_out = Vec::with_capacity(distribution.len());
+
+    for (bit_len, count) in distribution {
+        cumulative_count += count;
+        cumulative_bits += bit_len * count;
+
+        let cum_len_pct = if total_deltas == 0 {
+            0.0
+        } else {
+            100.0 * cumulative_count as f64 / total_deltas as f64
+        };
+        let cum_bits_pct = if total_delta_bits_only == 0 {
+            0.0
+        } else {
+            100.0 * cumulative_bits as f64 / total_delta_bits_only as f64
+        };
+
+        rows_out.push(DeltaDistributionRow {
+            bit_len,
+            count,
+            cum_count: cumulative_count,
+            cum_len_pct,
+            cum_bits_pct,
+        });
+    }
+
+    (
+        total_bits,
+        rows_out,
+        if use_sorted { "unsigned" } else { "signed" },
+    )
 }
 
 fn build_sort_key_local_order(context: &entro_gd::PreEncodeContext) -> Vec<usize> {

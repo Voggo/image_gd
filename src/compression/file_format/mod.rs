@@ -26,7 +26,7 @@ mod tests {
     use crate::compression::entropy::EntropyBatched;
     use crate::compression::preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
-        ImageGroupingTransform, ImageReconstructionInfo,
+        ImageGroupingTransform, ImageReconstructionInfo, PixelGrouping,
     };
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
@@ -168,7 +168,7 @@ mod tests {
                 height: 2,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping(1, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0,
             }),
@@ -190,7 +190,7 @@ mod tests {
                 height: 2,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping(1, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0
             })
@@ -214,7 +214,7 @@ mod tests {
                 height: 1,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 4,
+                pixel_grouping: PixelGrouping::new(1, 1),
                 grouping_transform: ImageGroupingTransform::ForMin,
                 colorspace: 0,
             }),
@@ -234,7 +234,7 @@ mod tests {
                 height: 1,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 4,
+                pixel_grouping: PixelGrouping(1, 1),
                 grouping_transform: ImageGroupingTransform::ForMin,
                 colorspace: 0
             })
@@ -319,20 +319,20 @@ mod tests {
             .into_iter()
             .map(|b| b != 0)
             .collect(),
-            num_rows: 4,
+            num_rows: 2,
             stride: 12,
             chunk_size: 12,
         };
         let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 4); 3];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
-            48,
+            24,
             BitDataReconstructionInfo::Image(ImageReconstructionInfo {
                 width: 2,
                 height: 2,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping::new(4, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0,
             }),
@@ -354,7 +354,7 @@ mod tests {
                 height: 2,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping(4, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0
             })

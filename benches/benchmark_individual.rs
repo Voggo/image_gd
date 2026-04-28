@@ -433,7 +433,7 @@ enum StepBenchInput {
     Image {
         colorspace: ImageColorSpace,
         color_model: ImageColorModel,
-        pixel_grouping: u32,
+        pixel_grouping: PixelGrouping,
         grouping_transform: ImageGroupingTransform,
     },
 }
@@ -456,7 +456,7 @@ impl StepBenchCase {
     fn image_with_transform(
         data_file_path: &'static str,
         color_model: ImageColorModel,
-        pixel_grouping: u32,
+        pixel_grouping: PixelGrouping,
         grouping_transform: ImageGroupingTransform,
         m_max: usize,
         patience: usize,
@@ -486,10 +486,18 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
         StepBenchCase::image_with_transform(
             "data/images/kodim10.png",
             ImageColorModel::YCoCgR,
-            4,
+            PixelGrouping::new(4, 1),
             ImageGroupingTransform::ForFirstPixel,
             0,
-            20,
+            10,
+        ),
+        StepBenchCase::image_with_transform(
+            "data/images/wikipedia_008.png",
+            ImageColorModel::YCoCgR,
+            PixelGrouping::new(4, 1),
+            ImageGroupingTransform::ForFirstPixel,
+            0,
+            10,
         ),
     ]
 }

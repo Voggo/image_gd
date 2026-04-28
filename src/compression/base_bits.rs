@@ -1,6 +1,7 @@
 use crate::compression::preprocessor::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
+use rayon::prelude::*;
 
 use fxhash::{FxHashMap, FxHashSet};
 use once_cell::unsync::OnceCell;
@@ -950,14 +951,6 @@ impl BaseBitHyperLogLogCount {
         z ^ (z >> 31)
     }
 
-    fn avalanche_hash(mut value: u64) -> u64 {
-        value ^= value >> 33;
-        value = value.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-        value ^= value >> 33;
-        value = value.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
-        value ^ (value >> 33)
-    }
-
     fn hll_alpha(num_registers: usize) -> f64 {
         match num_registers {
             16 => 0.673,
@@ -997,6 +990,7 @@ impl BaseBitHyperLogLogCount {
 
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
+        const MIN_ROWS_FOR_PARALLEL: usize = 1_024;
 
         let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
         if new_bit_positions.is_empty() {
@@ -1020,31 +1014,76 @@ impl BaseBitHyperLogLogCount {
 
         let new_bit_positions = new_bit_positions.as_slice();
 
-        for row in 0..self.row_hashes.len() {
-            let row_start = row * stride;
+        if self.row_hashes.len() >= MIN_ROWS_FOR_PARALLEL {
+            let reduced_registers = self
+                .row_hashes
+                .par_iter_mut()
+                .enumerate()
+                .fold(
+                    || [0u8; 1usize << Self::HLL_PRECISION],
+                    |mut local_registers, (row, row_hash)| {
+                        let row_start = row * stride;
 
-            let row_hash = unsafe { self.row_hashes.get_unchecked_mut(row) };
+                        for &bit_position in new_bit_positions {
+                            let bit = unsafe {
+                                bit_data
+                                    .data
+                                    .get_bit_linear_unchecked(row_start + bit_position)
+                            } as u64;
+                            let hash_word =
+                                unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
+                            let bit_mask = 0u64.wrapping_sub(bit);
+                            *row_hash ^= hash_word & bit_mask;
+                        }
 
-            for &bit_position in new_bit_positions {
-                let bit = unsafe {
-                    bit_data
-                        .data
-                        .get_bit_linear_unchecked(row_start + bit_position)
-                } as u64;
-                let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
-                let bit_mask = 0u64.wrapping_sub(bit);
-                *row_hash ^= hash_word & bit_mask;
+                        let bucket = (*row_hash >> bucket_shift) as usize;
+
+                        let suffix = *row_hash << Self::HLL_PRECISION;
+                        let rank = (suffix.leading_zeros() as usize + 1)
+                            .min((64 - Self::HLL_PRECISION as usize) + 1)
+                            as u8;
+
+                        local_registers[bucket] = local_registers[bucket].max(rank);
+                        local_registers
+                    },
+                )
+                .reduce(
+                    || [0u8; 1usize << Self::HLL_PRECISION],
+                    |mut left, right| {
+                        for (left_reg, right_reg) in left.iter_mut().zip(right.iter()) {
+                            *left_reg = (*left_reg).max(*right_reg);
+                        }
+                        left
+                    },
+                );
+
+            self.registers.copy_from_slice(&reduced_registers);
+        } else {
+            for row in 0..self.row_hashes.len() {
+                let row_start = row * stride;
+
+                let row_hash = unsafe { self.row_hashes.get_unchecked_mut(row) };
+
+                for &bit_position in new_bit_positions {
+                    let bit = unsafe {
+                        bit_data
+                            .data
+                            .get_bit_linear_unchecked(row_start + bit_position)
+                    } as u64;
+                    let hash_word = unsafe { *self.bit_hash_words.get_unchecked(bit_position) };
+                    let bit_mask = 0u64.wrapping_sub(bit);
+                    *row_hash ^= hash_word & bit_mask;
+                }
+
+                let bucket = (*row_hash >> bucket_shift) as usize;
+
+                let suffix = *row_hash << Self::HLL_PRECISION;
+                let rank = (suffix.leading_zeros() as usize + 1)
+                    .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
+
+                let register = unsafe { self.registers.get_unchecked_mut(bucket) };
+                *register = (*register).max(rank);
             }
-
-            let mixed = Self::avalanche_hash(*row_hash ^ 0xA24B_AED4_963E_E407);
-            let bucket = (mixed >> bucket_shift) as usize;
-
-            let suffix = mixed << Self::HLL_PRECISION;
-            let rank = (suffix.leading_zeros() as usize + 1)
-                .min((64 - Self::HLL_PRECISION as usize) + 1) as u8;
-
-            let register = unsafe { self.registers.get_unchecked_mut(bucket) };
-            *register = (*register).max(rank);
         }
 
         self.num_bases_estimate =

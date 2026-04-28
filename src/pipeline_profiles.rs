@@ -1,6 +1,7 @@
 use crate::compression::image_preprocessor::ImageColorSpace;
-use crate::compression::preprocessor::PreprocessOptions;
-use crate::compression::preprocessor::{FloatScalingMode, ImageColorModel, ImageGroupingTransform};
+use crate::compression::preprocessor::{
+    FloatScalingMode, ImageColorModel, ImageGroupingTransform, PixelGrouping, PreprocessOptions,
+};
 use crate::data_loader::{FloatStorage, MissingValuePolicy};
 use crate::error::EntroGdError;
 use serde::Deserialize;
@@ -29,6 +30,7 @@ pub enum EncodeImpl {
     Optimized,
     FusedDictionary,
     Rle,
+    OffsetRle,
     HuffmanBaseIdOnly,
 }
 
@@ -44,6 +46,13 @@ pub enum EntropyImpl {
 pub enum BaseTableImpl {
     Raw,
     Sorted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaCodecImpl {
+    None,
+    Unary,
+    Fixed,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,6 +82,7 @@ pub enum ConfigEncodeImpl {
     Optimized,
     FusedDictionary,
     Rle,
+    OffsetRle,
     Huffman,
     HuffmanBaseIdOnly,
 }
@@ -92,6 +102,14 @@ pub enum ConfigEntropyImpl {
 pub enum ConfigBaseTableImpl {
     Raw,
     Sorted,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigDeltaCodecImpl {
+    None,
+    Unary,
+    Fixed,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -161,7 +179,7 @@ pub struct CsvPipelineProfileConfig {
     pub entropy_skip_rows: Option<usize>,
     pub use_condensed_samples: Option<bool>,
     pub base_table_impl: Option<ConfigBaseTableImpl>,
-    pub delta_encode_base_table: Option<bool>,
+    pub delta_codec_impl: Option<ConfigDeltaCodecImpl>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -169,8 +187,14 @@ pub struct CsvPipelineProfileConfig {
 pub struct ImageBuildConfigSerializable {
     pub colorspace: ConfigImageColorSpace,
     pub color_model: ConfigImageColorModel,
-    pub pixel_grouping: u32,
+    pub pixel_grouping: ImageGroupingConfig,
     pub grouping_transform: ConfigImageGroupingTransform,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageGroupingConfig {
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -185,7 +209,7 @@ pub struct ImagePipelineProfileConfig {
     pub entropy_skip_rows: Option<usize>,
     pub use_condensed_samples: Option<bool>,
     pub base_table_impl: Option<ConfigBaseTableImpl>,
-    pub delta_encode_base_table: Option<bool>,
+    pub delta_codec_impl: Option<ConfigDeltaCodecImpl>,
     pub encode_impl: ConfigEncodeImpl,
 }
 
@@ -261,7 +285,7 @@ pub struct CsvProfileGroupConfig {
     pub entropy_skip_rows: Option<IntegerSweepUsize>,
     pub use_condensed_samples: Option<Vec<bool>>,
     pub base_table_impl: Option<Vec<ConfigBaseTableImpl>>,
-    pub delta_encode_base_table: Option<Vec<bool>>,
+    pub delta_codec_impl: Option<Vec<ConfigDeltaCodecImpl>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -269,7 +293,7 @@ pub struct CsvProfileGroupConfig {
 pub struct ImageBuildSweepConfig {
     pub colorspace: Option<Vec<ConfigImageColorSpace>>,
     pub color_model: Option<Vec<ConfigImageColorModel>>,
-    pub pixel_grouping: Option<IntegerSweepU32>,
+    pub pixel_grouping: Option<Vec<ImageGroupingConfig>>,
     pub grouping_transform: Option<Vec<ConfigImageGroupingTransform>>,
 }
 
@@ -285,7 +309,7 @@ pub struct ImageProfileGroupConfig {
     pub entropy_skip_rows: Option<IntegerSweepUsize>,
     pub use_condensed_samples: Option<Vec<bool>>,
     pub base_table_impl: Option<Vec<ConfigBaseTableImpl>>,
-    pub delta_encode_base_table: Option<Vec<bool>>,
+    pub delta_codec_impl: Option<Vec<ConfigDeltaCodecImpl>>,
     pub encode_impl: Option<Vec<ConfigEncodeImpl>>,
 }
 
@@ -304,7 +328,7 @@ pub struct CsvPipelineProfile {
     pub entropy_skip_rows: usize,
     pub use_condensed_samples: bool,
     pub base_table_impl: BaseTableImpl,
-    pub delta_encode_base_table: bool,
+    pub delta_codec_impl: DeltaCodecImpl,
     pub encode_impl: EncodeImpl,
 }
 
@@ -312,7 +336,7 @@ pub struct CsvPipelineProfile {
 pub struct ImageBuildConfig {
     pub colorspace: ImageColorSpace,
     pub color_model: ImageColorModel,
-    pub pixel_grouping: u32,
+    pub pixel_grouping: PixelGrouping,
     pub grouping_transform: ImageGroupingTransform,
 }
 
@@ -328,7 +352,7 @@ pub struct ImagePipelineProfile {
     pub entropy_skip_rows: usize,
     pub use_condensed_samples: bool,
     pub base_table_impl: BaseTableImpl,
-    pub delta_encode_base_table: bool,
+    pub delta_codec_impl: DeltaCodecImpl,
     pub encode_impl: EncodeImpl,
 }
 
@@ -356,7 +380,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 CsvPipelineProfile {
@@ -373,7 +397,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Rle,
                 },
                 CsvPipelineProfile {
@@ -390,7 +414,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Rle,
                 },
             ],
@@ -400,7 +424,7 @@ impl PipelineProfileSet {
                     build: ImageBuildConfig {
                         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                         color_model: ImageColorModel::Rgb,
-                        pixel_grouping: 1,
+                        pixel_grouping: PixelGrouping::new(1, 1),
                         grouping_transform: ImageGroupingTransform::Raw,
                     },
                     m_max: 0,
@@ -411,7 +435,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Optimized,
                 },
                 ImagePipelineProfile {
@@ -419,7 +443,7 @@ impl PipelineProfileSet {
                     build: ImageBuildConfig {
                         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                         color_model: ImageColorModel::YCoCgR,
-                        pixel_grouping: 1,
+                        pixel_grouping: PixelGrouping::new(1, 1),
                         grouping_transform: ImageGroupingTransform::ForFirstPixel,
                     },
                     m_max: 25,
@@ -430,7 +454,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::Rle,
                 },
                 ImagePipelineProfile {
@@ -438,7 +462,7 @@ impl PipelineProfileSet {
                     build: ImageBuildConfig {
                         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                         color_model: ImageColorModel::YCoCgR,
-                        pixel_grouping: 2,
+                        pixel_grouping: PixelGrouping::new(2, 1),
                         grouping_transform: ImageGroupingTransform::ForMin,
                     },
                     m_max: 75,
@@ -449,7 +473,7 @@ impl PipelineProfileSet {
                     entropy_skip_rows: 0,
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
-                    delta_encode_base_table: false,
+                    delta_codec_impl: DeltaCodecImpl::None,
                     encode_impl: EncodeImpl::HuffmanBaseIdOnly,
                 },
             ],
@@ -571,10 +595,10 @@ fn expand_csv_group(
         .base_table_impl
         .clone()
         .unwrap_or_else(|| vec![ConfigBaseTableImpl::Raw]);
-    let delta_encode_base_table = group
-        .delta_encode_base_table
+    let delta_codec_impl = group
+        .delta_codec_impl
         .clone()
-        .unwrap_or_else(|| vec![false]);
+        .unwrap_or_else(|| vec![ConfigDeltaCodecImpl::None]);
 
     if encode_impl
         .iter()
@@ -620,7 +644,7 @@ fn expand_csv_group(
         entropy_skip_rows.len(),
         use_condensed_samples.len(),
         base_table_impl.len(),
-        delta_encode_base_table.len(),
+        delta_codec_impl.len(),
         encode_impl.len(),
     ];
 
@@ -639,12 +663,12 @@ fn expand_csv_group(
         let entropy_skip_rows_item = entropy_skip_rows[indices[11]];
         let use_condensed_item = use_condensed_samples[indices[12]];
         let base_table_item = &base_table_impl[indices[13]];
-        let delta_base_table_item = delta_encode_base_table[indices[14]];
+        let delta_codec_item = &delta_codec_impl[indices[14]];
         let encode_item = &encode_impl[indices[15]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
+            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
             group.name,
             run_idx,
             m_max_item,
@@ -655,7 +679,7 @@ fn expand_csv_group(
             entropy_skip_rows_item,
             use_condensed_item,
             base_table_item,
-            delta_base_table_item,
+            delta_codec_item,
             encode_item
         );
 
@@ -677,7 +701,7 @@ fn expand_csv_group(
             entropy_skip_rows: entropy_skip_rows_item,
             use_condensed_samples: use_condensed_item,
             base_table_impl: base_table_item.clone().into(),
-            delta_encode_base_table: delta_base_table_item,
+            delta_codec_impl: delta_codec_item.clone().into(),
             encode_impl: convert_encode_impl(encode_item.clone())?,
         });
 
@@ -709,7 +733,12 @@ fn expand_image_group(
     let color_model = build
         .color_model
         .unwrap_or_else(|| vec![ConfigImageColorModel::Rgb]);
-    let pixel_grouping = expand_u32_sweep(build.pixel_grouping.as_ref(), 1)?;
+    let pixel_grouping = build.pixel_grouping.unwrap_or_else(|| {
+        vec![ImageGroupingConfig {
+            width: 1,
+            height: 1,
+        }]
+    });
     let grouping_transform = build
         .grouping_transform
         .unwrap_or_else(|| vec![ConfigImageGroupingTransform::Raw]);
@@ -741,10 +770,10 @@ fn expand_image_group(
         .base_table_impl
         .clone()
         .unwrap_or_else(|| vec![ConfigBaseTableImpl::Raw]);
-    let delta_encode_base_table = group
-        .delta_encode_base_table
+    let delta_codec_impl = group
+        .delta_codec_impl
         .clone()
-        .unwrap_or_else(|| vec![false]);
+        .unwrap_or_else(|| vec![ConfigDeltaCodecImpl::None]);
 
     if encode_impl
         .iter()
@@ -758,9 +787,15 @@ fn expand_image_group(
         });
     }
 
-    if pixel_grouping.contains(&0) {
+    if pixel_grouping
+        .iter()
+        .any(|grouping| grouping.width == 0 || grouping.height == 0)
+    {
         return Err(EntroGdError::InvalidMetadata {
-            message: format!("image group '{}' has invalid pixel_grouping=0", group.name),
+            message: format!(
+                "image group '{}' has invalid pixel_grouping dimensions",
+                group.name
+            ),
         });
     }
 
@@ -778,14 +813,14 @@ fn expand_image_group(
         entropy_skip_rows.len(),
         use_condensed_samples.len(),
         base_table_impl.len(),
-        delta_encode_base_table.len(),
+        delta_codec_impl.len(),
         encode_impl.len(),
     ];
 
     for_each_combination(&axis_lengths, |indices| {
         let colorspace_item = &colorspace[indices[0]];
         let color_model_item = &color_model[indices[1]];
-        let pixel_grouping_item = pixel_grouping[indices[2]];
+        let pixel_grouping_item = &pixel_grouping[indices[2]];
         let grouping_transform_item = &grouping_transform[indices[3]];
         let m_max_item = m_max[indices[4]];
         let patience_item = patience[indices[5]];
@@ -795,16 +830,17 @@ fn expand_image_group(
         let entropy_skip_rows_item = entropy_skip_rows[indices[9]];
         let use_condensed_item = use_condensed_samples[indices[10]];
         let base_table_item = &base_table_impl[indices[11]];
-        let delta_base_table_item = delta_encode_base_table[indices[12]];
+        let delta_codec_item = &delta_codec_impl[indices[12]];
         let encode_item = &encode_impl[indices[13]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_cm{:?}_pg{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dt{}_enc{:?}",
+            "{}__{:03}_cm{:?}_pg{}x{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
             group.name,
             run_idx,
             color_model_item,
-            pixel_grouping_item,
+            pixel_grouping_item.width,
+            pixel_grouping_item.height,
             grouping_transform_item,
             select_item,
             base_bit_item,
@@ -812,7 +848,7 @@ fn expand_image_group(
             entropy_skip_rows_item,
             use_condensed_item,
             base_table_item,
-            delta_base_table_item,
+            delta_codec_item,
             encode_item
         );
 
@@ -821,7 +857,10 @@ fn expand_image_group(
             build: ImageBuildConfig {
                 colorspace: colorspace_item.clone().into(),
                 color_model: color_model_item.clone().into(),
-                pixel_grouping: pixel_grouping_item,
+                pixel_grouping: PixelGrouping::new(
+                    pixel_grouping_item.width,
+                    pixel_grouping_item.height,
+                ),
                 grouping_transform: grouping_transform_item.clone().into(),
             },
             m_max: m_max_item,
@@ -832,7 +871,7 @@ fn expand_image_group(
             entropy_skip_rows: entropy_skip_rows_item,
             use_condensed_samples: use_condensed_item,
             base_table_impl: base_table_item.clone().into(),
-            delta_encode_base_table: delta_base_table_item,
+            delta_codec_impl: delta_codec_item.clone().into(),
             encode_impl: convert_encode_impl(encode_item.clone())?,
         });
 
@@ -945,13 +984,6 @@ impl_expand_numeric_sweep!(
     expand_usize_range
 );
 impl_expand_numeric_sweep!(
-    IntegerSweepU32,
-    IntegerRangeU32,
-    u32,
-    expand_u32_sweep,
-    expand_u32_range
-);
-impl_expand_numeric_sweep!(
     IntegerSweepU8,
     IntegerRangeU8,
     u8,
@@ -1030,6 +1062,12 @@ impl_from_enum!(ConfigImageGroupingTransform => ImageGroupingTransform {
     ForMin => ForMin,
 });
 
+impl_from_enum!(ConfigDeltaCodecImpl => DeltaCodecImpl {
+    None => None,
+    Unary => Unary,
+    Fixed => Fixed,
+});
+
 impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
     type Error = EntroGdError;
 
@@ -1085,7 +1123,10 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
                 .base_table_impl
                 .unwrap_or(ConfigBaseTableImpl::Raw)
                 .into(),
-            delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
+            delta_codec_impl: value
+                .delta_codec_impl
+                .unwrap_or(ConfigDeltaCodecImpl::None)
+                .into(),
             encode_impl: convert_encode_impl(value.encode_impl)?,
         })
     }
@@ -1104,10 +1145,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
             });
         }
 
-        if value.build.pixel_grouping == 0 {
+        if value.build.pixel_grouping.width == 0 || value.build.pixel_grouping.height == 0 {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
-                    "image profile '{}' has invalid pixel_grouping=0",
+                    "image profile '{}' has invalid pixel_grouping dimensions",
                     value.name
                 ),
             });
@@ -1118,7 +1159,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
             build: ImageBuildConfig {
                 colorspace: value.build.colorspace.into(),
                 color_model: value.build.color_model.into(),
-                pixel_grouping: value.build.pixel_grouping,
+                pixel_grouping: PixelGrouping::new(
+                    value.build.pixel_grouping.width,
+                    value.build.pixel_grouping.height,
+                ),
                 grouping_transform: value.build.grouping_transform.into(),
             },
             m_max: value.m_max,
@@ -1138,7 +1182,10 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
                 .base_table_impl
                 .unwrap_or(ConfigBaseTableImpl::Raw)
                 .into(),
-            delta_encode_base_table: value.delta_encode_base_table.unwrap_or(false),
+            delta_codec_impl: value
+                .delta_codec_impl
+                .unwrap_or(ConfigDeltaCodecImpl::None)
+                .into(),
             encode_impl: convert_encode_impl(value.encode_impl)?,
         })
     }
@@ -1150,6 +1197,7 @@ fn convert_encode_impl(value: ConfigEncodeImpl) -> Result<EncodeImpl, EntroGdErr
         ConfigEncodeImpl::Optimized => Ok(EncodeImpl::Optimized),
         ConfigEncodeImpl::FusedDictionary => Ok(EncodeImpl::FusedDictionary),
         ConfigEncodeImpl::Rle => Ok(EncodeImpl::Rle),
+        ConfigEncodeImpl::OffsetRle => Ok(EncodeImpl::OffsetRle),
         ConfigEncodeImpl::Huffman => Err(EntroGdError::InvalidMetadata {
             message: "legacy 'huffman' is no longer supported; use 'huffman_base_id_only'"
                 .to_string(),

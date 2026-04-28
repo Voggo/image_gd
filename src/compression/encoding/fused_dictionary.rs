@@ -1,5 +1,6 @@
 use fxhash::FxHashMap;
 use std::hash::{Hash, Hasher};
+use rayon::prelude::*;
 
 use super::encoding_core::{
     BaseTable, CompressedData, DeviationData, EncodedData, build_deviation_ranges,
@@ -134,7 +135,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     let mut row_to_group_id = Vec::with_capacity(num_rows);
     let mut representative_rows: Vec<usize> = Vec::new();
     let mut base_counts: Vec<usize> = Vec::new();
-
+    let _timer = ScopedTimer::info("Grouping rows by base signatures for fused dictionary encoding");
     for row in 0..num_rows {
         let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
         let signature = build_signature_key(chunk, selected_bit_positions);
@@ -150,7 +151,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         };
         row_to_group_id.push(id);
     }
-
+    drop(_timer);
+    let _timer = ScopedTimer::info("Building encoded bit stream for fused dictionary encoding");
     let num_bases = representative_rows.len();
     let l_id = bits_needed_nonzero(num_bases);
     let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
@@ -164,22 +166,41 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
             id_bits_per_base.push(id_bits);
         }
     }
-
+    drop(_timer);
+    let _timer = ScopedTimer::info("Constructing final deviation bit stream for fused dictionary encoding");
     let symbol_width = num_deviation_bits + l_id;
+    
+    // Process rows in parallel chunks to build symbol segments
+    let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).max(256).min(4096);
+    let chunk_results: Vec<crate::BitStream> = (0..num_rows)
+        .into_par_iter()
+        .chunks(chunk_size)
+        .map(|row_chunk| {
+            let mut chunk_stream = crate::BitStream::with_capacity(row_chunk.len() * symbol_width);
+            
+            for row in row_chunk {
+                let id = row_to_group_id[row];
+                let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
+
+                for &(start, end) in &deviation_ranges {
+                    chunk_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+                }
+
+                if l_id > 0 {
+                    chunk_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
+                }
+            }
+            chunk_stream
+        })
+        .collect();
+    
+    // Merge all chunks in order into the final stream
     let mut encoded_bit_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
-    for (row, id_ref) in row_to_group_id.iter().enumerate().take(num_rows) {
-        let id = *id_ref;
-        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
-
-        for &(start, end) in &deviation_ranges {
-            encoded_bit_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
-        }
-
-        if l_id > 0 {
-            encoded_bit_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
-        }
+    for chunk_stream in chunk_results {
+        encoded_bit_stream.extend_from_bitslice(chunk_stream.as_bitslice());
     }
-
+    drop(_timer);
+    let _timer = ScopedTimer::info("Building base table for fused dictionary encoding");
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
         let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };

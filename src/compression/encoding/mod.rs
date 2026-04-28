@@ -4,12 +4,12 @@ mod fused_dictionary;
 mod huffman;
 mod rle;
 
-pub use self::delta_base_table::{DeltaEncodeBaseTable, get_delta_codec};
+pub use self::delta_base_table::{DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, get_delta_codec, get_delta_codec_fixed};
 pub(crate) use self::encoding_core::build_base_bit_mask;
 pub use self::encoding_core::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
-    DeviationSample, EncodeData, EncodeDataOptimized, EncodeDataRLE, EncodedData,
-    HuffmanDeviationData, RleDeviationData,
+    DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataOptimized, EncodeDataRLE,
+    EncodedData, HuffmanDeviationData, RleDeviationData, RleDeviationOffsetData,
 };
 pub use self::fused_dictionary::EncodeDataFusedDictionary;
 pub use self::huffman::EncodeDataHuffman;

@@ -324,7 +324,13 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
     };
 
     let channels = image_info.channels as usize;
-    let pixel_grouping = image_info.pixel_grouping as usize;
+    let group_width = image_info.pixel_grouping.width() as usize;
+    let group_height = image_info.pixel_grouping.height() as usize;
+    if group_width == 0 || group_height == 0 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "image pixel_grouping width and height must be > 0".to_string(),
+        });
+    }
     if bit_data.num_features() != channels {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
@@ -335,8 +341,9 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         });
     }
 
-    let grouped_width = (image_info.width as usize).div_ceil(pixel_grouping);
-    let expected_rows = grouped_width * image_info.height as usize;
+    let grouped_width = (image_info.width as usize).div_ceil(group_width);
+    let grouped_height = (image_info.height as usize).div_ceil(group_height);
+    let expected_rows = grouped_width * grouped_height;
     if bit_data.num_rows() != expected_rows {
         return Err(EntroGdError::InvalidMetadata {
             message: format!(
@@ -352,21 +359,24 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
     ));
     let mut raw =
         Vec::with_capacity(image_info.width as usize * image_info.height as usize * channels);
+    let total_pixels = group_width * group_height;
     for row in 0..bit_data.num_rows() {
         let group_x = row % grouped_width;
+        let group_y = row / grouped_width;
         let mut decoded_channels = Vec::with_capacity(channels);
         for feature in 0..channels {
             let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
             decoded_channels.push(decode_grouped_feature(
                 feature_bits,
-                pixel_grouping,
+                total_pixels,
                 image_info.grouping_transform,
             )?);
         }
 
-        for offset in 0..pixel_grouping {
-            let pixel_x = group_x * pixel_grouping + offset;
-            if pixel_x < image_info.width as usize {
+        for offset in 0..total_pixels {
+            let pixel_x = group_x * group_width + (offset % group_width);
+            let pixel_y = group_y * group_height + (offset / group_width);
+            if pixel_x < image_info.width as usize && pixel_y < image_info.height as usize {
                 for channel_values in &decoded_channels {
                     raw.push(channel_values[offset]);
                 }
@@ -430,19 +440,19 @@ fn bits_to_u16(bits: &crate::BitView) -> Result<u16, EntroGdError> {
 
 fn decode_grouped_feature(
     bits: &crate::BitView,
-    pixel_grouping: usize,
+    total_pixels: usize,
     grouping_transform: ImageGroupingTransform,
 ) -> Result<Vec<u8>, EntroGdError> {
     match grouping_transform {
         ImageGroupingTransform::Raw => bits.chunks(8).map(byte_from_bits).collect(),
         ImageGroupingTransform::ForFirstPixel => {
-            if pixel_grouping == 0 {
+            if total_pixels == 0 {
                 return Err(EntroGdError::InvalidMetadata {
                     message: "pixel_grouping must be > 0".to_string(),
                 });
             }
 
-            let expected_bits = 8 + pixel_grouping.saturating_sub(1) * 9;
+            let expected_bits = 8 + total_pixels.saturating_sub(1) * 9;
             if bits.len() != expected_bits {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
@@ -454,10 +464,10 @@ fn decode_grouped_feature(
             }
 
             let anchor = byte_from_bits(&bits[0..8])? as i16;
-            let mut values = Vec::with_capacity(pixel_grouping);
+            let mut values = Vec::with_capacity(total_pixels);
             values.push(anchor as u8);
 
-            for offset in 0..pixel_grouping.saturating_sub(1) {
+            for offset in 0..total_pixels.saturating_sub(1) {
                 let start = 8 + offset * 9;
                 let end = start + 9;
                 let encoded = bits_to_u16(&bits[start..end])?;
@@ -473,14 +483,14 @@ fn decode_grouped_feature(
             Ok(values)
         }
         ImageGroupingTransform::ForMin => {
-            if pixel_grouping == 0 {
+            if total_pixels == 0 {
                 return Err(EntroGdError::InvalidMetadata {
                     message: "pixel_grouping must be > 0".to_string(),
                 });
             }
 
-            let position_bits = min_position_bits(pixel_grouping);
-            let expected_bits = 8 + position_bits + pixel_grouping.saturating_sub(1) * 9;
+            let position_bits = min_position_bits(total_pixels);
+            let expected_bits = 8 + position_bits + total_pixels.saturating_sub(1) * 9;
             if bits.len() != expected_bits {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
@@ -497,15 +507,15 @@ fn decode_grouped_feature(
             } else {
                 bits_to_u16(&bits[8..8 + position_bits])? as usize
             };
-            if min_position >= pixel_grouping {
+            if min_position >= total_pixels {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!("FOR(min) min position {} out of bounds", min_position),
                 });
             }
 
-            let mut values = Vec::with_capacity(pixel_grouping);
+            let mut values = Vec::with_capacity(total_pixels);
             let mut residual_cursor = 8 + position_bits;
-            for idx in 0..pixel_grouping {
+            for idx in 0..total_pixels {
                 if idx == min_position {
                     values.push(anchor as u8);
                     continue;

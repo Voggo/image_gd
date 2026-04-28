@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use super::bit_io::{BitReader, BitWriter};
 use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
 use super::tags::{
-    BASE_TABLE_TAG_DELTA, BASE_TABLE_TAG_RAW, ENCODING_TAG_HUFFMAN_BASE_ID_ONLY,
-    ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type,
-    encode_data_type,
+    BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_RAW, ENCODING_TAG_HUFFMAN_BASE_ID_ONLY,
+    ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET, ENCODING_TAG_RLE_RM_PACKED,
+    HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
 use crate::ScopedTimer;
@@ -15,7 +15,8 @@ use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
-    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationData, get_delta_codec,
+    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationData, RleDeviationOffsetData,
+    get_delta_codec, get_delta_codec_fixed,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -25,6 +26,72 @@ use crate::utils::bits_needed_nonzero;
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
 
+fn read_rle_control_value(reader: &mut BitReader<'_>) -> Result<u8, EntroGdError> {
+    let is_long_packet = reader.read_bit()?;
+    if !is_long_packet {
+        Ok(reader.read_usize_bits(3)? as u8)
+    } else {
+        let payload = reader.read_usize_bits(7)? as u8;
+        let val = payload.saturating_add(8);
+        if !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&val) {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "invalid rm control packet value".to_string(),
+            });
+        }
+        Ok(val)
+    }
+}
+
+fn decode_rle_rm_values(
+    reader: &mut BitReader<'_>,
+    num_samples: usize,
+) -> Result<Vec<(u8, u8)>, EntroGdError> {
+    let mut rm_values: Vec<(u8, u8)> = Vec::new();
+    let mut decoded_samples = 0usize;
+
+    while decoded_samples < num_samples {
+        let r = read_rle_control_value(reader)?;
+        let m_val = read_rle_control_value(reader)?;
+
+        let run_samples = if r > 0 { (r as usize) + 1 } else { 0usize };
+        let literal_samples = m_val as usize;
+        let pair_samples = run_samples.checked_add(literal_samples).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
+                message: "rm pair sample count overflow".to_string(),
+            }
+        })?;
+
+        decoded_samples = decoded_samples.checked_add(pair_samples).ok_or_else(|| {
+            EntroGdError::InvalidMetadata {
+                message: "decoded sample count overflow".to_string(),
+            }
+        })?;
+
+        if decoded_samples > num_samples {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "rm control stream decodes more samples than header count".to_string(),
+            });
+        }
+
+        rm_values.push((r, m_val));
+    }
+
+    Ok(rm_values)
+}
+
+fn rle_symbol_count(rm_values: &[(u8, u8)]) -> Result<usize, EntroGdError> {
+    rm_values
+        .iter()
+        .try_fold(0usize, |acc, (r, m_val)| {
+            let run_symbols = if *r > 0 { 1usize } else { 0usize };
+            let literals = *m_val as usize;
+            acc.checked_add(run_symbols + literals)
+        })
+        .ok_or_else(|| EntroGdError::InvalidMetadata {
+            message: "rm symbol count overflow".to_string(),
+        })
+}
+
 fn decode_delta_base_rows(
     num_bases: usize,
     lb: usize,
@@ -32,6 +99,7 @@ fn decode_delta_base_rows(
     first_sort_key: &crate::BitView,
     delta_count: usize,
     delta_bit_stream: &crate::BitView,
+    codec_tag: u8,
 ) -> Result<Vec<(crate::BitStream, usize)>, EntroGdError> {
     let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
     if num_bases == 0 {
@@ -60,7 +128,7 @@ fn decode_delta_base_rows(
 
     let mut bit_pos = 0usize;
     for _ in 0..delta_count {
-        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb)?;
+        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb, codec_tag)?;
         let delta = add_one(d.as_bitslice());
         let next_key = subtract_unsigned(prev_key.as_bitslice(), delta.as_bitslice());
         rows.push((sort_key_to_row(&next_key, order, lb), 0usize));
@@ -89,6 +157,21 @@ fn sort_key_to_row(sort_key: &crate::BitStream, order: &[usize], lb: usize) -> c
 }
 
 fn decode_adjusted_delta(
+    bits: &crate::BitView,
+    bit_pos: &mut usize,
+    lb: usize,
+    codec_tag: u8,
+) -> Result<crate::BitStream, EntroGdError> {
+    match codec_tag {
+        BASE_TABLE_TAG_DELTA_UNARY => decode_adjusted_delta_unary(bits, bit_pos, lb),
+        BASE_TABLE_TAG_DELTA_FIXED => decode_adjusted_delta_fixed(bits, bit_pos, lb),
+        other => Err(EntroGdError::InvalidMetadata {
+            message: format!("unsupported delta codec tag {}", other),
+        }),
+    }
+}
+
+fn decode_adjusted_delta_unary(
     bits: &crate::BitView,
     bit_pos: &mut usize,
     lb: usize,
@@ -134,6 +217,73 @@ fn decode_adjusted_delta(
     *bit_pos += payload_width;
 
     if tier == overflow_tier {
+        return Ok(payload.to_bitvec());
+    }
+
+    let mut payload_value = 0u64;
+    for idx in 0..payload_width {
+        if payload[idx] {
+            payload_value |= 1u64 << idx;
+        }
+    }
+    let value = start + payload_value;
+
+    let mut out = crate::BitStream::new();
+    let mut v = value;
+    while v > 0 {
+        out.push((v & 1) == 1);
+        v >>= 1;
+    }
+    Ok(out)
+}
+
+fn decode_adjusted_delta_fixed(
+    bits: &crate::BitView,
+    bit_pos: &mut usize,
+    lb: usize,
+) -> Result<crate::BitStream, EntroGdError> {
+    const CODEC: [(usize, u64); 16] = get_delta_codec_fixed();
+    const PREFIX_BITS: usize = 4; // log2(16) = 4 bits for tier ID
+    const OVERFLOW_TIER: usize = CODEC.len() - 1;
+
+    // Read fixed-width tier ID
+    if *bit_pos + PREFIX_BITS > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "insufficient bits for delta tier ID".to_string(),
+        });
+    }
+
+    let mut tier = 0usize;
+    for i in 0..PREFIX_BITS {
+        if bits[*bit_pos + i] {
+            tier |= 1usize << i;
+        }
+    }
+    *bit_pos += PREFIX_BITS;
+
+    if tier >= CODEC.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta tier ID out of range".to_string(),
+        });
+    }
+
+    let (payload_width, start): (usize, u64) = if tier < CODEC.len() - 1 {
+        CODEC[tier]
+    } else {
+        // Overflow tier uses lb bits
+        (lb, 0)
+    };
+
+    if *bit_pos + payload_width > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta payload exceeds bitstream".to_string(),
+        });
+    }
+
+    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
+    *bit_pos += payload_width;
+
+    if tier == OVERFLOW_TIER {
         return Ok(payload.to_bitvec());
     }
 
@@ -226,6 +376,7 @@ impl EgdFile {
     ///    - payload (depends on tag)
     ///      tag=0: raw encoded data stream bits
     ///      tag=1: rm-control packed stream (alternating r,m 4/8-bit packets, terminated by 0xFF), then symbol stream bits
+    ///      tag=2: row count (u32), row width (u32), row offsets ((rm_idx, symbol_bit_idx) u32 pairs), then rm-control packed stream, then symbol stream bits
     ///      tag=3: base-id-only canonical Huffman table + row offsets + raw deviation stream + pixel bitstream
     pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
         let data_info = &compressed.metadata;
@@ -378,7 +529,7 @@ impl EgdFile {
                 }
             }
             BaseTable::Delta(delta) => {
-                writer.write_u8(BASE_TABLE_TAG_DELTA);
+                writer.write_u8(delta.codec_id); // 1 for UNARY, 2 for FIXED
                 let num_bases = u64::try_from(delta.raw_rows.len()).map_err(|_| {
                     EntroGdError::InvalidMetadata {
                         message: "num_bases does not fit into u64".to_string(),
@@ -455,6 +606,22 @@ impl EgdFile {
                 writer.write_u8(ENCODING_TAG_RLE_RM_PACKED);
                 writer.write_bitslice(rle.rm_control_stream());
                 writer.write_bitslice(rle.symbol_bit_stream());
+            }
+            EncodedData::RleOffset(rle_offset) => {
+                writer.write_u8(ENCODING_TAG_RLE_OFFSET);
+                writer.write_u32(u32::try_from(rle_offset.row_offsets().len()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "RLE row offset count does not fit into u32".to_string(),
+                    }
+                })?);
+                writer.write_u32(u32::try_from(rle_offset.row_width()).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "RLE row width does not fit into u32".to_string(),
+                    }
+                })?);
+                writer.write_bitslice(rle_offset.row_offset_stream());
+                writer.write_bitslice(rle_offset.rm_control_stream());
+                writer.write_bitslice(rle_offset.symbol_bit_stream());
             }
             EncodedData::Huffman(huffman) => {
                 writer.write_u8(ENCODING_TAG_HUFFMAN_BASE_ID_ONLY);
@@ -693,7 +860,7 @@ impl EgdFile {
                 }
                 BaseTable::Raw(rows)
             }
-            BASE_TABLE_TAG_DELTA => {
+            BASE_TABLE_TAG_DELTA_UNARY | BASE_TABLE_TAG_DELTA_FIXED => {
                 let order_len = usize::try_from(reader.read_u64()?).map_err(|_| {
                     EntroGdError::InvalidMetadata {
                         message: "sort_column_order length does not fit into usize".to_string(),
@@ -737,6 +904,7 @@ impl EgdFile {
                     first_sort_key.as_bitslice(),
                     delta_count,
                     delta_bit_stream.as_bitslice(),
+                    base_table_tag,
                 )?;
                 entropy_sorted_column_order = Some(order.clone());
                 BaseTable::Delta(DeltaBaseTableData {
@@ -745,6 +913,7 @@ impl EgdFile {
                     delta_bit_stream,
                     delta_count,
                     sort_column_order: order,
+                    codec_id: base_table_tag, // 1 for UNARY, 2 for FIXED
                 })
             }
             other => {
@@ -784,72 +953,8 @@ impl EgdFile {
                 ))
             }
             ENCODING_TAG_RLE_RM_PACKED => {
-                let mut rm_values: Vec<(u8, u8)> = Vec::new();
-                let mut flat_values: Vec<u8> = Vec::new();
-                let mut decoded_samples = 0usize;
-                while decoded_samples < num_samples {
-                    let is_long_packet = reader.read_bit()?;
-                    let val = if !is_long_packet {
-                        reader.read_usize_bits(3)? as u8
-                    } else {
-                        let payload = reader.read_usize_bits(7)? as u8;
-                        let val = payload.saturating_add(8);
-                        if !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&val) {
-                            return Err(EntroGdError::InvalidMetadata {
-                                message: "invalid rm control packet value".to_string(),
-                            });
-                        }
-                        val
-                    };
-                    flat_values.push(val);
-
-                    if flat_values.len().is_multiple_of(2) {
-                        let r = flat_values[flat_values.len() - 2];
-                        let m_val = flat_values[flat_values.len() - 1];
-                        let run_samples = if r > 0 { (r as usize) + 1 } else { 0usize };
-                        let literal_samples = m_val as usize;
-                        let pair_samples =
-                            run_samples.checked_add(literal_samples).ok_or_else(|| {
-                                EntroGdError::InvalidMetadata {
-                                    message: "rm pair sample count overflow".to_string(),
-                                }
-                            })?;
-                        decoded_samples =
-                            decoded_samples.checked_add(pair_samples).ok_or_else(|| {
-                                EntroGdError::InvalidMetadata {
-                                    message: "decoded sample count overflow".to_string(),
-                                }
-                            })?;
-
-                        if decoded_samples > num_samples {
-                            return Err(EntroGdError::InvalidMetadata {
-                                message: "rm control stream decodes more samples than header count"
-                                    .to_string(),
-                            });
-                        }
-                    }
-                }
-
-                if !flat_values.len().is_multiple_of(2) {
-                    return Err(EntroGdError::InvalidMetadata {
-                        message: "invalid rm control stream: odd number of values".to_string(),
-                    });
-                }
-
-                for pair in flat_values.chunks_exact(2) {
-                    rm_values.push((pair[0], pair[1]));
-                }
-
-                let symbol_count = rm_values
-                    .iter()
-                    .try_fold(0usize, |acc, (r, m_val)| {
-                        let run_symbols = if *r > 0 { 1usize } else { 0usize };
-                        let literals = *m_val as usize;
-                        acc.checked_add(run_symbols + literals)
-                    })
-                    .ok_or_else(|| EntroGdError::InvalidMetadata {
-                        message: "rm symbol count overflow".to_string(),
-                    })?;
+                let rm_values = decode_rle_rm_values(&mut reader, num_samples)?;
+                let symbol_count = rle_symbol_count(&rm_values)?;
 
                 let expected_symbol_bits =
                     symbol_count.checked_mul(bits_per_sample).ok_or_else(|| {
@@ -867,6 +972,60 @@ impl EgdFile {
                     num_id_bits,
                 );
                 EncodedData::Normal(rle.to_deviation_data()?)
+            }
+            ENCODING_TAG_RLE_OFFSET => {
+                let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "RLE row count does not fit into usize".to_string(),
+                    }
+                })?;
+                let row_width = usize::try_from(reader.read_u32()?).map_err(|_| {
+                    EntroGdError::InvalidMetadata {
+                        message: "RLE row width does not fit into usize".to_string(),
+                    }
+                })?;
+
+                let mut row_offsets = Vec::with_capacity(row_count);
+                for _ in 0..row_count {
+                    let rm_idx = reader.read_u32()?;
+                    let symbol_bit_idx = reader.read_u32()?;
+                    row_offsets.push((rm_idx, symbol_bit_idx));
+                }
+
+                let rm_values = decode_rle_rm_values(&mut reader, num_samples)?;
+                let symbol_count = rle_symbol_count(&rm_values)?;
+
+                let expected_symbol_bits =
+                    symbol_count.checked_mul(bits_per_sample).ok_or_else(|| {
+                        EntroGdError::InvalidMetadata {
+                            message: "rle offset symbol stream expected length overflow"
+                                .to_string(),
+                        }
+                    })?;
+
+                let symbol_stream = reader.read_bits(expected_symbol_bits)?;
+                let rle = RleDeviationOffsetData::new(
+                    symbol_stream,
+                    rm_values,
+                    row_offsets,
+                    n,
+                    row_width,
+                    num_samples,
+                    num_deviation_bits,
+                    num_id_bits,
+                )?;
+
+                if row_count != rle.row_offsets().len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "RLE row offset count mismatch: header={}, decoded={}",
+                            row_count,
+                            rle.row_offsets().len()
+                        ),
+                    });
+                }
+
+                EncodedData::RleOffset(rle)
             }
             ENCODING_TAG_HUFFMAN_BASE_ID_ONLY => {
                 let symbol_count = usize::try_from(reader.read_u32()?).map_err(|_| {
@@ -947,13 +1106,6 @@ impl EgdFile {
                     huffman_num_id_bits,
                     row_width,
                 )?)
-            }
-            2 => {
-                return Err(EntroGdError::InvalidMetadata {
-                    message:
-                        "legacy canonical Huffman payload (tag=2) is unsupported; re-encode with huffman_base_id_only"
-                            .to_string(),
-                });
             }
             other => {
                 return Err(EntroGdError::InvalidMetadata {

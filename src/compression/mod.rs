@@ -26,11 +26,11 @@ pub use decompression::{
 };
 pub use encoding::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
-    DeviationSample, EncodedData, RleDeviationData,
+    DeviationSample, EncodedData, RleDeviationData, RleDeviationOffsetData,
 };
 pub use encoding::{
-    DeltaEncodeBaseTable, EncodeData, EncodeDataFusedDictionary, EncodeDataHuffman,
-    EncodeDataOptimized, EncodeDataRLE,
+    DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataFusedDictionary,
+    EncodeDataHuffman, EncodeDataOffsetRLE, EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
     EntropyBatched, EntropyBitScore, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,
@@ -47,5 +47,6 @@ pub use image_preprocessor::{
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
     BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, FeatureSpec, FeatureTransform, FloatScalingMode,
-    ImageReconstructionInfo, InferFeatureSpecs, PreprocessOptions, decode_value_from_bits,
+    ImageReconstructionInfo, InferFeatureSpecs, PixelGrouping, PreprocessOptions,
+    decode_value_from_bits,
 };

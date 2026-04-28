@@ -6,7 +6,7 @@ pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransfo
 use crate::ScopedTimer;
 use crate::compression::preprocessor::{
     BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD,
-    FeatureSpec, ImageReconstructionInfo, aligned_stride, append_row_padding,
+    FeatureSpec, ImageReconstructionInfo, PixelGrouping, aligned_stride, append_row_padding,
 };
 use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
@@ -31,7 +31,7 @@ impl ImageColorSpace {
 pub struct BuildImageBitDataSet {
     pub colorspace: ImageColorSpace,
     pub color_model: ImageColorModel,
-    pub pixel_grouping: u32,
+    pub pixel_grouping: PixelGrouping,
     pub grouping_transform: ImageGroupingTransform,
     pub pad_rows_to_word: bool,
 }
@@ -48,7 +48,7 @@ struct ImageBuildInput {
 #[derive(Debug, Clone, Copy)]
 struct ImageBuildOptions {
     color_model: ImageColorModel,
-    pixel_grouping: u32,
+    pixel_grouping: PixelGrouping,
     grouping_transform: ImageGroupingTransform,
     pad_rows_to_word: bool,
 }
@@ -58,7 +58,7 @@ impl Default for BuildImageBitDataSet {
         Self {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::default(),
             grouping_transform: ImageGroupingTransform::Raw,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
@@ -143,9 +143,9 @@ fn build_image_bitdataset(
             message: format!("unsupported colorspace {} (expected 0 or 1)", colorspace),
         });
     }
-    if pixel_grouping == 0 {
+    if pixel_grouping.width() == 0 || pixel_grouping.height() == 0 {
         return Err(EntroGdError::InvalidMetadata {
-            message: "pixel_grouping must be > 0".to_string(),
+            message: "pixel_grouping width and height must be > 0".to_string(),
         });
     }
 
@@ -171,14 +171,23 @@ fn build_image_bitdataset(
         });
     }
 
-    let pixels_per_group = pixel_grouping as usize;
+    let group_width = pixel_grouping.width() as usize;
+    let group_height = pixel_grouping.height() as usize;
+    let pixels_per_group =
+        group_width
+            .checked_mul(group_height)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "pixel grouping overflows total pixel count".to_string(),
+            })?;
     let feature_bits = feature_bits_for_grouping(pixels_per_group, grouping_transform)?;
-    let grouped_width = (width as usize).div_ceil(pixels_per_group);
-    let rows = grouped_width.checked_mul(height as usize).ok_or_else(|| {
-        EntroGdError::InvalidMetadata {
-            message: "image dimensions overflow grouped row count".to_string(),
-        }
-    })?;
+    let grouped_width = (width as usize).div_ceil(group_width);
+    let grouped_height = (height as usize).div_ceil(group_height);
+    let rows =
+        grouped_width
+            .checked_mul(grouped_height)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "image dimensions overflow grouped row count".to_string(),
+            })?;
 
     let features =
         vec![FeatureSpec::new(FeatureDataType::UnsignedInt, feature_bits); channels_usize];
@@ -230,6 +239,9 @@ fn build_image_bitdataset(
             height_usize,
             channels_usize,
             grouped_width,
+            grouped_height,
+            group_width,
+            group_height,
             pixels_per_group,
             chunk_size,
             stride,
@@ -242,6 +254,9 @@ fn build_image_bitdataset(
                 height_usize,
                 channels_usize,
                 grouped_width,
+                grouped_height,
+                group_width,
+                group_height,
                 pixels_per_group,
                 chunk_size,
                 stride,
@@ -254,6 +269,9 @@ fn build_image_bitdataset(
             height_usize,
             channels_usize,
             grouped_width,
+            grouped_height,
+            group_width,
+            group_height,
             pixels_per_group,
             grouping_transform,
             chunk_size,
@@ -290,6 +308,9 @@ fn build_raw_transform_bitstream_from_raw(
     height: usize,
     channels: usize,
     grouped_width: usize,
+    grouped_height: usize,
+    group_width: usize,
+    group_height: usize,
     pixels_per_group: usize,
     chunk_size: usize,
     stride: usize,
@@ -298,43 +319,28 @@ fn build_raw_transform_bitstream_from_raw(
     let mut bitstream = crate::BitStream::with_capacity(storage_bits);
     bitstream.resize(storage_bits, false);
 
-    let full_groups = width / pixels_per_group;
-    let trailing_pixels = width % pixels_per_group;
-    debug_assert_eq!(
-        grouped_width,
-        full_groups + usize::from(trailing_pixels > 0)
-    );
-    let row_stride_values = width * channels;
+    let _row_stride_values = width * channels;
     let row_padding_bits = stride.saturating_sub(chunk_size);
 
     let mut bit_cursor = 0usize;
-    for y in 0..height {
-        let row_start = y * row_stride_values;
-
-        for group_x in 0..full_groups {
-            let group_start = row_start + group_x * pixels_per_group * channels;
+    for group_y in 0..grouped_height {
+        for group_x in 0..grouped_width {
             for channel in 0..channels {
-                let mut raw_index = group_start + channel;
-                for _ in 0..pixels_per_group {
-                    store_u8_be_at(&mut bitstream, bit_cursor, raw[raw_index]);
-                    bit_cursor += 8;
-                    raw_index += channels;
-                }
-            }
-            bit_cursor += row_padding_bits;
-        }
-
-        if trailing_pixels > 0 {
-            let group_start = row_start + full_groups * pixels_per_group * channels;
-            for channel in 0..channels {
-                let mut raw_index = group_start + channel;
-                for _ in 0..trailing_pixels {
-                    store_u8_be_at(&mut bitstream, bit_cursor, raw[raw_index]);
-                    bit_cursor += 8;
-                    raw_index += channels;
-                }
-                for _ in trailing_pixels..pixels_per_group {
-                    store_u8_be_at(&mut bitstream, bit_cursor, 0);
+                let mut grouped_values = vec![0u8; pixels_per_group];
+                grouped_channel_values_into(
+                    raw,
+                    width,
+                    height,
+                    channels,
+                    group_x,
+                    group_y,
+                    group_width,
+                    group_height,
+                    channel,
+                    &mut grouped_values,
+                );
+                for value in grouped_values {
+                    store_u8_be_at(&mut bitstream, bit_cursor, value);
                     bit_cursor += 8;
                 }
             }
@@ -352,6 +358,9 @@ fn build_for_first_pixel_transform_bitstream_from_raw(
     height: usize,
     channels: usize,
     grouped_width: usize,
+    grouped_height: usize,
+    group_width: usize,
+    group_height: usize,
     pixels_per_group: usize,
     chunk_size: usize,
     stride: usize,
@@ -360,65 +369,36 @@ fn build_for_first_pixel_transform_bitstream_from_raw(
     let mut bitstream = crate::BitStream::with_capacity(storage_bits);
     bitstream.resize(storage_bits, false);
 
-    let full_groups = width / pixels_per_group;
-    let trailing_pixels = width % pixels_per_group;
-    debug_assert_eq!(
-        grouped_width,
-        full_groups + usize::from(trailing_pixels > 0)
-    );
-    let row_stride_values = width * channels;
     let row_padding_bits = stride.saturating_sub(chunk_size);
 
     let mut bit_cursor = 0usize;
-    for y in 0..height {
-        let row_start = y * row_stride_values;
-
-        for group_x in 0..full_groups {
-            let group_start = row_start + group_x * pixels_per_group * channels;
+    for group_y in 0..grouped_height {
+        for group_x in 0..grouped_width {
             for channel in 0..channels {
-                let mut raw_index = group_start + channel;
-                let anchor = raw[raw_index];
+                let mut grouped_values = vec![0u8; pixels_per_group];
+                grouped_channel_values_into(
+                    raw,
+                    width,
+                    height,
+                    channels,
+                    group_x,
+                    group_y,
+                    group_width,
+                    group_height,
+                    channel,
+                    &mut grouped_values,
+                );
+                let anchor = grouped_values.first().copied().unwrap_or(0);
                 store_u8_be_at(&mut bitstream, bit_cursor, anchor);
                 bit_cursor += 8;
 
-                raw_index += channels;
-                for _ in 1..pixels_per_group {
-                    let value = raw[raw_index];
-                    let delta = value as i16 - anchor as i16;
+                for value in grouped_values.iter().skip(1) {
+                    let delta = *value as i16 - anchor as i16;
                     let encoded = zigzag_encode_i16(delta);
                     store_u16_be_at(&mut bitstream, bit_cursor, encoded, 9);
                     bit_cursor += 9;
-                    raw_index += channels;
                 }
             }
-
-            bit_cursor += row_padding_bits;
-        }
-
-        if trailing_pixels > 0 {
-            let group_start = row_start + full_groups * pixels_per_group * channels;
-            for channel in 0..channels {
-                let anchor = raw[group_start + channel];
-                store_u8_be_at(&mut bitstream, bit_cursor, anchor);
-                bit_cursor += 8;
-
-                let mut raw_index = group_start + channel + channels;
-                for _ in 1..trailing_pixels {
-                    let value = raw[raw_index];
-                    let delta = value as i16 - anchor as i16;
-                    let encoded = zigzag_encode_i16(delta);
-                    store_u16_be_at(&mut bitstream, bit_cursor, encoded, 9);
-                    bit_cursor += 9;
-                    raw_index += channels;
-                }
-
-                let zero_encoded = zigzag_encode_i16(-(anchor as i16));
-                for _ in trailing_pixels..pixels_per_group {
-                    store_u16_be_at(&mut bitstream, bit_cursor, zero_encoded, 9);
-                    bit_cursor += 9;
-                }
-            }
-
             bit_cursor += row_padding_bits;
         }
     }
@@ -433,6 +413,9 @@ fn build_grouped_transform_bitstream_from_raw(
     height: usize,
     channels: usize,
     grouped_width: usize,
+    grouped_height: usize,
+    group_width: usize,
+    group_height: usize,
     pixels_per_group: usize,
     grouping_transform: ImageGroupingTransform,
     chunk_size: usize,
@@ -440,20 +423,22 @@ fn build_grouped_transform_bitstream_from_raw(
     storage_bits: usize,
 ) -> crate::BitStream {
     let mut bitstream = crate::BitStream::with_capacity(storage_bits);
-    let mut grouped_values = vec![0u8; pixels_per_group];
     let row_padding_bits = stride.saturating_sub(chunk_size);
 
-    for y in 0..height {
+    for group_y in 0..grouped_height {
         for group_x in 0..grouped_width {
             for channel in 0..channels {
+                let mut grouped_values = vec![0u8; pixels_per_group];
                 grouped_channel_values_into(
                     raw,
                     width,
+                    height,
                     channels,
-                    y,
                     group_x,
+                    group_y,
+                    group_width,
+                    group_height,
                     channel,
-                    pixels_per_group,
                     &mut grouped_values,
                 );
                 encode_grouped_channel(&mut bitstream, &grouped_values, grouping_transform);
@@ -541,18 +526,23 @@ fn feature_bits_for_grouping(
 fn grouped_channel_values_into(
     raw: &[u8],
     width: usize,
+    height: usize,
     channels: usize,
-    y: usize,
     group_x: usize,
+    group_y: usize,
+    group_width: usize,
+    group_height: usize,
     channel: usize,
-    pixels_per_group: usize,
     out: &mut [u8],
 ) {
-    debug_assert_eq!(out.len(), pixels_per_group);
+    debug_assert_eq!(out.len(), group_width * group_height);
     for (offset, value) in out.iter_mut().enumerate() {
-        let pixel_x = group_x * pixels_per_group + offset;
-        if pixel_x < width {
-            let pixel_index = y * width + pixel_x;
+        let offset_x = offset % group_width;
+        let offset_y = offset / group_width;
+        let pixel_x = group_x * group_width + offset_x;
+        let pixel_y = group_y * group_height + offset_y;
+        if pixel_x < width && pixel_y < height {
+            let pixel_index = pixel_y * width + pixel_x;
             let raw_index = pixel_index * channels + channel;
             *value = raw[raw_index];
         } else {
@@ -668,7 +658,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -685,7 +675,7 @@ mod tests {
                 height: 1,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping(1, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0
             })
@@ -705,7 +695,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::Linear,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -722,7 +712,7 @@ mod tests {
                 height: 2,
                 channels: 4,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 1,
+                pixel_grouping: PixelGrouping(1, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 1
             })
@@ -818,7 +808,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 4,
+            pixel_grouping: PixelGrouping(4, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -860,7 +850,7 @@ mod tests {
                 height: 1,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 4,
+                pixel_grouping: PixelGrouping(4, 1),
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 colorspace: 0
             })
@@ -881,7 +871,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 4,
+            pixel_grouping: PixelGrouping::new(4, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -930,7 +920,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 4,
+            pixel_grouping: PixelGrouping::new(4, 1),
             grouping_transform: ImageGroupingTransform::ForMin,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -969,7 +959,7 @@ mod tests {
                 height: 1,
                 channels: 3,
                 color_model: ImageColorModel::Rgb,
-                pixel_grouping: 4,
+                pixel_grouping: PixelGrouping(4, 1),
                 grouping_transform: ImageGroupingTransform::ForMin,
                 colorspace: 0
             })
@@ -988,7 +978,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::YCoCg,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -1039,7 +1029,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::Linear,
             color_model: ImageColorModel::YCoCg,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -1086,7 +1076,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -1145,7 +1135,7 @@ mod tests {
         let filter = BuildImageBitDataSet {
             colorspace: ImageColorSpace::Linear,
             color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
@@ -1174,7 +1164,7 @@ mod tests {
         let compact = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: false,
         }
@@ -1186,7 +1176,7 @@ mod tests {
         let padded = BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,
             color_model: ImageColorModel::Rgb,
-            pixel_grouping: 1,
+            pixel_grouping: PixelGrouping::new(1, 1),
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: true,
         }
