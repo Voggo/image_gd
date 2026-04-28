@@ -14,7 +14,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 
 pub const IMAGE_MAGIC_BYTES: [u8; 3] = *b"IGD";
-pub const IMAGE_FORMAT_VERSION: u8 = 4;
+pub const IMAGE_FORMAT_VERSION: u8 = 1;
 
 /// In-memory IGD file contents (image + compressed payload) that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]

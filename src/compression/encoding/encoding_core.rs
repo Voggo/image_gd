@@ -1,6 +1,5 @@
-use bitvec::prelude::*;
-
 use super::rle::RLE_LONG_MAX;
+use bitvec::prelude::*;
 
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo, PreEncodeContext};
 use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
@@ -224,7 +223,7 @@ impl CompressedData {
 pub(crate) fn build_base_bit_mask(
     chunk_size: usize,
     base_bit_positions: &[usize],
-) -> BitVec<usize, Lsb0>{
+) -> BitVec<usize, Lsb0> {
     let mut mask = bitvec![usize, Lsb0; 0; chunk_size];
     for &bit_pos in base_bit_positions {
         if bit_pos < chunk_size {
@@ -274,7 +273,7 @@ impl DeviationData {
         self.encoded_bit_stream.len()
     }
 
-    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.encoded_bit_stream
     }
 
@@ -337,7 +336,7 @@ impl EncodedData {
         }
     }
 
-    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         match self {
             EncodedData::Normal(data) => data.encoded_bit_stream(),
             EncodedData::Rle(data) => data.symbol_bit_stream(),
@@ -475,7 +474,7 @@ pub(super) fn encode_rows_as_symbol_stream(
     l_id: usize,
     deviation_ranges: &[(usize, usize)],
     id_bits_per_base: &[BitVec<usize, Lsb0>],
-) -> BitVec<usize, Lsb0>{
+) -> BitVec<usize, Lsb0> {
     let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
     let mut symbol_stream = BitVec::with_capacity(num_rows * symbol_width);
