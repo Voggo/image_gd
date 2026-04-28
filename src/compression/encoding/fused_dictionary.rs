@@ -135,7 +135,6 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     let mut row_to_group_id = Vec::with_capacity(num_rows);
     let mut representative_rows: Vec<usize> = Vec::new();
     let mut base_counts: Vec<usize> = Vec::new();
-    let _timer = ScopedTimer::info("Grouping rows by base signatures for fused dictionary encoding");
     for row in 0..num_rows {
         let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
         let signature = build_signature_key(chunk, selected_bit_positions);
@@ -151,8 +150,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         };
         row_to_group_id.push(id);
     }
-    drop(_timer);
-    let _timer = ScopedTimer::info("Building encoded bit stream for fused dictionary encoding");
+    
     let num_bases = representative_rows.len();
     let l_id = bits_needed_nonzero(num_bases);
     let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
@@ -166,10 +164,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
             id_bits_per_base.push(id_bits);
         }
     }
-    drop(_timer);
-    let _timer = ScopedTimer::info("Constructing final deviation bit stream for fused dictionary encoding");
-    let symbol_width = num_deviation_bits + l_id;
     
+    let symbol_width = num_deviation_bits + l_id;
     // Process rows in parallel chunks to build symbol segments
     let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).max(256).min(4096);
     let chunk_results: Vec<crate::BitStream> = (0..num_rows)
@@ -199,8 +195,6 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     for chunk_stream in chunk_results {
         encoded_bit_stream.extend_from_bitslice(chunk_stream.as_bitslice());
     }
-    drop(_timer);
-    let _timer = ScopedTimer::info("Building base table for fused dictionary encoding");
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
         let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
