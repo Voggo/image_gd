@@ -722,13 +722,13 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    fn bits_to_u16(bits: &crate::BitView) -> u16 {
+    fn bits_to_u16(bits: &BitSlice<usize, Lsb0>) -> u16 {
         bits.iter()
             .fold(0u16, |acc, bit| (acc << 1) | u16::from(*bit))
     }
 
     fn decode_grouped_feature(
-        bits: &crate::BitView,
+        bits: &BitSlice<usize, Lsb0>,
         pixel_grouping: usize,
         grouping_transform: ImageGroupingTransform,
     ) -> Vec<u8> {

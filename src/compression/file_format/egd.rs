@@ -97,9 +97,9 @@ fn decode_delta_base_rows(
     num_bases: usize,
     lb: usize,
     order: &[usize],
-    first_sort_key: &crate::BitView,
+    first_sort_key: &BitSlice<usize, Lsb0>,
     delta_count: usize,
-    delta_bit_stream: &crate::BitView,
+    delta_bit_stream: &BitSlice<usize, Lsb0>,
     codec_tag: u8,
 ) -> Result<Vec<(BitVec<usize, Lsb0>, usize)>, EntroGdError> {
     let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
@@ -158,7 +158,7 @@ fn sort_key_to_row(sort_key: &BitVec<usize, Lsb0>, order: &[usize], lb: usize) -
 }
 
 fn decode_adjusted_delta(
-    bits: &crate::BitView,
+    bits: &BitSlice<usize, Lsb0>,
     bit_pos: &mut usize,
     lb: usize,
     codec_tag: u8,
@@ -173,7 +173,7 @@ fn decode_adjusted_delta(
 }
 
 fn decode_adjusted_delta_unary(
-    bits: &crate::BitView,
+    bits: &BitSlice<usize, Lsb0>,
     bit_pos: &mut usize,
     lb: usize,
 ) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
@@ -239,7 +239,7 @@ fn decode_adjusted_delta_unary(
 }
 
 fn decode_adjusted_delta_fixed(
-    bits: &crate::BitView,
+    bits: &BitSlice<usize, Lsb0>,
     bit_pos: &mut usize,
     lb: usize,
 ) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
@@ -305,7 +305,7 @@ fn decode_adjusted_delta_fixed(
     Ok(out)
 }
 
-fn add_one(bits: &crate::BitView) -> BitVec<usize, Lsb0> {
+fn add_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
     let mut out = bits.to_bitvec();
     let mut carry = true;
     let mut idx = 0usize;
@@ -322,7 +322,7 @@ fn add_one(bits: &crate::BitView) -> BitVec<usize, Lsb0> {
     out
 }
 
-fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> BitVec<usize, Lsb0> {
+fn subtract_unsigned(minuend: &BitSlice<usize, Lsb0>, subtrahend: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
     let max_len = minuend.len().max(subtrahend.len());
     let mut out = BitVec::with_capacity(max_len);
 

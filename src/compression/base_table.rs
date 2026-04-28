@@ -335,8 +335,8 @@ fn column_order_by_unweighted_entropy(
 }
 
 fn compare_rows_by_column_order(
-    lhs: &crate::BitView,
-    rhs: &crate::BitView,
+    lhs: &BitSlice<usize, Lsb0>,
+    rhs: &BitSlice<usize, Lsb0>,
     column_order: &[usize],
 ) -> Ordering {
     for &column_idx in column_order {

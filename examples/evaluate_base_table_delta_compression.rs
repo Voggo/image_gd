@@ -47,7 +47,7 @@ fn main() -> Result<(), EntroGdError> {
             .process(bit_data)?
     };
 
-    let rows: Vec<&entro_gd::BitView> = context
+    let rows: Vec<&BitSlice<usize, Lsb0>> = context
         .variable_base_table
         .iter()
         .map(|(bits, _)| bits.as_bitslice())
@@ -68,7 +68,7 @@ fn main() -> Result<(), EntroGdError> {
         .iter()
         .map(|row| build_sort_key_bits(row, &sort_key_order))
         .collect();
-    let sort_key_views: Vec<&entro_gd::BitView> = sort_key_bits
+    let sort_key_views: Vec<&BitSlice<usize, Lsb0>> = sort_key_bits
         .iter()
         .map(|bits| bits.as_bitslice())
         .collect();
@@ -263,7 +263,7 @@ fn is_image_path(path: &Path) -> bool {
 }
 
 fn build_delta_distribution_rows(
-    rows: &[&entro_gd::BitView],
+    rows: &[&BitSlice<usize, Lsb0>],
     use_sorted: bool,
 ) -> (usize, Vec<DeltaDistributionRow>, &'static str) {
     if rows.is_empty() {
@@ -361,7 +361,7 @@ fn build_sort_key_local_order(context: &entro_gd::PreEncodeContext) -> Vec<usize
     (0..row_width).collect()
 }
 
-fn build_sort_key_bits(row: &entro_gd::BitView, order: &[usize]) -> BitVec<usize, Lsb0> {
+fn build_sort_key_bits(row: &BitSlice<usize, Lsb0>, order: &[usize]) -> BitVec<usize, Lsb0> {
     // `compare_unsigned()` treats higher index as more significant.
     // We therefore append order in reverse so order[0] becomes the most-significant key bit.
     let mut out = BitVec::<usize, Lsb0>::with_capacity(order.len());
@@ -371,7 +371,7 @@ fn build_sort_key_bits(row: &entro_gd::BitView, order: &[usize]) -> BitVec<usize
     out
 }
 
-fn bits_needed_unsigned(bits: &entro_gd::BitView) -> usize {
+fn bits_needed_unsigned(bits: &BitSlice<usize, Lsb0>) -> usize {
     for idx in (0..bits.len()).rev() {
         if bits.get(idx).map(|b| *b).unwrap_or(false) {
             return idx + 1;
@@ -380,14 +380,14 @@ fn bits_needed_unsigned(bits: &entro_gd::BitView) -> usize {
     0
 }
 
-fn abs_diff_unsigned(lhs: &entro_gd::BitView, rhs: &entro_gd::BitView) -> BitVec<usize, Lsb0> {
+fn abs_diff_unsigned(lhs: &BitSlice<usize, Lsb0>, rhs: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
     match compare_unsigned(lhs, rhs) {
         Ordering::Greater | Ordering::Equal => subtract_unsigned(lhs, rhs),
         Ordering::Less => subtract_unsigned(rhs, lhs),
     }
 }
 
-fn compare_unsigned(lhs: &entro_gd::BitView, rhs: &entro_gd::BitView) -> Ordering {
+fn compare_unsigned(lhs: &BitSlice<usize, Lsb0>, rhs: &BitSlice<usize, Lsb0>) -> Ordering {
     let max_len = lhs.len().max(rhs.len());
     for idx in (0..max_len).rev() {
         let l = lhs.get(idx).map(|b| *b).unwrap_or(false);
@@ -401,8 +401,8 @@ fn compare_unsigned(lhs: &entro_gd::BitView, rhs: &entro_gd::BitView) -> Orderin
 }
 
 fn subtract_unsigned(
-    minuend: &entro_gd::BitView,
-    subtrahend: &entro_gd::BitView,
+    minuend: &BitSlice<usize, Lsb0>,
+    subtrahend: &BitSlice<usize, Lsb0>,
 ) -> BitVec<usize, Lsb0> {
     let max_len = minuend.len().max(subtrahend.len());
     let mut out = BitVec::<usize, Lsb0>::with_capacity(max_len);

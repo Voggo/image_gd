@@ -30,6 +30,7 @@ mod tests {
     };
     use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
+    use bitvec::prelude::*;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         EntropyBatched {}
@@ -59,7 +60,7 @@ mod tests {
     #[test]
     fn test_build_and_save_egd() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder; 0; 64],
+            data: bitvec![usize, Lsb0; 0; 64],
             num_rows: 1,
             stride: 64,
             chunk_size: 64,
@@ -85,7 +86,7 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_to_compressed_data() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder; 0; 320],
+            data: bitvec![usize, Lsb0; 0; 320],
             num_rows: 5,
             stride: 64,
             chunk_size: 64,
@@ -154,7 +155,7 @@ mod tests {
     #[test]
     fn test_roundtrip_igd_to_compressed_data_with_image_metadata() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder; 0; 96],
+            data: bitvec![usize, Lsb0; 0; 96],
             num_rows: 4,
             stride: 24,
             chunk_size: 24,
@@ -200,7 +201,7 @@ mod tests {
     #[test]
     fn test_roundtrip_igd_to_compressed_data_with_for_min_metadata() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder; 0; 111],
+            data: bitvec![usize, Lsb0; 0; 111],
             num_rows: 1,
             stride: 111,
             chunk_size: 111,
@@ -244,7 +245,7 @@ mod tests {
     #[test]
     fn test_roundtrip_egd_with_rle_payload() {
         let data = BitData {
-            data: bitvec::bitvec![usize, crate::BitOrder; 0; 512],
+            data: bitvec![usize, Lsb0; 0; 512],
             num_rows: 8,
             stride: 64,
             chunk_size: 64,

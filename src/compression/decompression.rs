@@ -200,8 +200,8 @@ fn append_reconstructed_chunk(
     constant_one_positions: &[usize],
     base_table: &[(BitVec<usize, Lsb0>, usize)],
     chunk_size: usize,
-    deviation_bits: &crate::BitView,
-    id_bits: &crate::BitView,
+    deviation_bits: &BitSlice<usize, Lsb0>,
+    id_bits: &BitSlice<usize, Lsb0>,
 ) -> Result<(), EntroGdError> {
     let base_id = id_bits.load::<usize>();
     if base_id >= base_table.len() {
@@ -409,7 +409,7 @@ pub fn write_bitdata_to_output<P: AsRef<Path>>(
     }
 }
 
-fn byte_from_bits(bits: &crate::BitView) -> Result<u8, EntroGdError> {
+fn byte_from_bits(bits: &BitSlice<usize, Lsb0>) -> Result<u8, EntroGdError> {
     if bits.len() != 8 {
         return Err(EntroGdError::InvalidMetadata {
             message: format!("expected 8 bits for image byte, got {}", bits.len()),
@@ -421,7 +421,7 @@ fn byte_from_bits(bits: &crate::BitView) -> Result<u8, EntroGdError> {
         .fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit)))
 }
 
-fn bits_to_u16(bits: &crate::BitView) -> Result<u16, EntroGdError> {
+fn bits_to_u16(bits: &BitSlice<usize, Lsb0>) -> Result<u16, EntroGdError> {
     if bits.len() > 16 {
         return Err(EntroGdError::InvalidMetadata {
             message: format!("expected at most 16 bits, got {}", bits.len()),
@@ -434,7 +434,7 @@ fn bits_to_u16(bits: &crate::BitView) -> Result<u16, EntroGdError> {
 }
 
 fn decode_grouped_feature(
-    bits: &crate::BitView,
+    bits: &BitSlice<usize, Lsb0>,
     total_pixels: usize,
     grouping_transform: ImageGroupingTransform,
 ) -> Result<Vec<u8>, EntroGdError> {

@@ -9,9 +9,6 @@ pub mod pipeline_runner;
 pub mod timing;
 mod utils;
 
-pub type BitOrder = bitvec::prelude::Lsb0;
-pub type BitView = bitvec::prelude::BitSlice<usize, BitOrder>;
-
 pub use compression::{
     BaseBitImpl, BaseSelectionContext, BitData, BitDataCompressionInfo, BitDataInfo,
     BitDataReconstructionInfo, BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet,

@@ -824,7 +824,7 @@ pub struct BitData {
 
 impl BitData {
     /// Extend the BitData with additional bits from a BitSlice (used for adding condensed samples)
-    pub fn extend_from_bitslice(&mut self, bits: &crate::BitView) -> Result<(), EntroGdError> {
+    pub fn extend_from_bitslice(&mut self, bits: &BitSlice<usize, Lsb0>) -> Result<(), EntroGdError> {
         if bits.len() != self.chunk_size {
             return Err(EntroGdError::BitSliceLengthMismatch {
                 expected: self.chunk_size,
@@ -839,7 +839,7 @@ impl BitData {
 
     /// Get a slice of bits for a specific row/chunk
     #[inline(always)]
-    pub fn get_chunk(&self, row: usize) -> &crate::BitView {
+    pub fn get_chunk(&self, row: usize) -> &BitSlice<usize, Lsb0> {
         let start = row * self.stride;
         let end = start + self.chunk_size;
         &self.data[start..end]
@@ -1091,7 +1091,7 @@ impl BitDataSet {
 
     /// Get a slice of bits for a specific feature within a row
     #[inline(always)]
-    pub fn get_feature(&self, row: usize, feature: usize) -> &crate::BitView {
+    pub fn get_feature(&self, row: usize, feature: usize) -> &BitSlice<usize, Lsb0> {
         let chunk_start = row * self.data.stride;
         let feat_start = chunk_start + self.info.feature_offset(feature);
         let feat_end = feat_start + self.info.feature_bits(feature);
@@ -1115,7 +1115,7 @@ impl BitDataSet {
         &self,
         row: usize,
         feature: usize,
-    ) -> &crate::BitView {
+    ) -> &BitSlice<usize, Lsb0> {
         debug_assert!(row < self.data.num_rows);
         debug_assert!(feature < self.info.num_features());
         let chunk_start = row * self.data.stride;
@@ -1133,7 +1133,7 @@ impl BitDataSet {
     ///
     /// Caller must ensure `row < self.data.num_rows`.
     #[inline(always)]
-    pub(crate) unsafe fn get_chunk_unchecked(&self, row: usize) -> &crate::BitView {
+    pub(crate) unsafe fn get_chunk_unchecked(&self, row: usize) -> &BitSlice<usize, Lsb0> {
         debug_assert!(row < self.data.num_rows);
         let start = row * self.data.stride;
         let end = start + self.data.chunk_size;
@@ -1180,7 +1180,7 @@ impl BitDataSet {
         self.data.get_bit(row, bit_in_chunk)
     }
 
-    pub fn get_chunk(&self, row: usize) -> &crate::BitView {
+    pub fn get_chunk(&self, row: usize) -> &BitSlice<usize, Lsb0> {
         self.data.get_chunk(row)
     }
 }
@@ -1305,7 +1305,7 @@ fn append_dataset_row_bits(
     Ok(())
 }
 
-pub fn decode_value_from_bits(bits: &crate::BitView, spec: &FeatureSpec) -> DataValue {
+pub fn decode_value_from_bits(bits: &BitSlice<usize, Lsb0>, spec: &FeatureSpec) -> DataValue {
     let value = bits_to_u64(bits);
     match spec.data_type {
         FeatureDataType::UnsignedInt => match spec.transform {
@@ -1359,7 +1359,7 @@ pub fn decode_value_from_bits(bits: &crate::BitView, spec: &FeatureSpec) -> Data
     }
 }
 
-fn bits_to_u64(bits: &crate::BitView) -> u64 {
+fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
     let mut value = 0u64;
     for bit in bits {
         value = (value << 1) | (*bit as u64);

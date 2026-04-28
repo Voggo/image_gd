@@ -97,7 +97,7 @@ impl Hash for SignatureKey {
     }
 }
 
-fn build_signature_key(chunk: &crate::BitView, base_bit_positions: &[usize]) -> SignatureKey {
+fn build_signature_key(chunk: &BitSlice<usize, Lsb0>, base_bit_positions: &[usize]) -> SignatureKey {
     if base_bit_positions.len() <= 128 {
         let mut packed = 0u128;
         for &bit_pos in base_bit_positions {

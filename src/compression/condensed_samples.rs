@@ -134,7 +134,7 @@ fn select_condensed_samples(
     entropy: &[(usize, f64)],
     m_max: usize,
 ) -> CondensedSamples {
-    fn bits_to_u64(bits: &crate::BitView) -> u64 {
+    fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
         bits.iter()
             .fold(0u64, |acc, bit| (acc << 1) | (*bit as u64))
     }
@@ -191,7 +191,7 @@ fn select_condensed_samples(
             continue;
         }
 
-        let mut full_base = bitvec::bitvec![usize, crate::BitOrder; 0; bit_data.chunk_size()];
+        let mut full_base = bitvec::bitvec![usize, Lsb0; 0; bit_data.chunk_size()];
         for (selected_idx, &bit_pos) in selected_positions.iter().enumerate() {
             if let Some(bit_value) = base.0.get(selected_idx) {
                 full_base.set(bit_pos, *bit_value);

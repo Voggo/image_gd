@@ -44,8 +44,8 @@ pub struct DeviationSample {
 }
 
 pub(crate) struct DeviationSampleRef<'a> {
-    pub deviation: &'a crate::BitView,
-    pub id: &'a crate::BitView,
+    pub deviation: &'a BitSlice<usize, Lsb0>,
+    pub id: &'a BitSlice<usize, Lsb0>,
 }
 
 #[derive(Debug, Clone)]
@@ -225,7 +225,7 @@ pub(crate) fn build_base_bit_mask(
     chunk_size: usize,
     base_bit_positions: &[usize],
 ) -> BitVec<usize, Lsb0>{
-    let mut mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
+    let mut mask = bitvec![usize, Lsb0; 0; chunk_size];
     for &bit_pos in base_bit_positions {
         if bit_pos < chunk_size {
             mask.set(bit_pos, true);
@@ -403,7 +403,7 @@ impl EncodedData {
 }
 
 pub(super) fn build_deviation_ranges(
-    base_bit_mask: &crate::BitView,
+    base_bit_mask: &BitSlice<usize, Lsb0>,
     chunk_size: usize,
     num_deviation_bits: usize,
 ) -> Vec<(usize, usize)> {
@@ -853,7 +853,7 @@ fn symbol_slice(
     symbol_stream: &BitVec<usize, Lsb0>,
     symbol_width: usize,
     row: usize,
-) -> &crate::BitView {
+) -> &BitSlice<usize, Lsb0> {
     let start = row * symbol_width;
     let end = start + symbol_width;
     debug_assert!(end <= symbol_stream.len());

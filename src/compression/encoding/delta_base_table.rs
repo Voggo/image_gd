@@ -314,7 +314,7 @@ impl Filter for DeltaEncodeBaseTableFixed {
     }
 }
 
-fn build_sort_key_bits(row: &crate::BitView, order: &[usize]) -> BitVec<usize, Lsb0>{
+fn build_sort_key_bits(row: &BitSlice<usize, Lsb0>, order: &[usize]) -> BitVec<usize, Lsb0>{
     let mut out = BitVec::with_capacity(order.len());
     for &col_idx in order.iter().rev() {
         out.push(row.get(col_idx).map(|b| *b).unwrap_or(false));
@@ -322,11 +322,11 @@ fn build_sort_key_bits(row: &crate::BitView, order: &[usize]) -> BitVec<usize, L
     out
 }
 
-fn is_zero_bits(bits: &crate::BitView) -> bool {
+fn is_zero_bits(bits: &BitSlice<usize, Lsb0>) -> bool {
     bits.not_any()
 }
 
-fn compare_unsigned(lhs: &crate::BitView, rhs: &crate::BitView) -> std::cmp::Ordering {
+fn compare_unsigned(lhs: &BitSlice<usize, Lsb0>, rhs: &BitSlice<usize, Lsb0>) -> std::cmp::Ordering {
     let max_len = lhs.len().max(rhs.len());
     for idx in (0..max_len).rev() {
         let l = lhs.get(idx).map(|b| *b).unwrap_or(false);
@@ -339,7 +339,7 @@ fn compare_unsigned(lhs: &crate::BitView, rhs: &crate::BitView) -> std::cmp::Ord
     std::cmp::Ordering::Equal
 }
 
-fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> BitVec<usize, Lsb0>{
+fn subtract_unsigned(minuend: &BitSlice<usize, Lsb0>, subtrahend: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0>{
     let max_len = minuend.len().max(subtrahend.len());
     let mut out = BitVec::with_capacity(max_len);
 
@@ -373,7 +373,7 @@ fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> B
     out
 }
 
-fn subtract_one(bits: &crate::BitView) -> BitVec<usize, Lsb0> {
+fn subtract_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
     let mut out = bits.to_bitvec();
     for idx in 0..out.len() {
         if out[idx] {
@@ -388,7 +388,7 @@ fn subtract_one(bits: &crate::BitView) -> BitVec<usize, Lsb0> {
     out
 }
 
-fn bits_to_u64(bits: &crate::BitView) -> u64 {
+fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
     let mut value = 0u64;
     for idx in (0..bits.len()).rev() {
         value = (value << 1) | (bits.get(idx).map(|b| *b).unwrap_or(false) as u64);
@@ -443,7 +443,7 @@ pub const fn get_delta_codec_fixed() -> [(usize, u64); 16] {
 
 // Generic encoding function: takes codec array, prefix bit width, and overflow indicator
 fn encode_adjusted_delta_bits_generic(
-    d_bits: &crate::BitView,
+    d_bits: &BitSlice<usize, Lsb0>,
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
     codec: &[(usize, u64)],
@@ -512,7 +512,7 @@ fn encode_adjusted_delta_bits_generic(
 }
 
 fn encode_adjusted_delta_bits_with_stats(
-    d_bits: &crate::BitView,
+    d_bits: &BitSlice<usize, Lsb0>,
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {
@@ -528,7 +528,7 @@ fn encode_adjusted_delta_bits_with_stats(
 }
 
 fn encode_adjusted_delta_bits_with_stats_fixed(
-    d_bits: &crate::BitView,
+    d_bits: &BitSlice<usize, Lsb0>,
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {

@@ -134,7 +134,7 @@ impl BitWriter {
         self.bit_len += 1;
     }
 
-    pub(super) fn write_bitslice(&mut self, bits: &crate::BitView) {
+    pub(super) fn write_bitslice(&mut self, bits: &BitSlice<usize, Lsb0>) {
         for bit in bits {
             self.write_bit(*bit);
         }
