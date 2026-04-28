@@ -353,7 +353,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         image_info.width, image_info.height, channels
     ));
     let mut raw =
-        Vec::with_capacity(image_info.width as usize * image_info.height as usize * channels);
+        vec![0u8; image_info.width as usize * image_info.height as usize * channels];
     let total_pixels = group_width * group_height;
     for row in 0..bit_data.num_rows() {
         let group_x = row % grouped_width;
@@ -372,8 +372,10 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
             let pixel_x = group_x * group_width + (offset % group_width);
             let pixel_y = group_y * group_height + (offset / group_width);
             if pixel_x < image_info.width as usize && pixel_y < image_info.height as usize {
-                for channel_values in &decoded_channels {
-                    raw.push(channel_values[offset]);
+                for (feature, channel_values) in decoded_channels.iter().enumerate() {
+                    raw[pixel_y * (image_info.width as usize) * channels
+                        + pixel_x * channels
+                        + feature] = channel_values[offset];
                 }
             }
         }
