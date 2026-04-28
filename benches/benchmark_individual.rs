@@ -489,7 +489,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             PixelGrouping::new(4, 1),
             ImageGroupingTransform::ForFirstPixel,
             0,
-            5,
+            10,
         ),
         StepBenchCase::image_with_transform(
             "data/images/wikipedia_008.png",
@@ -497,7 +497,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             PixelGrouping::new(4, 1),
             ImageGroupingTransform::ForFirstPixel,
             0,
-            5,
+            10,
         ),
     ]
 }
