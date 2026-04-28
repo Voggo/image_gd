@@ -1,5 +1,6 @@
 use image::DynamicImage;
 use std::path::PathBuf;
+use bitvec::prelude::*;
 
 pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
 
@@ -290,13 +291,13 @@ fn build_image_bitdataset(
     Ok(BitDataSet { data, info })
 }
 
-fn push_bits_u8(out: &mut crate::BitStream, value: u8) {
+fn push_bits_u8(out: &mut BitVec<usize, Lsb0>, value: u8) {
     for shift in (0..8).rev() {
         out.push(((value >> shift) & 1) == 1);
     }
 }
 
-fn push_bits_u16(out: &mut crate::BitStream, value: u16, bit_count: usize) {
+fn push_bits_u16(out: &mut BitVec<usize, Lsb0>, value: u16, bit_count: usize) {
     for shift in (0..bit_count).rev() {
         out.push(((value >> shift) & 1) == 1);
     }
@@ -315,8 +316,8 @@ fn build_raw_transform_bitstream_from_raw(
     chunk_size: usize,
     stride: usize,
     storage_bits: usize,
-) -> crate::BitStream {
-    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
+) -> BitVec<usize, Lsb0>{
+    let mut bitstream = BitVec::with_capacity(storage_bits);
     bitstream.resize(storage_bits, false);
 
     let _row_stride_values = width * channels;
@@ -365,8 +366,8 @@ fn build_for_first_pixel_transform_bitstream_from_raw(
     chunk_size: usize,
     stride: usize,
     storage_bits: usize,
-) -> crate::BitStream {
-    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
+) -> BitVec<usize, Lsb0>{
+    let mut bitstream = BitVec::with_capacity(storage_bits);
     bitstream.resize(storage_bits, false);
 
     let row_padding_bits = stride.saturating_sub(chunk_size);
@@ -421,8 +422,8 @@ fn build_grouped_transform_bitstream_from_raw(
     chunk_size: usize,
     stride: usize,
     storage_bits: usize,
-) -> crate::BitStream {
-    let mut bitstream = crate::BitStream::with_capacity(storage_bits);
+) -> BitVec<usize, Lsb0>{
+    let mut bitstream = BitVec::with_capacity(storage_bits);
     let row_padding_bits = stride.saturating_sub(chunk_size);
 
     for group_y in 0..grouped_height {
@@ -451,14 +452,14 @@ fn build_grouped_transform_bitstream_from_raw(
 }
 
 #[inline(always)]
-fn store_u8_be_at(out: &mut crate::BitStream, bit_cursor: usize, value: u8) {
+fn store_u8_be_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u8) {
     for shift in (0..8).rev() {
         out.set(bit_cursor + (7 - shift), ((value >> shift) & 1) == 1);
     }
 }
 
 #[inline(always)]
-fn store_u16_be_at(out: &mut crate::BitStream, bit_cursor: usize, value: u16, bit_count: usize) {
+fn store_u16_be_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u16, bit_count: usize) {
     for shift in (0..bit_count).rev() {
         out.set(
             bit_cursor + (bit_count - 1 - shift),
@@ -552,7 +553,7 @@ fn grouped_channel_values_into(
 }
 
 fn encode_grouped_channel(
-    out: &mut crate::BitStream,
+    out: &mut BitVec<usize, Lsb0>,
     values: &[u8],
     grouping_transform: ImageGroupingTransform,
 ) {
@@ -588,7 +589,7 @@ fn encode_grouped_channel(
     }
 }
 
-fn encode_for_anchor(out: &mut crate::BitStream, values: &[u8], anchor: u8) {
+fn encode_for_anchor(out: &mut BitVec<usize, Lsb0>, values: &[u8], anchor: u8) {
     push_bits_u8(out, anchor);
     for &value in values.iter().skip(1) {
         let delta = value as i16 - anchor as i16;

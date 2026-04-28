@@ -10,7 +10,6 @@ pub mod timing;
 mod utils;
 
 pub type BitOrder = bitvec::prelude::Lsb0;
-pub type BitStream = bitvec::prelude::BitVec<usize, BitOrder>;
 pub type BitView = bitvec::prelude::BitSlice<usize, BitOrder>;
 
 pub use compression::{

@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
+use bitvec::prelude::*;
 
 use csv::Writer;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
@@ -63,7 +64,7 @@ fn main() -> Result<(), EntroGdError> {
     let fixed_raw_bits = entry_count * row_width;
 
     let sort_key_order = build_sort_key_local_order(&context);
-    let sort_key_bits: Vec<entro_gd::BitStream> = rows
+    let sort_key_bits: Vec<BitVec<usize, Lsb0>> = rows
         .iter()
         .map(|row| build_sort_key_bits(row, &sort_key_order))
         .collect();
@@ -360,10 +361,10 @@ fn build_sort_key_local_order(context: &entro_gd::PreEncodeContext) -> Vec<usize
     (0..row_width).collect()
 }
 
-fn build_sort_key_bits(row: &entro_gd::BitView, order: &[usize]) -> entro_gd::BitStream {
+fn build_sort_key_bits(row: &entro_gd::BitView, order: &[usize]) -> BitVec<usize, Lsb0> {
     // `compare_unsigned()` treats higher index as more significant.
     // We therefore append order in reverse so order[0] becomes the most-significant key bit.
-    let mut out = entro_gd::BitStream::with_capacity(order.len());
+    let mut out = BitVec::<usize, Lsb0>::with_capacity(order.len());
     for &col_idx in order.iter().rev() {
         out.push(row.get(col_idx).map(|b| *b).unwrap_or(false));
     }
@@ -379,7 +380,7 @@ fn bits_needed_unsigned(bits: &entro_gd::BitView) -> usize {
     0
 }
 
-fn abs_diff_unsigned(lhs: &entro_gd::BitView, rhs: &entro_gd::BitView) -> entro_gd::BitStream {
+fn abs_diff_unsigned(lhs: &entro_gd::BitView, rhs: &entro_gd::BitView) -> BitVec<usize, Lsb0> {
     match compare_unsigned(lhs, rhs) {
         Ordering::Greater | Ordering::Equal => subtract_unsigned(lhs, rhs),
         Ordering::Less => subtract_unsigned(rhs, lhs),
@@ -402,9 +403,9 @@ fn compare_unsigned(lhs: &entro_gd::BitView, rhs: &entro_gd::BitView) -> Orderin
 fn subtract_unsigned(
     minuend: &entro_gd::BitView,
     subtrahend: &entro_gd::BitView,
-) -> entro_gd::BitStream {
+) -> BitVec<usize, Lsb0> {
     let max_len = minuend.len().max(subtrahend.len());
-    let mut out = entro_gd::BitStream::with_capacity(max_len);
+    let mut out = BitVec::<usize, Lsb0>::with_capacity(max_len);
 
     let mut borrow: i8 = 0;
     for idx in 0..max_len {

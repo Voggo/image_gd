@@ -865,7 +865,7 @@ fn estimate_size_breakdown_bits(compressed: &CompressedData) -> CompressedSizeBr
             // - first sort key (lb bits, only if num_bases > 0)
             // - delta_count (u64)
             // - delta_bit_len (u64)
-            // - delta bitstream payload
+            // - delta BitVec<usize, Lsb0> payload
             let num_bases = delta.raw_rows.len();
             let index_bits = bits_needed_nonzero(variable_base_bits.max(1));
             let order_bits = delta.sort_column_order.len() * index_bits;

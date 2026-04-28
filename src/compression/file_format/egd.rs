@@ -1,5 +1,5 @@
 use fxhash::FxHashMap;
-use bitvec::field::BitField;
+use bitvec::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -101,7 +101,7 @@ fn decode_delta_base_rows(
     delta_count: usize,
     delta_bit_stream: &crate::BitView,
     codec_tag: u8,
-) -> Result<Vec<(crate::BitStream, usize)>, EntroGdError> {
+) -> Result<Vec<(BitVec<usize, Lsb0>, usize)>, EntroGdError> {
     let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
     if num_bases == 0 {
         return Ok(Vec::new());
@@ -145,8 +145,8 @@ fn decode_delta_base_rows(
     Ok(rows)
 }
 
-fn sort_key_to_row(sort_key: &crate::BitStream, order: &[usize], lb: usize) -> crate::BitStream {
-    let mut row = crate::BitStream::repeat(false, lb);
+fn sort_key_to_row(sort_key: &BitVec<usize, Lsb0>, order: &[usize], lb: usize) -> BitVec<usize, Lsb0>{
+    let mut row = BitVec::repeat(false, lb);
     for (rank, &col_idx) in order.iter().enumerate() {
         let key_idx = lb.saturating_sub(1 + rank);
         let bit = sort_key.get(key_idx).map(|b| *b).unwrap_or(false);
@@ -162,7 +162,7 @@ fn decode_adjusted_delta(
     bit_pos: &mut usize,
     lb: usize,
     codec_tag: u8,
-) -> Result<crate::BitStream, EntroGdError> {
+) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
     match codec_tag {
         BASE_TABLE_TAG_DELTA_UNARY => decode_adjusted_delta_unary(bits, bit_pos, lb),
         BASE_TABLE_TAG_DELTA_FIXED => decode_adjusted_delta_fixed(bits, bit_pos, lb),
@@ -176,7 +176,7 @@ fn decode_adjusted_delta_unary(
     bits: &crate::BitView,
     bit_pos: &mut usize,
     lb: usize,
-) -> Result<crate::BitStream, EntroGdError> {
+) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
     const CODEC: [(usize, u64); 5] = get_delta_codec();
     let overflow_tier = CODEC.len();
 
@@ -229,7 +229,7 @@ fn decode_adjusted_delta_unary(
     }
     let value = start + payload_value;
 
-    let mut out = crate::BitStream::new();
+    let mut out = BitVec::new();
     let mut v = value;
     while v > 0 {
         out.push((v & 1) == 1);
@@ -242,7 +242,7 @@ fn decode_adjusted_delta_fixed(
     bits: &crate::BitView,
     bit_pos: &mut usize,
     lb: usize,
-) -> Result<crate::BitStream, EntroGdError> {
+) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
     const CODEC: [(usize, u64); 16] = get_delta_codec_fixed();
     const PREFIX_BITS: usize = 4; // log2(16) = 4 bits for tier ID
     const OVERFLOW_TIER: usize = CODEC.len() - 1;
@@ -296,7 +296,7 @@ fn decode_adjusted_delta_fixed(
     }
     let value = start + payload_value;
 
-    let mut out = crate::BitStream::new();
+    let mut out = BitVec::new();
     let mut v = value;
     while v > 0 {
         out.push((v & 1) == 1);
@@ -305,7 +305,7 @@ fn decode_adjusted_delta_fixed(
     Ok(out)
 }
 
-fn add_one(bits: &crate::BitView) -> crate::BitStream {
+fn add_one(bits: &crate::BitView) -> BitVec<usize, Lsb0> {
     let mut out = bits.to_bitvec();
     let mut carry = true;
     let mut idx = 0usize;
@@ -322,9 +322,9 @@ fn add_one(bits: &crate::BitView) -> crate::BitStream {
     out
 }
 
-fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> crate::BitStream {
+fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> BitVec<usize, Lsb0> {
     let max_len = minuend.len().max(subtrahend.len());
-    let mut out = crate::BitStream::with_capacity(max_len);
+    let mut out = BitVec::with_capacity(max_len);
 
     let mut borrow: i8 = 0;
     for idx in 0..max_len {
@@ -853,7 +853,7 @@ impl EgdFile {
                 let mut rows = Vec::with_capacity(num_bases);
                 for _ in 0..num_bases {
                     let mut base_bits =
-                        crate::BitStream::with_capacity(variable_base_bit_positions.len());
+                        BitVec::with_capacity(variable_base_bit_positions.len());
                     for _ in 0..variable_base_bit_positions.len() {
                         base_bits.push(reader.read_bit()?);
                     }
@@ -879,7 +879,7 @@ impl EgdFile {
                     }
                     order.push(idx);
                 }
-                let mut first_sort_key = crate::BitStream::with_capacity(lb);
+                let mut first_sort_key = BitVec::with_capacity(lb);
                 if num_bases > 0 {
                     for _ in 0..lb {
                         first_sort_key.push(reader.read_bit()?);

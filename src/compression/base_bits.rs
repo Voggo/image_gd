@@ -19,12 +19,12 @@ pub trait BaseBit {
     /// Returns base-table entries packed to selected-bit order only.
     ///
     /// For each base, bit index `i` corresponds to `self.get_base_bit_positions()[i]`.
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)>;
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)>;
     /// Returns base-table entries packed to variable selected bits only.
     ///
     /// For each base, bit index `i` corresponds to
     /// `self.get_variable_bit_positions(bit_data)[i]`.
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let selected_bases = self.get_bases(bit_data);
         let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
         project_selected_bases_by_indices(&selected_bases, &variable_indices)
@@ -91,7 +91,7 @@ fn collect_new_bit_positions(
 }
 
 fn apply_selected_bit_positions(
-    base_bit_mask: &mut crate::BitStream,
+    base_bit_mask: &mut BitVec<usize, Lsb0>,
     base_bit_positions: &mut Vec<usize>,
     bit_positions: &[usize],
 ) -> usize {
@@ -117,7 +117,7 @@ fn apply_selected_bit_positions(
 }
 
 fn add_constant_bits(
-    base_bit_mask: &mut crate::BitStream,
+    base_bit_mask: &mut BitVec<usize, Lsb0>,
     base_bit_positions: &mut Vec<usize>,
     num_bits_per_base: &mut usize,
     bit_positions: &[usize],
@@ -133,14 +133,14 @@ fn get_selected_bases_from_groups(
     base_bit_positions: &[usize],
     num_bases: usize,
     bit_data: &BitDataSet,
-) -> Vec<(crate::BitStream, usize)> {
+) -> Vec<(BitVec<usize, Lsb0>, usize)> {
     let mut bases = Vec::with_capacity(num_bases);
     for group in groups {
         if group.is_empty() {
             continue;
         }
         let chunk = unsafe { bit_data.get_chunk_unchecked(group[0]) };
-        let mut packed_base = crate::BitStream::with_capacity(base_bit_positions.len());
+        let mut packed_base = BitVec::with_capacity(base_bit_positions.len());
         for &bit_pos in base_bit_positions {
             packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
         }
@@ -150,7 +150,7 @@ fn get_selected_bases_from_groups(
 }
 
 fn variable_bit_indices_from_selected_bases(
-    selected_bases: &[(crate::BitStream, usize)],
+    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
 ) -> Vec<usize> {
     let Some((first_base, _)) = selected_bases.first() else {
         return Vec::new();
@@ -173,13 +173,13 @@ fn variable_bit_indices_from_selected_bases(
 }
 
 fn project_selected_bases_by_indices(
-    selected_bases: &[(crate::BitStream, usize)],
+    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
     selected_indices: &[usize],
-) -> Vec<(crate::BitStream, usize)> {
+) -> Vec<(BitVec<usize, Lsb0>, usize)> {
     selected_bases
         .iter()
         .map(|(selected_bits, count)| {
-            let mut projected = crate::BitStream::with_capacity(selected_indices.len());
+            let mut projected = BitVec::with_capacity(selected_indices.len());
             for &selected_idx in selected_indices {
                 projected.push(
                     selected_bits
@@ -194,7 +194,7 @@ fn project_selected_bases_by_indices(
 }
 
 fn constant_bit_positions_by_value(
-    selected_bases: &[(crate::BitStream, usize)],
+    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
     selected_positions: &[usize],
     constant_value: bool,
 ) -> Vec<usize> {
@@ -225,7 +225,7 @@ fn constant_bit_positions_by_value(
 #[derive(Clone)]
 pub struct BaseBitGroups {
     groups: Vec<Vec<usize>>,
-    base_bit_mask: crate::BitStream,
+    base_bit_mask: BitVec<usize, Lsb0>,
     base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
@@ -322,7 +322,7 @@ impl BaseBitGroups {
         self.num_bases
     }
     /// Get the bases as BitVecs along with their counts
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         get_selected_bases_from_groups(
             &self.groups,
@@ -362,11 +362,11 @@ impl BaseBit for BaseBitGroups {
         BaseBitGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         BaseBitGroups::get_bases(self, bit_data)
     }
 
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let selected_bases = BaseBitGroups::get_bases(self, bit_data);
         let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
         project_selected_bases_by_indices(&selected_bases, &variable_indices)
@@ -396,7 +396,7 @@ impl BaseBit for BaseBitGroups {
 #[derive(Clone)]
 pub struct BaseBitBatchGroups {
     groups: Vec<Vec<usize>>,
-    base_bit_mask: crate::BitStream,
+    base_bit_mask: BitVec<usize, Lsb0>,
     base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
@@ -540,7 +540,7 @@ impl BaseBitBatchGroups {
         self.num_bases
     }
 
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         get_selected_bases_from_groups(
             &self.groups,
@@ -584,11 +584,11 @@ impl BaseBit for BaseBitBatchGroups {
         BaseBitBatchGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         BaseBitBatchGroups::get_bases(self, bit_data)
     }
 
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let selected_bases = BaseBitBatchGroups::get_bases(self, bit_data);
         let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
         project_selected_bases_by_indices(&selected_bases, &variable_indices)
@@ -632,7 +632,7 @@ pub struct BaseBitIncSignatureGroups {
     /// This keeps `add_bit_positions()` allocation-free per row and defers
     /// `Vec<Vec<usize>>` construction to the rare `get_groups()` call.
     groups_cache: OnceCell<Vec<Vec<usize>>>,
-    base_bit_mask: crate::BitStream,
+    base_bit_mask: BitVec<usize, Lsb0>,
     base_bit_positions: Vec<usize>,
     num_bits_per_base: usize,
 }
@@ -776,7 +776,7 @@ impl BaseBitIncSignatureGroups {
         self.get_num_bases()
     }
 
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
 
         // Preserve stable ordering by first row occurrence for consistency with
@@ -800,7 +800,7 @@ impl BaseBitIncSignatureGroups {
                 .get(&signature)
                 .expect("signature must exist in signature_counts");
             let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
-            let mut packed_base = crate::BitStream::with_capacity(self.base_bit_positions.len());
+            let mut packed_base = BitVec::with_capacity(self.base_bit_positions.len());
             for &bit_pos in &self.base_bit_positions {
                 packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
             }
@@ -865,11 +865,11 @@ impl BaseBit for BaseBitIncSignatureGroups {
         BaseBitIncSignatureGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         BaseBitIncSignatureGroups::get_bases(self, bit_data)
     }
 
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let selected_bases = BaseBitIncSignatureGroups::get_bases(self, bit_data);
         let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
         project_selected_bases_by_indices(&selected_bases, &variable_indices)
@@ -898,7 +898,7 @@ impl BaseBit for BaseBitIncSignatureGroups {
 
 #[derive(Clone)]
 pub struct BaseBitHyperLogLogCount {
-    base_bit_mask: crate::BitStream,
+    base_bit_mask: BitVec<usize, Lsb0>,
     base_bit_positions: Vec<usize>,
     num_bits_per_base: usize,
     num_bases_estimate: usize,
@@ -1138,13 +1138,13 @@ impl BaseBit for BaseBitHyperLogLogCount {
         BaseBitHyperLogLogCount::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, _bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_bases(&self, _bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         panic!(
             "BaseBitHyperLogLogCount does not support get_bases(); use a different BaseBit implementation"
         )
     }
 
-    fn get_variable_bases(&self, _bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_variable_bases(&self, _bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         panic!(
             "BaseBitHyperLogLogCount does not support get_variable_bases(); use a different BaseBit implementation"
         )
@@ -1176,7 +1176,7 @@ impl BaseBit for BaseBitHyperLogLogCount {
 #[derive(Clone)]
 pub struct BaseBitSignatureGroups {
     groups: Vec<Vec<usize>>,
-    base_bit_mask: crate::BitStream,
+    base_bit_mask: BitVec<usize, Lsb0>,
     base_bit_positions: Vec<usize>,
     num_bases: usize,
     num_bits_per_base: usize,
@@ -1310,7 +1310,7 @@ impl BaseBitSignatureGroups {
         self.num_bases
     }
 
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
         get_selected_bases_from_groups(
             &self.groups,
@@ -1354,11 +1354,11 @@ impl BaseBit for BaseBitSignatureGroups {
         BaseBitSignatureGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         BaseBitSignatureGroups::get_bases(self, bit_data)
     }
 
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(crate::BitStream, usize)> {
+    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let selected_bases = BaseBitSignatureGroups::get_bases(self, bit_data);
         let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
         project_selected_bases_by_indices(&selected_bases, &variable_indices)

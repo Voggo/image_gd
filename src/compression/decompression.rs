@@ -8,7 +8,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
-use bitvec::field::BitField;
+use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
 use std::fs::File;
 use std::io::Write;
@@ -49,7 +49,7 @@ pub(crate) fn decompress_samples_batch(
 
     let deviation_positions = compressed.layout.deviation_bit_positions();
 
-    let mut reconstructed_bits = crate::BitStream::with_capacity(stride * indices.len());
+    let mut reconstructed_bits = BitVec::with_capacity(stride * indices.len());
 
     if row_padding_bits == 0 {
         for &sample_idx in indices {
@@ -128,7 +128,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let non_base_positions = (0..chunk_size)
         .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
         .collect::<Vec<_>>();
-    let mut reconstructed_bits = crate::BitStream::with_capacity(stride * original_num_rows);
+    let mut reconstructed_bits = BitVec::with_capacity(stride * original_num_rows);
     let mut decoded_rows = 0usize;
 
     let _timer = ScopedTimer::trace("Reconstrunting bit data");
@@ -194,11 +194,11 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
 }
 
 fn append_reconstructed_chunk(
-    out: &mut crate::BitStream,
+    out: &mut BitVec<usize, Lsb0>,
     non_base_positions: &[usize],
     variable_base_positions: &[usize],
     constant_one_positions: &[usize],
-    base_table: &[(crate::BitStream, usize)],
+    base_table: &[(BitVec<usize, Lsb0>, usize)],
     chunk_size: usize,
     deviation_bits: &crate::BitView,
     id_bits: &crate::BitView,
@@ -258,7 +258,7 @@ impl Filter for DecompressAnalytics {
 
 pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamples> {
     if let Some(weights) = &compressed.condensed_sample_weights {
-        let samples: Vec<crate::BitStream> = compressed
+        let samples: Vec<BitVec<usize, Lsb0>> = compressed
             .base_table
             .as_raw()
             .iter()
@@ -625,8 +625,8 @@ mod tests {
 
     /// Creates a simple BitVec with a specific pattern for testing.
     /// Pattern: alternating bits if alternate=true, all zeros if alternate=false
-    fn create_bit_pattern(size: usize, alternate: bool) -> crate::BitStream {
-        let mut bits = crate::BitStream::with_capacity(size);
+    fn create_bit_pattern(size: usize, alternate: bool) -> BitVec<usize, Lsb0> {
+        let mut bits = BitVec::with_capacity(size);
         for i in 0..size {
             bits.push(if alternate { i % 2 == 0 } else { false });
         }
@@ -645,11 +645,11 @@ mod tests {
 
     /// Creates a deviation sample with specified ID and deviation bits
     fn create_deviation_sample(id_bits: Vec<bool>, deviation_bits: Vec<bool>) -> DeviationSample {
-        let mut id = crate::BitStream::with_capacity(id_bits.len());
+        let mut id = BitVec::with_capacity(id_bits.len());
         for bit in id_bits {
             id.push(bit);
         }
-        let mut deviation = crate::BitStream::with_capacity(deviation_bits.len());
+        let mut deviation = BitVec::with_capacity(deviation_bits.len());
         for bit in deviation_bits {
             deviation.push(bit);
         }
@@ -670,7 +670,7 @@ mod tests {
             0
         };
 
-        let mut encoded_bit_stream = crate::BitStream::new();
+        let mut encoded_bit_stream = BitVec::new();
         for sample in samples {
             encoded_bit_stream.extend(&sample.deviation);
             encoded_bit_stream.extend(&sample.id);
@@ -685,7 +685,7 @@ mod tests {
     }
 
     /// Creates a base table for testing
-    fn create_base_table(num_bases: usize, chunk_size: usize) -> Vec<(crate::BitStream, usize)> {
+    fn create_base_table(num_bases: usize, chunk_size: usize) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         (0..num_bases)
             .map(|i| {
                 let pattern = create_bit_pattern(chunk_size, i % 2 == 0);
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn test_base_id_lsb0_load_semantics() {
-        let mut id_bits = crate::BitStream::with_capacity(8);
+        let mut id_bits = BitVec::<usize, Lsb0>::with_capacity(8);
         id_bits.push(true);
         id_bits.extend([false; 7]);
 

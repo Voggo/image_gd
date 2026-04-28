@@ -1,6 +1,7 @@
 use fxhash::FxHashMap;
 use std::hash::{Hash, Hasher};
 use rayon::prelude::*;
+use bitvec::prelude::*;
 
 use super::encoding_core::{
     BaseTable, CompressedData, DeviationData, EncodedData, build_deviation_ranges,
@@ -61,7 +62,7 @@ impl Filter for EncodeDataFusedDictionary {
 
 pub(super) struct FusedEncodingResult {
     pub(super) deviation_data: DeviationData,
-    pub(super) base_table: Vec<(crate::BitStream, usize)>,
+    pub(super) base_table: Vec<(BitVec<usize, Lsb0>, usize)>,
 }
 
 enum SignatureKey {
@@ -153,11 +154,11 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     
     let num_bases = representative_rows.len();
     let l_id = bits_needed_nonzero(num_bases);
-    let mut id_bits_per_base: Vec<crate::BitStream> = Vec::new();
+    let mut id_bits_per_base: Vec<BitVec<usize, Lsb0>> = Vec::new();
     if l_id > 0 {
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
-            let mut id_bits = crate::BitStream::with_capacity(l_id);
+            let mut id_bits = BitVec::with_capacity(l_id);
             for shift in 0..l_id {
                 id_bits.push(((id >> shift) & 1) == 1);
             }
@@ -168,11 +169,11 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     let symbol_width = num_deviation_bits + l_id;
     // Process rows in parallel chunks to build symbol segments
     let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).max(256).min(4096);
-    let chunk_results: Vec<crate::BitStream> = (0..num_rows)
+    let chunk_results: Vec<BitVec<usize, Lsb0>> = (0..num_rows)
         .into_par_iter()
         .chunks(chunk_size)
         .map(|row_chunk| {
-            let mut chunk_stream = crate::BitStream::with_capacity(row_chunk.len() * symbol_width);
+            let mut chunk_stream = BitVec::with_capacity(row_chunk.len() * symbol_width);
             
             for row in row_chunk {
                 let id = row_to_group_id[row];
@@ -191,14 +192,14 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         .collect();
     
     // Merge all chunks in order into the final stream
-    let mut encoded_bit_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
+    let mut encoded_bit_stream = BitVec::with_capacity(num_rows * symbol_width);
     for chunk_stream in chunk_results {
         encoded_bit_stream.extend_from_bitslice(chunk_stream.as_bitslice());
     }
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
         let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
-        let mut packed_base = crate::BitStream::with_capacity(selected_bit_positions.len());
+        let mut packed_base = BitVec::with_capacity(selected_bit_positions.len());
         for &bit_pos in selected_bit_positions {
             packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
         }

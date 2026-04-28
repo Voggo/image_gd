@@ -37,8 +37,8 @@ impl Filter for DeltaEncodeBaseTable {
         if raw_rows.is_empty() {
             input.base_table = BaseTable::Delta(DeltaBaseTableData {
                 raw_rows,
-                first_sort_key: crate::BitStream::new(),
-                delta_bit_stream: crate::BitStream::new(),
+                first_sort_key: BitVec::new(),
+                delta_bit_stream: BitVec::new(),
                 delta_count: 0,
                 sort_column_order: order,
                 codec_id: 1, // BASE_TABLE_TAG_DELTA_UNARY
@@ -62,7 +62,7 @@ impl Filter for DeltaEncodeBaseTable {
         }
 
         let first_sort_key = key_rows[0].clone();
-        let mut delta_bit_stream = crate::BitStream::new();
+        let mut delta_bit_stream = BitVec::new();
         let mut delta_stats = DeltaBitStats::default();
         for pair in key_rows.windows(2) {
             let prev = pair[0].as_bitslice();
@@ -187,8 +187,8 @@ impl Filter for DeltaEncodeBaseTableFixed {
         if raw_rows.is_empty() {
             input.base_table = BaseTable::Delta(DeltaBaseTableData {
                 raw_rows,
-                first_sort_key: crate::BitStream::new(),
-                delta_bit_stream: crate::BitStream::new(),
+                first_sort_key: BitVec::new(),
+                delta_bit_stream: BitVec::new(),
                 delta_count: 0,
                 sort_column_order: order,
                 codec_id: 2, // BASE_TABLE_TAG_DELTA_FIXED
@@ -212,7 +212,7 @@ impl Filter for DeltaEncodeBaseTableFixed {
         }
 
         let first_sort_key = key_rows[0].clone();
-        let mut delta_bit_stream = crate::BitStream::new();
+        let mut delta_bit_stream = BitVec::new();
         let mut delta_stats = DeltaBitStats::default();
         for pair in key_rows.windows(2) {
             let prev = pair[0].as_bitslice();
@@ -314,8 +314,8 @@ impl Filter for DeltaEncodeBaseTableFixed {
     }
 }
 
-fn build_sort_key_bits(row: &crate::BitView, order: &[usize]) -> crate::BitStream {
-    let mut out = crate::BitStream::with_capacity(order.len());
+fn build_sort_key_bits(row: &crate::BitView, order: &[usize]) -> BitVec<usize, Lsb0>{
+    let mut out = BitVec::with_capacity(order.len());
     for &col_idx in order.iter().rev() {
         out.push(row.get(col_idx).map(|b| *b).unwrap_or(false));
     }
@@ -339,9 +339,9 @@ fn compare_unsigned(lhs: &crate::BitView, rhs: &crate::BitView) -> std::cmp::Ord
     std::cmp::Ordering::Equal
 }
 
-fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> crate::BitStream {
+fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> BitVec<usize, Lsb0>{
     let max_len = minuend.len().max(subtrahend.len());
-    let mut out = crate::BitStream::with_capacity(max_len);
+    let mut out = BitVec::with_capacity(max_len);
 
     let mut borrow: i8 = 0;
     for idx in 0..max_len {
@@ -373,7 +373,7 @@ fn subtract_unsigned(minuend: &crate::BitView, subtrahend: &crate::BitView) -> c
     out
 }
 
-fn subtract_one(bits: &crate::BitView) -> crate::BitStream {
+fn subtract_one(bits: &crate::BitView) -> BitVec<usize, Lsb0> {
     let mut out = bits.to_bitvec();
     for idx in 0..out.len() {
         if out[idx] {
@@ -445,7 +445,7 @@ pub const fn get_delta_codec_fixed() -> [(usize, u64); 16] {
 fn encode_adjusted_delta_bits_generic(
     d_bits: &crate::BitView,
     lb: usize,
-    out: &mut crate::BitStream,
+    out: &mut BitVec<usize, Lsb0>,
     codec: &[(usize, u64)],
     prefix_bits: usize,
     use_unary_prefix: bool,
@@ -514,7 +514,7 @@ fn encode_adjusted_delta_bits_generic(
 fn encode_adjusted_delta_bits_with_stats(
     d_bits: &crate::BitView,
     lb: usize,
-    out: &mut crate::BitStream,
+    out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {
     const CODEC: [(usize, u64); 5] = get_delta_codec();
     encode_adjusted_delta_bits_generic(
@@ -530,7 +530,7 @@ fn encode_adjusted_delta_bits_with_stats(
 fn encode_adjusted_delta_bits_with_stats_fixed(
     d_bits: &crate::BitView,
     lb: usize,
-    out: &mut crate::BitStream,
+    out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {
     const CODEC: [(usize, u64); 16] = get_delta_codec_fixed();
     const PREFIX_BITS: usize = 4; // log2(16 tiers) = 4 bits

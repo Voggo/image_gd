@@ -7,13 +7,14 @@ use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
+use bitvec::prelude::*;
 
 #[derive(Clone)]
 pub struct PreEncodeContext {
     pub bit_data: BitDataSet,
     pub row_to_base_id: Vec<usize>,
     pub layout: BaseLayoutInfo,
-    pub variable_base_table: Vec<(crate::BitStream, usize)>,
+    pub variable_base_table: Vec<(BitVec<usize, Lsb0>, usize)>,
     /// Column indices into `variable_base_table` rows, ordered by ascending
     /// unweighted entropy as used by `BuildSortedBaseTable`.
     pub entropy_sorted_column_order: Option<Vec<usize>>,
@@ -238,8 +239,8 @@ pub(crate) fn build_base_layout_from_constant_polarity(
 pub(crate) fn project_selected_bases_to_variable(
     selected_positions: &[usize],
     variable_positions: &[usize],
-    selected_bases: &[(crate::BitStream, usize)],
-) -> Vec<(crate::BitStream, usize)> {
+    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
+) -> Vec<(BitVec<usize, Lsb0>, usize)> {
     let variable_indices: Vec<usize> = variable_positions
         .iter()
         .filter_map(|bit_pos| selected_positions.iter().position(|p| p == bit_pos))
@@ -248,7 +249,7 @@ pub(crate) fn project_selected_bases_to_variable(
     selected_bases
         .iter()
         .map(|(selected_bits, count)| {
-            let mut variable_bits = crate::BitStream::with_capacity(variable_indices.len());
+            let mut variable_bits = BitVec::with_capacity(variable_indices.len());
             for selected_idx in variable_indices.iter().copied() {
                 variable_bits.push(
                     selected_bits
@@ -300,7 +301,7 @@ fn sort_context_base_tables(context: &mut PreEncodeContext) {
 }
 
 fn column_order_by_unweighted_entropy(
-    variable_base_table: &[(crate::BitStream, usize)],
+    variable_base_table: &[(BitVec<usize, Lsb0>, usize)],
 ) -> Vec<usize> {
     let Some((first_bits, _)) = variable_base_table.first() else {
         return Vec::new();
@@ -388,7 +389,7 @@ mod tests {
         let chunk_size = rows_and_bits[0].len();
         let num_rows = rows_and_bits.len();
 
-        let mut data = crate::BitStream::with_capacity(num_rows * chunk_size);
+        let mut data = BitVec::with_capacity(num_rows * chunk_size);
         for row in &rows_and_bits {
             assert_eq!(row.len(), chunk_size, "All rows must have same bit width");
             for &bit in row {
@@ -516,7 +517,7 @@ mod tests {
             create_test_bit_data_set(vec![vec![true], vec![true], vec![true], vec![true]]);
 
         let make_bits = |bits: &[bool]| {
-            let mut out = crate::BitStream::with_capacity(bits.len());
+            let mut out = BitVec::with_capacity(bits.len());
             for bit in bits {
                 out.push(*bit);
             }
@@ -543,7 +544,7 @@ mod tests {
 
         sort_context_base_tables(&mut context);
 
-        let as_vec = |bits: &crate::BitStream| -> Vec<bool> { bits.iter().by_vals().collect() };
+        let as_vec = |bits: &BitVec<usize, Lsb0>| -> Vec<bool> { bits.iter().by_vals().collect() };
         let sorted_rows: Vec<Vec<bool>> = context
             .variable_base_table
             .iter()

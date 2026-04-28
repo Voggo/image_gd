@@ -1,3 +1,4 @@
+use bitvec::prelude::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -48,9 +49,9 @@ pub(super) fn encode_data_huffman(
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
 
-    let mut pixel_bit_stream = crate::BitStream::new();
+    let mut pixel_bit_stream = BitVec::new();
     let mut raw_deviation_bit_stream =
-        crate::BitStream::with_capacity(bit_data.num_rows() * num_deviation_bits);
+        BitVec::with_capacity(bit_data.num_rows() * num_deviation_bits);
     let mut row_offsets = Vec::with_capacity(row_count);
 
     for sample_idx in 0..bit_data.num_rows() {
@@ -108,8 +109,8 @@ struct HuffmanCode {
 impl HuffmanDeviationData {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        pixel_bit_stream: crate::BitStream,
-        raw_deviation_bit_stream: crate::BitStream,
+        pixel_bit_stream: BitVec<usize, Lsb0>,
+        raw_deviation_bit_stream: BitVec<usize, Lsb0>,
         canonical_symbols: Vec<u64>,
         canonical_code_lengths: Vec<u8>,
         row_offsets: Vec<u32>,
@@ -300,11 +301,11 @@ impl HuffmanDeviationData {
         Ok(data)
     }
 
-    pub fn pixel_bit_stream(&self) -> &crate::BitStream {
+    pub fn pixel_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.pixel_bit_stream
     }
 
-    pub fn raw_deviation_bit_stream(&self) -> &crate::BitStream {
+    pub fn raw_deviation_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.raw_deviation_bit_stream
     }
 
@@ -407,7 +408,7 @@ impl HuffmanDeviationData {
         }
 
         let mut bit_pos = 0usize;
-        let mut id_bits_buffer = crate::BitStream::with_capacity(self.num_id_bits);
+        let mut id_bits_buffer = BitVec::with_capacity(self.num_id_bits);
 
         for sample_idx in 0..capped_limit {
             let (symbol, consumed_bits) = self.decode_one(bit_pos)?;
@@ -439,7 +440,7 @@ impl HuffmanDeviationData {
                 message: "decoded Huffman deviation stream length overflow".to_string(),
             }
         })?;
-        let mut raw = crate::BitStream::with_capacity(expected_bits);
+        let mut raw = BitVec::with_capacity(expected_bits);
         let mut bit_pos = 0usize;
 
         for sample_idx in 0..self.num_samples {
@@ -578,13 +579,13 @@ fn build_huffman_code_map(
     Ok(codes_by_symbol)
 }
 
-fn bitvec_from_u64(value: u64, width: usize) -> crate::BitStream {
-    let mut bits = crate::BitStream::with_capacity(width);
+fn bitvec_from_u64(value: u64, width: usize) -> BitVec<usize, Lsb0> {
+    let mut bits = BitVec::with_capacity(width);
     append_symbol_bits(&mut bits, value, width);
     bits
 }
 
-fn append_symbol_bits(out: &mut crate::BitStream, value: u64, width: usize) {
+fn append_symbol_bits(out: &mut BitVec<usize, Lsb0>, value: u64, width: usize) {
     for shift in 0..width {
         out.push(((value >> shift) & 1) == 1);
     }
@@ -679,7 +680,7 @@ fn build_huffman_code_lengths(symbols: &[SymbolFrequency]) -> Result<Vec<usize>,
     Ok(lengths)
 }
 
-fn append_code_bits(out: &mut crate::BitStream, code: u32, code_len: u8) {
+fn append_code_bits(out: &mut BitVec<usize, Lsb0>, code: u32, code_len: u8) {
     for shift in (0..code_len as usize).rev() {
         out.push(((code >> shift) & 1) == 1);
     }

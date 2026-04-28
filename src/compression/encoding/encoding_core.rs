@@ -33,14 +33,14 @@ pub struct CompressedData {
 
 #[derive(Debug, Clone)]
 pub struct CondensedSamples {
-    pub samples: Vec<crate::BitStream>,
+    pub samples: Vec<BitVec<usize, Lsb0>>,
     pub weights: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DeviationSample {
-    pub deviation: crate::BitStream,
-    pub id: crate::BitStream,
+    pub deviation: BitVec<usize, Lsb0>,
+    pub id: BitVec<usize, Lsb0>,
 }
 
 pub(crate) struct DeviationSampleRef<'a> {
@@ -50,7 +50,7 @@ pub(crate) struct DeviationSampleRef<'a> {
 
 #[derive(Debug, Clone)]
 pub struct DeviationData {
-    pub(super) encoded_bit_stream: crate::BitStream,
+    pub(super) encoded_bit_stream: BitVec<usize, Lsb0>,
     pub(super) num_samples: usize,
     pub(super) num_deviation_bits: usize,
     pub(super) num_id_bits: usize,
@@ -58,9 +58,9 @@ pub struct DeviationData {
 
 #[derive(Debug, Clone)]
 pub struct RleDeviationData {
-    pub(super) symbol_bit_stream: crate::BitStream,
+    pub(super) symbol_bit_stream: BitVec<usize, Lsb0>,
     pub(super) rm_values: Vec<(u8, u8)>,
-    pub(super) rm_control_stream: crate::BitStream,
+    pub(super) rm_control_stream: BitVec<usize, Lsb0>,
     pub(super) num_samples: usize,
     pub(super) num_deviation_bits: usize,
     pub(super) num_id_bits: usize,
@@ -68,10 +68,10 @@ pub struct RleDeviationData {
 
 #[derive(Debug, Clone)]
 pub struct RleDeviationOffsetData {
-    pub(super) symbol_bit_stream: crate::BitStream,
+    pub(super) symbol_bit_stream: BitVec<usize, Lsb0>,
     pub(super) rm_values: Vec<(u8, u8)>,
-    pub(super) rm_control_stream: crate::BitStream,
-    pub(super) row_offset_stream: crate::BitStream,
+    pub(super) rm_control_stream: BitVec<usize, Lsb0>,
+    pub(super) row_offset_stream: BitVec<usize, Lsb0>,
     pub(super) row_offsets: Vec<(u32, u32)>,
     pub(super) original_num_samples: usize,
     pub(super) row_width: usize,
@@ -82,8 +82,8 @@ pub struct RleDeviationOffsetData {
 
 #[derive(Debug, Clone)]
 pub struct HuffmanDeviationData {
-    pub(super) pixel_bit_stream: crate::BitStream,
-    pub(super) raw_deviation_bit_stream: crate::BitStream,
+    pub(super) pixel_bit_stream: BitVec<usize, Lsb0>,
+    pub(super) raw_deviation_bit_stream: BitVec<usize, Lsb0>,
     pub(super) canonical_symbols: Vec<u64>,
     pub(super) canonical_code_lengths: Vec<u8>,
     pub(super) row_offsets: Vec<u32>,
@@ -110,15 +110,15 @@ pub enum EncodedData {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BaseTable {
-    Raw(Vec<(crate::BitStream, usize)>),
+    Raw(Vec<(BitVec<usize, Lsb0>, usize)>),
     Delta(DeltaBaseTableData),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeltaBaseTableData {
-    pub raw_rows: Vec<(crate::BitStream, usize)>,
-    pub first_sort_key: crate::BitStream,
-    pub delta_bit_stream: crate::BitStream,
+    pub raw_rows: Vec<(BitVec<usize, Lsb0>, usize)>,
+    pub first_sort_key: BitVec<usize, Lsb0>,
+    pub delta_bit_stream: BitVec<usize, Lsb0>,
     pub delta_count: usize,
     pub sort_column_order: Vec<usize>,
     /// Codec tag: 1 for unary prefix, 2 for fixed prefix
@@ -126,14 +126,14 @@ pub struct DeltaBaseTableData {
 }
 
 impl BaseTable {
-    pub fn as_raw(&self) -> &[(crate::BitStream, usize)] {
+    pub fn as_raw(&self) -> &[(BitVec<usize, Lsb0>, usize)] {
         match self {
             BaseTable::Raw(table) => table.as_slice(),
             BaseTable::Delta(delta) => delta.raw_rows.as_slice(),
         }
     }
 
-    pub fn as_raw_mut(&mut self) -> &mut Vec<(crate::BitStream, usize)> {
+    pub fn as_raw_mut(&mut self) -> &mut Vec<(BitVec<usize, Lsb0>, usize)> {
         match self {
             BaseTable::Raw(table) => table,
             BaseTable::Delta(delta) => &mut delta.raw_rows,
@@ -224,7 +224,7 @@ impl CompressedData {
 pub(crate) fn build_base_bit_mask(
     chunk_size: usize,
     base_bit_positions: &[usize],
-) -> crate::BitStream {
+) -> BitVec<usize, Lsb0>{
     let mut mask = bitvec![usize, crate::BitOrder; 0; chunk_size];
     for &bit_pos in base_bit_positions {
         if bit_pos < chunk_size {
@@ -236,7 +236,7 @@ pub(crate) fn build_base_bit_mask(
 
 impl DeviationData {
     pub fn new(
-        encoded_bit_stream: crate::BitStream,
+        encoded_bit_stream: BitVec<usize, Lsb0>,
         num_samples: usize,
         num_deviation_bits: usize,
         num_id_bits: usize,
@@ -274,7 +274,7 @@ impl DeviationData {
         self.encoded_bit_stream.len()
     }
 
-    pub fn encoded_bit_stream(&self) -> &crate::BitStream {
+    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0>{
         &self.encoded_bit_stream
     }
 
@@ -337,7 +337,7 @@ impl EncodedData {
         }
     }
 
-    pub fn encoded_bit_stream(&self) -> &crate::BitStream {
+    pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0>{
         match self {
             EncodedData::Normal(data) => data.encoded_bit_stream(),
             EncodedData::Rle(data) => data.symbol_bit_stream(),
@@ -441,7 +441,7 @@ pub(super) fn derive_symbol_layout(
     let num_deviation_bits = chunk_size.saturating_sub(selected_positions.len());
     let l_id = bits_needed_nonzero(input.variable_base_table.len());
 
-    let mut base_bit_mask = crate::BitStream::repeat(false, chunk_size);
+    let mut base_bit_mask = BitVec::repeat(false, chunk_size);
     for &bit_pos in &selected_positions {
         if bit_pos < chunk_size {
             base_bit_mask.set(bit_pos, true);
@@ -453,12 +453,12 @@ pub(super) fn derive_symbol_layout(
     (num_deviation_bits, l_id, deviation_ranges)
 }
 
-pub(super) fn build_id_bits_per_base(l_id: usize, num_bases: usize) -> Vec<crate::BitStream> {
+pub(super) fn build_id_bits_per_base(l_id: usize, num_bases: usize) -> Vec<BitVec<usize, Lsb0>> {
     let mut id_bits_per_base = Vec::new();
     if l_id > 0 {
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
-            let mut id_bits = crate::BitStream::with_capacity(l_id);
+            let mut id_bits = BitVec::with_capacity(l_id);
             for shift in 0..l_id {
                 id_bits.push(((id >> shift) & 1) == 1);
             }
@@ -474,11 +474,11 @@ pub(super) fn encode_rows_as_symbol_stream(
     num_deviation_bits: usize,
     l_id: usize,
     deviation_ranges: &[(usize, usize)],
-    id_bits_per_base: &[crate::BitStream],
-) -> crate::BitStream {
+    id_bits_per_base: &[BitVec<usize, Lsb0>],
+) -> BitVec<usize, Lsb0>{
     let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
-    let mut symbol_stream = crate::BitStream::with_capacity(num_rows * symbol_width);
+    let mut symbol_stream = BitVec::with_capacity(num_rows * symbol_width);
 
     for (row, id_ref) in input.row_to_base_id.iter().enumerate().take(num_rows) {
         let id = *id_ref;
@@ -611,7 +611,7 @@ fn encode_data_offset_rle(
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&input.bit_data.info)?;
 
-    let mut symbol_stream = crate::BitStream::new();
+    let mut symbol_stream = BitVec::new();
     let mut rm_values: Vec<(u8, u8)> = Vec::new();
     let mut row_offsets: Vec<(u32, u32)> = Vec::with_capacity(row_count);
 
@@ -782,7 +782,7 @@ fn encode_data_rle(input: &PreEncodeContext) -> RleDeviationData {
         &deviation_ranges,
         &id_bits_per_base,
     );
-    let mut symbol_stream = crate::BitStream::new();
+    let mut symbol_stream = BitVec::new();
     let mut rm_values: Vec<(u8, u8)> = Vec::new();
 
     if num_rows == 0 || symbol_width == 0 {
@@ -850,7 +850,7 @@ fn encode_data_rle(input: &PreEncodeContext) -> RleDeviationData {
 }
 
 fn symbol_slice(
-    symbol_stream: &crate::BitStream,
+    symbol_stream: &BitVec<usize, Lsb0>,
     symbol_width: usize,
     row: usize,
 ) -> &crate::BitView {

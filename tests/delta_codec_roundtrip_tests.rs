@@ -33,27 +33,6 @@ fn assert_bitstream_eq(
     );
 }
 
-fn assert_chunk_data_eq(expected: &BitDataSet, actual: &BitDataSet, context: &str) {
-    assert_eq!(
-        expected.data.num_rows, actual.data.num_rows,
-        "{}: num_rows mismatch",
-        context
-    );
-    assert_eq!(
-        expected.data.chunk_size, actual.data.chunk_size,
-        "{}: chunk_size mismatch",
-        context
-    );
-
-    for row in 0..expected.data.num_rows {
-        let expected_chunk = expected.data.get_chunk(row);
-        let actual_chunk = actual.data.get_chunk(row);
-        if expected_chunk != actual_chunk {
-            panic!("{}: first mismatching row {}", context, row);
-        }
-    }
-}
-
 /// Test roundtrip compression with delta-encoded base table using unary prefix
 #[test]
 fn test_delta_codec_roundtrip_unary_prefix() {

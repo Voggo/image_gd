@@ -5,6 +5,7 @@ use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
+use bitvec::prelude::*;
 
 fn organize_entropy_by_feature(
     entropy: &[(usize, f64)],
@@ -138,7 +139,7 @@ fn select_condensed_samples(
             .fold(0u64, |acc, bit| (acc << 1) | (*bit as u64))
     }
 
-    fn push_u64_bits(stream: &mut crate::BitStream, value: u64, bits: usize) {
+    fn push_u64_bits(stream: &mut BitVec<usize, Lsb0>, value: u64, bits: usize) {
         for shift in (0..bits).rev() {
             stream.push(((value >> shift) & 1) == 1);
         }
@@ -197,7 +198,7 @@ fn select_condensed_samples(
             }
         }
 
-        let mut condensed_bitvec = crate::BitStream::with_capacity(bit_data.chunk_size());
+        let mut condensed_bitvec = BitVec::<usize, Lsb0>::with_capacity(bit_data.chunk_size());
 
         for feature_idx in 0..bit_data.num_features() {
             let feature_offset = bit_data.feature_offset(feature_idx);
@@ -279,7 +280,7 @@ mod tests {
         fn build(self) -> BitDataSet {
             let chunk_size = self.num_features * self.bits_per_feature;
             let total_bits = chunk_size * self.num_rows;
-            let mut data = crate::BitStream::with_capacity(total_bits);
+            let mut data = BitVec::<usize, Lsb0>::with_capacity(total_bits);
 
             for _ in 0..self.num_rows {
                 for _ in 0..chunk_size {
@@ -482,7 +483,7 @@ mod tests {
     #[test]
     fn test_append_condensed_samples_single_sample() {
         let bit_data = TestBitDataBuilder::new(3, 1, 8).build();
-        let mut sample = crate::BitStream::with_capacity(8);
+        let mut sample = BitVec::<usize, Lsb0>::with_capacity(8);
         for _ in 0..8 {
             sample.push(true);
         }
@@ -502,7 +503,7 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(4, 1, 8).build();
         let mut samples = vec![];
         for _ in 0..3 {
-            let mut sample = crate::BitStream::with_capacity(8);
+            let mut sample = BitVec::<usize, Lsb0>::with_capacity(8);
             for _ in 0..8 {
                 sample.push(false);
             }
@@ -526,7 +527,7 @@ mod tests {
         let samples = weights
             .iter()
             .map(|_| {
-                let mut s = crate::BitStream::with_capacity(8);
+                let mut s = BitVec::<usize, Lsb0>::with_capacity(8);
                 for _ in 0..8 {
                     s.push(false);
                 }

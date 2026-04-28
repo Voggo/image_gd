@@ -1,6 +1,7 @@
 use std::fmt::{self, Display};
 use std::path::Path;
 use tracing::{debug, info, trace};
+use bitvec::prelude::*;
 
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
@@ -120,7 +121,7 @@ pub(crate) fn aligned_stride(chunk_size: usize, pad_rows_to_word: bool) -> usize
 }
 
 #[inline]
-pub(crate) fn append_row_padding(stream: &mut crate::BitStream, padding_bits: usize) {
+pub(crate) fn append_row_padding(stream: &mut BitVec<usize, Lsb0>, padding_bits: usize) {
     if padding_bits > 0 {
         stream.resize(stream.len() + padding_bits, false);
     }
@@ -812,7 +813,7 @@ impl BitDataInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitData {
     /// The underlying bit storage - all chunks stored contiguously
-    pub data: crate::BitStream,
+    pub data: BitVec<usize, Lsb0>,
     /// Logical bits per chunk (what algorithms see)
     pub chunk_size: usize,
     /// Physical bits per chunk including word-alignment padding
@@ -876,7 +877,7 @@ impl BitData {
     }
 
     /// Get raw access to the underlying bit vector
-    pub fn raw(&self) -> &crate::BitStream {
+    pub fn raw(&self) -> &BitVec<usize, Lsb0>{
         &self.data
     }
 
@@ -1055,7 +1056,7 @@ impl BitDataSet {
             "packing rows into bitstream"
         );
 
-        let mut data = crate::BitStream::with_capacity(total_bits);
+        let mut data = BitVec::with_capacity(total_bits);
         if row_padding_bits == 0 {
             for row_idx in 0..num_rows {
                 append_dataset_row_bits(&mut data, dataset, &info, row_idx, num_features)?;
@@ -1270,7 +1271,7 @@ fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
 }
 
 fn append_dataset_row_bits(
-    out: &mut crate::BitStream,
+    out: &mut BitVec<usize, Lsb0>,
     dataset: &Dataset,
     info: &BitDataInfo,
     row_idx: usize,
@@ -1380,7 +1381,7 @@ fn scale_float_to_i64(value: f64, decimal_scale: u8) -> i64 {
     (value * factor).round() as i64
 }
 
-fn push_bits(stream: &mut crate::BitStream, mut value: u64, bits: usize) {
+fn push_bits(stream: &mut BitVec<usize, Lsb0>, mut value: u64, bits: usize) {
     if bits == 64 {
         for shift in (0..64).rev() {
             stream.push(((value >> shift) & 1) == 1);

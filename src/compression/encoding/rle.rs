@@ -2,6 +2,7 @@ use super::encoding_core::{
     DeviationData, DeviationSample, DeviationSampleRef, RleDeviationData, RleDeviationOffsetData,
 };
 use crate::{ScopedTimer, error::EntroGdError};
+use bitvec::prelude::*;
 
 pub(crate) const RLE_SHORT_MAX: u8 = 7;
 pub(crate) const RLE_LONG_MIN: u8 = 8;
@@ -9,13 +10,13 @@ pub(crate) const RLE_LONG_MAX: u8 = 135;
 
 impl RleDeviationData {
     pub fn new(
-        symbol_bit_stream: crate::BitStream,
+        symbol_bit_stream: BitVec<usize, Lsb0>,
         rm_values: Vec<(u8, u8)>,
         num_samples: usize,
         num_deviation_bits: usize,
         num_id_bits: usize,
     ) -> Self {
-        let mut rm_control_stream = crate::BitStream::new();
+        let mut rm_control_stream = BitVec::new();
         for &(r, m) in &rm_values {
             write_rle_control_value(&mut rm_control_stream, r);
             write_rle_control_value(&mut rm_control_stream, m);
@@ -91,11 +92,11 @@ impl RleDeviationData {
         None
     }
 
-    pub fn symbol_bit_stream(&self) -> &crate::BitStream {
+    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Lsb0>{
         &self.symbol_bit_stream
     }
 
-    pub fn rm_control_stream(&self) -> &crate::BitStream {
+    pub fn rm_control_stream(&self) -> &BitVec<usize, Lsb0>{
         &self.rm_control_stream
     }
 
@@ -207,7 +208,7 @@ impl RleDeviationData {
             }
         })?;
 
-        let mut raw = crate::BitStream::with_capacity(expected_raw_bits);
+        let mut raw = BitVec::with_capacity(expected_raw_bits);
         let mut symbol_cursor = 0usize;
         let mut decoded_samples = 0usize;
 
@@ -276,7 +277,7 @@ impl RleDeviationData {
     }
 }
 
-pub(super) fn write_rle_control_value(out: &mut crate::BitStream, value: u8) {
+pub(super) fn write_rle_control_value(out: &mut BitVec<usize, Lsb0>, value: u8) {
     assert!(
         value <= RLE_LONG_MAX,
         "RLE control value {} out of range (max {})",
@@ -302,7 +303,7 @@ pub(super) fn write_rle_control_value(out: &mut crate::BitStream, value: u8) {
 
 impl RleDeviationOffsetData {
     pub fn new(
-        symbol_bit_stream: crate::BitStream,
+        symbol_bit_stream: BitVec<usize, Lsb0>,
         rm_values: Vec<(u8, u8)>,
         row_offsets: Vec<(u32, u32)>,
         original_num_samples: usize,
@@ -380,13 +381,13 @@ impl RleDeviationOffsetData {
             previous = (rm_idx, symbol_bit_idx);
         }
 
-        let mut rm_control_stream = crate::BitStream::new();
+        let mut rm_control_stream = BitVec::new();
         for &(r, m) in &rm_values {
             write_rle_control_value(&mut rm_control_stream, r);
             write_rle_control_value(&mut rm_control_stream, m);
         }
 
-        let mut row_offset_stream = crate::BitStream::with_capacity(row_offsets.len() * 64);
+        let mut row_offset_stream = BitVec::with_capacity(row_offsets.len() * 64);
         for &(rm_idx, symbol_bit_idx) in &row_offsets {
             append_u32_bits(&mut row_offset_stream, rm_idx);
             append_u32_bits(&mut row_offset_stream, symbol_bit_idx);
@@ -406,15 +407,15 @@ impl RleDeviationOffsetData {
         })
     }
 
-    pub fn symbol_bit_stream(&self) -> &crate::BitStream {
+    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Lsb0>{
         &self.symbol_bit_stream
     }
 
-    pub fn rm_control_stream(&self) -> &crate::BitStream {
+    pub fn rm_control_stream(&self) -> &BitVec<usize, Lsb0>{
         &self.rm_control_stream
     }
 
-    pub fn row_offset_stream(&self) -> &crate::BitStream {
+    pub fn row_offset_stream(&self) -> &BitVec<usize, Lsb0>{
         &self.row_offset_stream
     }
 
@@ -562,7 +563,7 @@ impl RleDeviationOffsetData {
             }
         })?;
 
-        let mut raw = crate::BitStream::with_capacity(expected_raw_bits);
+        let mut raw = BitVec::with_capacity(expected_raw_bits);
         let mut symbol_cursor = 0usize;
         let mut decoded_samples = 0usize;
 
@@ -687,7 +688,7 @@ impl RleDeviationOffsetData {
     }
 }
 
-fn append_u32_bits(out: &mut crate::BitStream, value: u32) {
+fn append_u32_bits(out: &mut BitVec<usize, Lsb0>, value: u32) {
     for shift in (0..32).rev() {
         out.push(((value >> shift) & 1) == 1);
     }
