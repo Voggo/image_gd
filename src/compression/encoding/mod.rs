@@ -5,7 +5,6 @@ mod huffman;
 mod rle;
 
 pub use self::delta_base_table::{DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, get_delta_codec, get_delta_codec_fixed};
-pub(crate) use self::encoding_core::build_base_bit_mask;
 pub use self::encoding_core::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
     DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataOptimized, EncodeDataRLE,

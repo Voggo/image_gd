@@ -220,19 +220,6 @@ impl CompressedData {
     }
 }
 
-pub(crate) fn build_base_bit_mask(
-    chunk_size: usize,
-    base_bit_positions: &[usize],
-) -> BitVec<usize, Lsb0> {
-    let mut mask = bitvec![usize, Lsb0; 0; chunk_size];
-    for &bit_pos in base_bit_positions {
-        if bit_pos < chunk_size {
-            mask.set(bit_pos, true);
-        }
-    }
-    mask
-}
-
 impl DeviationData {
     pub fn new(
         encoded_bit_stream: BitVec<usize, Lsb0>,
