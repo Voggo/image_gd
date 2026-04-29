@@ -68,7 +68,6 @@ pub(crate) fn decompress_samples_batch(
             &variable_base_positions,
             &constant_one_positions,
             base_table,
-            chunk_size,
             sample.deviation.as_bitslice(),
             sample.id.as_bitslice(),
         )?;
@@ -122,7 +121,6 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                 &variable_base_positions,
                 &constant_one_positions,
                 base_table,
-                chunk_size,
                 sample.deviation,
                 sample.id,
             )?;
@@ -159,7 +157,6 @@ fn append_reconstructed_chunk(
     variable_base_positions: &[usize],
     constant_one_positions: &[usize],
     base_table: &[(BitVec<usize, Lsb0>, usize)],
-    chunk_size: usize,
     deviation_bits: &BitSlice<usize, Lsb0>,
     id_bits: &BitSlice<usize, Lsb0>,
 ) -> Result<(), EntroGdError> {
@@ -174,7 +171,6 @@ fn append_reconstructed_chunk(
 
     constant_one_positions
         .iter()
-        .filter(|&&pos| pos < chunk_size)
         .for_each(|&pos| out.set(out_start + pos, true));
 
     variable_base_positions
