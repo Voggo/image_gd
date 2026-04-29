@@ -1,7 +1,7 @@
+use bitvec::prelude::*;
 use std::fmt::{self, Display};
 use std::path::Path;
 use tracing::{debug, info, trace};
-use bitvec::prelude::*;
 
 pub use crate::data_loader::FeatureDataType;
 use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
@@ -122,9 +122,7 @@ pub(crate) fn aligned_stride(chunk_size: usize, pad_rows_to_word: bool) -> usize
 
 #[inline]
 pub(crate) fn append_row_padding(stream: &mut BitVec<usize, Lsb0>, padding_bits: usize) {
-    if padding_bits > 0 {
-        stream.resize(stream.len() + padding_bits, false);
-    }
+    stream.resize(stream.len() + padding_bits, false);
 }
 
 fn infer_feature_specs(dataset: &Dataset, options: PreprocessOptions) -> Vec<FeatureSpec> {
@@ -824,7 +822,10 @@ pub struct BitData {
 
 impl BitData {
     /// Extend the BitData with additional bits from a BitSlice (used for adding condensed samples)
-    pub fn extend_from_bitslice(&mut self, bits: &BitSlice<usize, Lsb0>) -> Result<(), EntroGdError> {
+    pub fn extend_from_bitslice(
+        &mut self,
+        bits: &BitSlice<usize, Lsb0>,
+    ) -> Result<(), EntroGdError> {
         if bits.len() != self.chunk_size {
             return Err(EntroGdError::BitSliceLengthMismatch {
                 expected: self.chunk_size,
@@ -877,7 +878,7 @@ impl BitData {
     }
 
     /// Get raw access to the underlying bit vector
-    pub fn raw(&self) -> &BitVec<usize, Lsb0>{
+    pub fn raw(&self) -> &BitVec<usize, Lsb0> {
         &self.data
     }
 

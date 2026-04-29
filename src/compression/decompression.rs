@@ -49,7 +49,8 @@ pub(crate) fn decompress_samples_batch(
 
     let deviation_positions = compressed.layout.deviation_bit_positions();
 
-    let mut reconstructed_bits = BitVec::with_capacity(stride * indices.len());
+    let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; stride * indices.len()];
+    let mut cursor = 0usize;
 
     if row_padding_bits == 0 {
         for &sample_idx in indices {
@@ -59,9 +60,9 @@ pub(crate) fn decompress_samples_batch(
                     return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
                 }
             };
-
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
+                cursor,
                 &deviation_positions,
                 &compressed.layout.variable_base_bit_positions(),
                 &compressed.layout.constant_one_bit_positions(),
@@ -70,6 +71,7 @@ pub(crate) fn decompress_samples_batch(
                 sample.deviation.as_bitslice(),
                 sample.id.as_bitslice(),
             )?;
+            cursor += chunk_size;
         }
     } else {
         for &sample_idx in indices {
@@ -82,6 +84,7 @@ pub(crate) fn decompress_samples_batch(
 
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
+                cursor,
                 &deviation_positions,
                 &compressed.layout.variable_base_bit_positions(),
                 &compressed.layout.constant_one_bit_positions(),
@@ -92,6 +95,7 @@ pub(crate) fn decompress_samples_batch(
             )?;
 
             append_row_padding(&mut reconstructed_bits, row_padding_bits);
+            cursor += stride;
         }
     }
 
@@ -128,8 +132,9 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let non_base_positions = (0..chunk_size)
         .filter(|&bit_pos| !unsafe { *base_bit_mask.get_unchecked(bit_pos) })
         .collect::<Vec<_>>();
-    let mut reconstructed_bits = BitVec::with_capacity(stride * original_num_rows);
+    let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; stride * original_num_rows];
     let mut decoded_rows = 0usize;
+    let mut cursor = 0usize;
 
     let _timer = ScopedTimer::trace("Reconstrunting bit data");
     if row_padding_bits == 0 {
@@ -138,6 +143,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
             .for_each_sample_n(original_num_rows, |sample| {
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
+                    cursor,
                     &non_base_positions,
                     &compressed.layout.variable_base_bit_positions(),
                     &compressed.layout.constant_one_bit_positions(),
@@ -146,7 +152,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                     sample.deviation,
                     sample.id,
                 )?;
-
+                cursor += chunk_size;
                 decoded_rows += 1;
                 Ok(())
             })?;
@@ -156,6 +162,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
             .for_each_sample_n(original_num_rows, |sample| {
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
+                    cursor,
                     &non_base_positions,
                     &compressed.layout.variable_base_bit_positions(),
                     &compressed.layout.constant_one_bit_positions(),
@@ -164,9 +171,8 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                     sample.deviation,
                     sample.id,
                 )?;
-
                 append_row_padding(&mut reconstructed_bits, row_padding_bits);
-
+                cursor += stride;
                 decoded_rows += 1;
                 Ok(())
             })?;
@@ -195,6 +201,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
 
 fn append_reconstructed_chunk(
     out: &mut BitVec<usize, Lsb0>,
+    out_start: usize,
     non_base_positions: &[usize],
     variable_base_positions: &[usize],
     constant_one_positions: &[usize],
@@ -210,9 +217,6 @@ fn append_reconstructed_chunk(
             table_len: base_table.len(),
         });
     }
-
-    let out_start = out.len();
-    out.resize(out_start + chunk_size, false);
 
     for &bit_pos in constant_one_positions {
         if bit_pos < chunk_size {
@@ -352,8 +356,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         "Writing decompressed image ({}x{}, {} channels) to raw buffer",
         image_info.width, image_info.height, channels
     ));
-    let mut raw =
-        vec![0u8; image_info.width as usize * image_info.height as usize * channels];
+    let mut raw = vec![0u8; image_info.width as usize * image_info.height as usize * channels];
     let total_pixels = group_width * group_height;
     for row in 0..bit_data.num_rows() {
         let group_x = row % grouped_width;
