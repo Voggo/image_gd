@@ -47,6 +47,9 @@ pub(crate) fn decompress_samples_batch(
     }
 
     let deviation_positions = compressed.layout.deviation_bit_positions();
+    let variable_base_positions = compressed.layout.variable_base_bit_positions();
+    let constant_one_positions = compressed.layout.constant_one_bit_positions();
+    let base_table = compressed.base_table.as_raw();
 
     let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; stride * indices.len()];
     let mut cursor = 0usize;
@@ -62,9 +65,9 @@ pub(crate) fn decompress_samples_batch(
             &mut reconstructed_bits,
             cursor,
             &deviation_positions,
-            &compressed.layout.variable_base_bit_positions(),
-            &compressed.layout.constant_one_bit_positions(),
-            compressed.base_table.as_raw(),
+            &variable_base_positions,
+            &constant_one_positions,
+            base_table,
             chunk_size,
             sample.deviation.as_bitslice(),
             sample.id.as_bitslice(),
@@ -100,6 +103,9 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let stride = data_info.row_stride();
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let deviation_positions = &compressed.layout.deviation_bit_positions();
+    let variable_base_positions = &compressed.layout.variable_base_bit_positions();
+    let constant_one_positions = &compressed.layout.constant_one_bit_positions();
+    let base_table = compressed.base_table.as_raw();
     let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; stride * original_num_rows];
     let mut decoded_rows = 0usize;
     let mut cursor = 0usize;
@@ -113,9 +119,9 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
                 &mut reconstructed_bits,
                 cursor,
                 &deviation_positions,
-                &compressed.layout.variable_base_bit_positions(),
-                &compressed.layout.constant_one_bit_positions(),
-                compressed.base_table.as_raw(),
+                &variable_base_positions,
+                &constant_one_positions,
+                base_table,
                 chunk_size,
                 sample.deviation,
                 sample.id,
@@ -164,33 +170,28 @@ fn append_reconstructed_chunk(
             table_len: base_table.len(),
         });
     }
-
-    for &bit_pos in constant_one_positions {
-        if bit_pos < chunk_size {
-            out.set(out_start + bit_pos, true);
-        }
-    }
-
     let base_pattern = &base_table[base_id].0;
-    for (bit_idx, &bit_pos) in variable_base_positions.iter().enumerate() {
-        if bit_pos >= chunk_size {
-            continue;
-        }
-        out.set(
-            out_start + bit_pos,
-            base_pattern.get(bit_idx).map(|bit| *bit).unwrap_or(false),
-        );
-    }
 
-    for (deviation_bit_idx, &bit_pos) in deviation_positions
+    constant_one_positions
         .iter()
-        .take(deviation_bits.len())
+        .filter(|&&pos| pos < chunk_size)
+        .for_each(|&pos| out.set(out_start + pos, true));
+
+    variable_base_positions
+        .iter()
         .enumerate()
-    {
-        out.set(out_start + bit_pos, unsafe {
-            *deviation_bits.get_unchecked(deviation_bit_idx)
+        .for_each(|(i, &pos)| {
+            if let Some(bit) = base_pattern.get(i) {
+                out.set(out_start + pos, *bit);
+            }
         });
-    }
+
+    deviation_positions
+        .iter()
+        .zip(deviation_bits.iter())
+        .for_each(|(&pos, bit)| {
+            out.set(out_start + pos, *bit);
+        });
 
     Ok(())
 }
