@@ -60,15 +60,9 @@ impl DecompressRandomAccessHandle {
     }
 
     /// Decompress a batch of rows from a context without recomputing file-scoped state.
-    pub fn decompress_samples(
-        &self,
-        indices: &[usize],
-    ) -> Result<BitDataSet, EntroGdError> {
+    pub fn decompress_samples(&self, indices: &[usize]) -> Result<BitDataSet, EntroGdError> {
         // Validate indices
-        if let Some(&sample_idx) = indices
-            .iter()
-            .find(|&&idx| idx >= self.original_num_rows)
-        {
+        if let Some(&sample_idx) = indices.iter().find(|&&idx| idx >= self.original_num_rows) {
             return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
         }
 
@@ -106,10 +100,7 @@ impl DecompressRandomAccessHandle {
         let info = self
             .compressed
             .metadata
-            .with_original_size_bits_and_row_stride(
-                self.chunk_size * indices.len(),
-                self.stride,
-            );
+            .with_original_size_bits_and_row_stride(self.chunk_size * indices.len(), self.stride);
         Ok(BitDataSet { data, info })
     }
 }

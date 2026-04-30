@@ -480,7 +480,9 @@ fn benchmark_decompression_warm(c: &mut Criterion) {
         group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
             b.iter_batched(
                 || {
-                    let context = DecompressRandomAccessHandle::new(prepared.compressed_seed.clone()).unwrap();
+                    let context =
+                        DecompressRandomAccessHandle::new(prepared.compressed_seed.clone())
+                            .unwrap();
                     (context, prepared.row_indices.clone())
                 },
                 |(context, indices)| {

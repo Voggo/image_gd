@@ -104,7 +104,9 @@ fn main() -> Result<(), EntroGdError> {
         .process(compressed.clone())?;
 
         let compressed_data = load_compressed_data.process(compressed_path.clone())?;
-        let bit_data = DecompressFileData {}.process(compressed_data.clone()).unwrap();
+        let bit_data = DecompressFileData {}
+            .process(compressed_data.clone())
+            .unwrap();
         write_bitdata_as_image(&bit_data, &decompressed_path)?;
 
         let decompress_handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;

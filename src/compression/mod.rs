@@ -21,9 +21,8 @@ pub use base_selection::{
 pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};
 pub use condensed_samples::GenCondensedSamples;
 pub use decompression::{
-    DecompressAnalytics, DecompressRandomAccessHandle, DecompressFileData,
-    decompress_analytics, decompress_file, write_bitdata_as_csv, write_bitdata_as_image,
-    write_bitdata_to_output,
+    DecompressAnalytics, DecompressFileData, DecompressRandomAccessHandle, decompress_analytics,
+    decompress_file, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
 pub use encoding::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,

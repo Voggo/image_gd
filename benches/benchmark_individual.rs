@@ -14,8 +14,8 @@ use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{
-    BaseSelectionContext, BitDataSet, CompressedData, CondensedSamples, Dataset, DecompressRandomAccessHandle,
-    EntroGdError, EntropyScoredContext, FeatureSpec,
+    BaseSelectionContext, BitDataSet, CompressedData, CondensedSamples, Dataset,
+    DecompressRandomAccessHandle, EntroGdError, EntropyScoredContext, FeatureSpec,
 };
 
 #[allow(unused)]
@@ -371,7 +371,10 @@ impl DecompressRowsImpl {
         }
     }
 
-    fn process(self, input: (Rc<DecompressRandomAccessHandle>, Vec<usize>)) -> Result<BitDataSet, EntroGdError> {
+    fn process(
+        self,
+        input: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
+    ) -> Result<BitDataSet, EntroGdError> {
         let (context_rc, indices) = input;
         let context = (*context_rc).clone();
         match self {
@@ -778,7 +781,8 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     // Build DecompressContext instances once per loaded compressed seed and store
     let ctx_normal = DecompressRandomAccessHandle::new(loaded_compressed_seed.clone()).unwrap();
     let ctx_rle = DecompressRandomAccessHandle::new(loaded_compressed_seed_rle.clone()).unwrap();
-    let ctx_huffman = DecompressRandomAccessHandle::new(loaded_compressed_seed_huffman.clone()).unwrap();
+    let ctx_huffman =
+        DecompressRandomAccessHandle::new(loaded_compressed_seed_huffman.clone()).unwrap();
     let rows_context_seeds = DecompressRowsWrapper {
         normal: (Rc::new(ctx_normal), rows_seed.clone()),
         rle: (Rc::new(ctx_rle), rows_seed.clone()),
@@ -800,7 +804,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
         huffman_symbol_width_seed,
         compressed_seeds,
         loaded_compressed_seeds,
-            rows_context_seeds,
+        rows_context_seeds,
         egd_path,
         igd_path,
     }
