@@ -1,14 +1,14 @@
-use fxhash::FxHashMap;
 use bitvec::prelude::*;
+use fxhash::FxHashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::bit_io::{BitReader, BitWriter};
 use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
 use super::tags::{
-    BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_RAW, ENCODING_TAG_HUFFMAN_BASE_ID_ONLY,
-    ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET, ENCODING_TAG_RLE_RM_PACKED,
-    HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
+    BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_RAW,
+    ENCODING_TAG_HUFFMAN_BASE_ID_ONLY, ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET,
+    ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
 use crate::ScopedTimer;
@@ -145,7 +145,11 @@ fn decode_delta_base_rows(
     Ok(rows)
 }
 
-fn sort_key_to_row(sort_key: &BitVec<usize, Lsb0>, order: &[usize], lb: usize) -> BitVec<usize, Lsb0>{
+fn sort_key_to_row(
+    sort_key: &BitVec<usize, Lsb0>,
+    order: &[usize],
+    lb: usize,
+) -> BitVec<usize, Lsb0> {
     let mut row = BitVec::repeat(false, lb);
     for (rank, &col_idx) in order.iter().enumerate() {
         let key_idx = lb.saturating_sub(1 + rank);
@@ -322,7 +326,10 @@ fn add_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
     out
 }
 
-fn subtract_unsigned(minuend: &BitSlice<usize, Lsb0>, subtrahend: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
+fn subtract_unsigned(
+    minuend: &BitSlice<usize, Lsb0>,
+    subtrahend: &BitSlice<usize, Lsb0>,
+) -> BitVec<usize, Lsb0> {
     let max_len = minuend.len().max(subtrahend.len());
     let mut out = BitVec::with_capacity(max_len);
 
@@ -852,8 +859,7 @@ impl EgdFile {
             BASE_TABLE_TAG_RAW => {
                 let mut rows = Vec::with_capacity(num_bases);
                 for _ in 0..num_bases {
-                    let mut base_bits =
-                        BitVec::with_capacity(variable_base_bit_positions.len());
+                    let mut base_bits = BitVec::with_capacity(variable_base_bit_positions.len());
                     for _ in 0..variable_base_bit_positions.len() {
                         base_bits.push(reader.read_bit()?);
                     }

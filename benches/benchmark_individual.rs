@@ -1,6 +1,7 @@
 use std::hint::black_box;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use criterion::BatchSize;
@@ -13,8 +14,8 @@ use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{
-    BaseSelectionContext, BitDataSet, CompressedData, CondensedSamples, Dataset, EntroGdError,
-    EntropyScoredContext, FeatureSpec,
+    BaseSelectionContext, BitDataSet, CompressedData, CondensedSamples, Dataset, DecompressRandomAccessHandle,
+    EntroGdError, EntropyScoredContext, FeatureSpec,
 };
 
 #[allow(unused)]
@@ -370,9 +371,11 @@ impl DecompressRowsImpl {
         }
     }
 
-    fn process(self, input: (Arc<CompressedData>, Vec<usize>)) -> Result<BitDataSet, EntroGdError> {
+    fn process(self, input: (Rc<DecompressRandomAccessHandle>, Vec<usize>)) -> Result<BitDataSet, EntroGdError> {
+        let (context_rc, indices) = input;
+        let context = (*context_rc).clone();
         match self {
-            DecompressRowsImpl::Current => DecompressRowsData {}.process(input),
+            DecompressRowsImpl::Current => context.decompress_samples(&indices),
         }
     }
 }
@@ -650,10 +653,10 @@ struct CompressedDataWrapper {
     huffman_base_id_only: CompressedData,
 }
 
-struct CompressedRowsWrapper {
-    normal: (Arc<CompressedData>, Vec<usize>),
-    rle: (Arc<CompressedData>, Vec<usize>),
-    huffman_base_id_only: (Arc<CompressedData>, Vec<usize>),
+struct DecompressRowsWrapper {
+    normal: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
+    rle: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
+    huffman_base_id_only: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
 }
 
 struct PreparedCase {
@@ -671,9 +674,9 @@ struct PreparedCase {
     huffman_symbol_width_seed: usize,
     compressed_seeds: CompressedDataWrapper,
     loaded_compressed_seeds: CompressedDataWrapper,
+    rows_context_seeds: DecompressRowsWrapper,
     egd_path: PathBuf,
     igd_path: Option<PathBuf>,
-    rows_input_seeds: CompressedRowsWrapper,
 }
 
 impl PreparedCase {
@@ -771,19 +774,15 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     };
 
     let rows_seed = (0..bit_data_seed.data.num_rows).collect::<Vec<usize>>();
-    let rows_input_seed = (Arc::new(loaded_compressed_seed.clone()), rows_seed.clone());
-    let rows_input_rle_seed = (
-        Arc::new(loaded_compressed_seed_rle.clone()),
-        rows_seed.clone(),
-    );
-    let rows_input_huffman_seed = (
-        Arc::new(loaded_compressed_seed_huffman.clone()),
-        rows_seed.clone(),
-    );
-    let rows_input_seeds = CompressedRowsWrapper {
-        normal: rows_input_seed,
-        rle: rows_input_rle_seed,
-        huffman_base_id_only: rows_input_huffman_seed,
+
+    // Build DecompressContext instances once per loaded compressed seed and store
+    let ctx_normal = DecompressRandomAccessHandle::new(loaded_compressed_seed.clone()).unwrap();
+    let ctx_rle = DecompressRandomAccessHandle::new(loaded_compressed_seed_rle.clone()).unwrap();
+    let ctx_huffman = DecompressRandomAccessHandle::new(loaded_compressed_seed_huffman.clone()).unwrap();
+    let rows_context_seeds = DecompressRowsWrapper {
+        normal: (Rc::new(ctx_normal), rows_seed.clone()),
+        rle: (Rc::new(ctx_rle), rows_seed.clone()),
+        huffman_base_id_only: (Rc::new(ctx_huffman), rows_seed.clone()),
     };
 
     PreparedCase {
@@ -801,9 +800,9 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
         huffman_symbol_width_seed,
         compressed_seeds,
         loaded_compressed_seeds,
+            rows_context_seeds,
         egd_path,
         igd_path,
-        rows_input_seeds,
     }
 }
 
@@ -1096,8 +1095,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         DecompressRowsImpl::label,
         |case| {
             (
-                case.rows_input_seeds.normal.0.clone(),
-                case.rows_input_seeds.normal.1.clone(),
+                case.rows_context_seeds.normal.0.clone(),
+                case.rows_context_seeds.normal.1.clone(),
             )
         },
         |implementation, input, _case| implementation.process(input),
@@ -1113,8 +1112,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         DecompressRowsImpl::label,
         |case| {
             (
-                case.rows_input_seeds.rle.0.clone(),
-                case.rows_input_seeds.rle.1.clone(),
+                case.rows_context_seeds.rle.0.clone(),
+                case.rows_context_seeds.rle.1.clone(),
             )
         },
         |implementation, input, _case| implementation.process(input),
@@ -1130,8 +1129,8 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         DecompressRowsImpl::label,
         |case| {
             (
-                case.rows_input_seeds.huffman_base_id_only.0.clone(),
-                case.rows_input_seeds.huffman_base_id_only.1.clone(),
+                case.rows_context_seeds.huffman_base_id_only.0.clone(),
+                case.rows_context_seeds.huffman_base_id_only.1.clone(),
             )
         },
         |implementation, input, _case| implementation.process(input),

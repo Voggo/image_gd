@@ -1,6 +1,6 @@
+use entro_gd::compression::BaseTable;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
-use entro_gd::compression::BaseTable;
 use entro_gd::{BitDataSet, DecompressFileData, LoadEgdFile, SaveEgdFile};
 use std::env;
 
@@ -58,10 +58,7 @@ fn test_delta_codec_roundtrip_unary_prefix() {
 
     // Verify that the base table is delta-encoded
     assert!(
-        matches!(
-            &compressed.base_table,
-            BaseTable::Delta(_),
-        ),
+        matches!(&compressed.base_table, BaseTable::Delta(_),),
         "Expected delta-encoded base table"
     );
 
@@ -133,10 +130,7 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
 
     // Verify that the base table is delta-encoded
     assert!(
-        matches!(
-            &compressed.base_table,
-            BaseTable::Delta(_),
-        ),
+        matches!(&compressed.base_table, BaseTable::Delta(_),),
         "Expected delta-encoded base table"
     );
 

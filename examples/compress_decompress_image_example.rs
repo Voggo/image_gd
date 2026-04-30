@@ -81,7 +81,7 @@ fn main() -> Result<(), EntroGdError> {
     .then(BuildBaseTable {})
     .then(EncodeData {});
 
-    let decompression_pipeline = LoadIgdFile {}.then(DecompressFileData {});
+    let load_compressed_data = LoadIgdFile {};
 
     for image_file in files_to_process {
         tracing::info!("Processing: {}", image_file.display());
@@ -103,8 +103,13 @@ fn main() -> Result<(), EntroGdError> {
         }
         .process(compressed.clone())?;
 
-        let bit_data = decompression_pipeline.process(compressed_path.clone())?;
+        let compressed_data = load_compressed_data.process(compressed_path.clone())?;
+        let bit_data = DecompressFileData {}.process(compressed_data.clone()).unwrap();
         write_bitdata_as_image(&bit_data, &decompressed_path)?;
+
+        let decompress_handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;
+        let indices: Vec<usize> = (0..compressed_data.encoded_data.get_num_samples()).collect();
+        let _decompressed_data = decompress_handle.decompress_samples(&indices)?;
 
         tracing::info!(
             "Compression done: original={} bits, encoded={} bits",

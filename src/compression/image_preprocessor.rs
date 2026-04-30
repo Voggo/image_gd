@@ -1,6 +1,6 @@
+use bitvec::prelude::*;
 use image::DynamicImage;
 use std::path::PathBuf;
-use bitvec::prelude::*;
 
 pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
 
@@ -316,7 +316,7 @@ fn build_raw_transform_bitstream_from_raw(
     chunk_size: usize,
     stride: usize,
     storage_bits: usize,
-) -> BitVec<usize, Lsb0>{
+) -> BitVec<usize, Lsb0> {
     let mut bitstream = BitVec::with_capacity(storage_bits);
     bitstream.resize(storage_bits, false);
 
@@ -366,7 +366,7 @@ fn build_for_first_pixel_transform_bitstream_from_raw(
     chunk_size: usize,
     stride: usize,
     storage_bits: usize,
-) -> BitVec<usize, Lsb0>{
+) -> BitVec<usize, Lsb0> {
     let mut bitstream = BitVec::with_capacity(storage_bits);
     bitstream.resize(storage_bits, false);
 
@@ -422,7 +422,7 @@ fn build_grouped_transform_bitstream_from_raw(
     chunk_size: usize,
     stride: usize,
     storage_bits: usize,
-) -> BitVec<usize, Lsb0>{
+) -> BitVec<usize, Lsb0> {
     let mut bitstream = BitVec::with_capacity(storage_bits);
     let row_padding_bits = stride.saturating_sub(chunk_size);
 

@@ -92,11 +92,11 @@ impl RleDeviationData {
         None
     }
 
-    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.symbol_bit_stream
     }
 
-    pub fn rm_control_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn rm_control_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.rm_control_stream
     }
 
@@ -407,15 +407,15 @@ impl RleDeviationOffsetData {
         })
     }
 
-    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn symbol_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.symbol_bit_stream
     }
 
-    pub fn rm_control_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn rm_control_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.rm_control_stream
     }
 
-    pub fn row_offset_stream(&self) -> &BitVec<usize, Lsb0>{
+    pub fn row_offset_stream(&self) -> &BitVec<usize, Lsb0> {
         &self.row_offset_stream
     }
 

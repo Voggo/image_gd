@@ -13,75 +13,105 @@ use image::{RgbImage, RgbaImage};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 
-pub struct DecompressRowsData;
-
-impl Filter for DecompressRowsData {
-    type Input = (Arc<CompressedData>, Vec<usize>);
-    type Output = BitDataSet;
-
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info(format!("Decompressing {} rows", input.1.len()));
-        let (compressed, indices) = input;
-        decompress_samples_batch(compressed.as_ref(), &indices)
-    }
+/// Decompression context containing file-scoped state computed once per file.
+/// Use this to perform multiple row decompression operations without recomputing layout.
+#[derive(Debug, Clone)]
+pub struct DecompressRandomAccessHandle {
+    pub compressed: CompressedData,
+    pub chunk_size: usize,
+    pub stride: usize,
+    pub original_num_rows: usize,
+    pub deviation_positions: Vec<usize>,
+    pub variable_base_positions: Vec<usize>,
+    pub constant_one_positions: Vec<usize>,
 }
 
-pub(crate) fn decompress_samples_batch(
-    compressed: &CompressedData,
-    indices: &[usize],
-) -> Result<BitDataSet, EntroGdError> {
-    let data_info = &compressed.metadata;
-    let num_features = data_info.num_features();
-    let chunk_size = data_info.chunk_size();
-    let stride = data_info.row_stride();
-    let original_num_rows = data_info.original_size_bits() / chunk_size;
-    if num_features == 0 {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "num_features is 0".to_string(),
-        });
+impl DecompressRandomAccessHandle {
+    /// Create a decompression context from compressed data.
+    /// This validates metadata and pre-computes layout positions once.
+    pub fn new(compressed: CompressedData) -> Result<Self, EntroGdError> {
+        let data_info = &compressed.metadata;
+        let num_features = data_info.num_features();
+        let chunk_size = data_info.chunk_size();
+        if chunk_size == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "chunk_size is 0".to_string(),
+            });
+        }
+
+        let stride = data_info.row_stride();
+        let original_num_rows = data_info.original_size_bits() / chunk_size;
+        if num_features == 0 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "num_features is 0".to_string(),
+            });
+        }
+
+        Ok(Self {
+            deviation_positions: compressed.layout.deviation_bit_positions(),
+            variable_base_positions: compressed.layout.variable_base_bit_positions(),
+            constant_one_positions: compressed.layout.constant_one_bit_positions(),
+            compressed,
+            chunk_size,
+            stride,
+            original_num_rows,
+        })
     }
-    if let Some(&sample_idx) = indices.iter().find(|&&idx| idx >= original_num_rows) {
-        return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
-    }
 
-    let deviation_positions = compressed.layout.deviation_bit_positions();
-    let variable_base_positions = compressed.layout.variable_base_bit_positions();
-    let constant_one_positions = compressed.layout.constant_one_bit_positions();
-    let base_table = compressed.base_table.as_raw();
+    /// Decompress a batch of rows from a context without recomputing file-scoped state.
+    pub fn decompress_samples(
+        &self,
+        indices: &[usize],
+    ) -> Result<BitDataSet, EntroGdError> {
+        // Validate indices
+        if let Some(&sample_idx) = indices
+            .iter()
+            .find(|&&idx| idx >= self.original_num_rows)
+        {
+            return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
+        }
 
-    let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; stride * indices.len()];
-    let mut cursor = 0usize;
+        // Allocate reconstructed bits once for all rows
+        let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; self.stride * indices.len()];
 
-    for &sample_idx in indices {
-        let sample = match compressed.encoded_data.get_sample(sample_idx) {
-            Some(s) => s,
-            None => {
-                return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
-            }
+        // Decompress each sample
+        for (out_idx, &sample_idx) in indices.iter().enumerate() {
+            let sample = match self.compressed.encoded_data.get_sample(sample_idx) {
+                Some(s) => s,
+                None => {
+                    return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
+                }
+            };
+
+            let out_start = out_idx * self.stride;
+            append_reconstructed_chunk(
+                &mut reconstructed_bits,
+                out_start,
+                &self.deviation_positions,
+                &self.variable_base_positions,
+                &self.constant_one_positions,
+                self.compressed.base_table.as_raw(),
+                sample.deviation.as_bitslice(),
+                sample.id.as_bitslice(),
+            )?;
+        }
+
+        let data = BitData {
+            data: reconstructed_bits,
+            chunk_size: self.chunk_size,
+            stride: self.stride,
+            num_rows: indices.len(),
         };
-        append_reconstructed_chunk(
-            &mut reconstructed_bits,
-            cursor,
-            &deviation_positions,
-            &variable_base_positions,
-            &constant_one_positions,
-            base_table,
-            sample.deviation.as_bitslice(),
-            sample.id.as_bitslice(),
-        )?;
-        cursor += stride;
+        let info = self
+            .compressed
+            .metadata
+            .with_original_size_bits_and_row_stride(
+                self.chunk_size * indices.len(),
+                self.stride,
+            );
+        Ok(BitDataSet { data, info })
     }
-
-    let data = BitData {
-        data: reconstructed_bits,
-        chunk_size,
-        stride,
-        num_rows: indices.len(),
-    };
-    let info = data_info.with_original_size_bits_and_row_stride(chunk_size * indices.len(), stride);
-    Ok(BitDataSet { data, info })
 }
 
 pub struct DecompressFileData {}
@@ -709,9 +739,10 @@ mod tests {
         let chunk_size = 8;
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 4);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![0];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 1);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -723,9 +754,10 @@ mod tests {
         let chunk_size = 16;
         let num_rows = 10;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 4, 8);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![0, 2, 5, 9];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 4);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -737,9 +769,10 @@ mod tests {
         let chunk_size = 8;
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 4);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices: Vec<usize> = (0..num_rows).collect();
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, num_rows);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -751,9 +784,10 @@ mod tests {
         let chunk_size = 8;
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 4);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![0, 10]; // Index 10 is out of bounds
-        let result = decompress_samples_batch(&compressed, &indices);
+        let result = context.decompress_samples(&indices);
 
         assert!(result.is_err());
         match result {
@@ -769,9 +803,10 @@ mod tests {
         let chunk_size = 8;
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 4);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 0);
         assert_eq!(result.data.total_bits(), 0);
@@ -883,8 +918,9 @@ mod tests {
         let all_rows = decompress_file(&compressed).unwrap();
 
         // Decompress specific rows in same order
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
         let specific_indices = vec![0, 1, 2];
-        let specific_rows = decompress_samples_batch(&compressed, &specific_indices).unwrap();
+        let specific_rows = context.decompress_samples(&specific_indices).unwrap();
 
         // Results should match
         assert_eq!(all_rows.data.num_rows, specific_rows.data.num_rows);
@@ -897,10 +933,11 @@ mod tests {
         let chunk_size = 16;
         let num_rows = 10;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 4, 8);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         // Decompress specific subset
         let indices = vec![1, 3, 7];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 3);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -911,9 +948,10 @@ mod tests {
         let chunk_size = 24;
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 8);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![0, 2];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         // Metadata should be preserved and adjusted
         assert_eq!(result.info.chunk_size(), chunk_size);
@@ -947,11 +985,10 @@ mod tests {
         let chunk_size = 8;
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 4);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
-        let filter = DecompressRowsData;
-        let compressed_arc = Arc::new(compressed);
         let indices = vec![0, 2];
-        let result = filter.process((compressed_arc, indices)).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 2);
     }
@@ -961,9 +998,10 @@ mod tests {
         let chunk_size = 8;
         let num_rows = 3;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 1);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![0];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 1);
         assert_eq!(result.data.total_bits(), chunk_size);
@@ -975,9 +1013,10 @@ mod tests {
         let num_rows = 3;
         // All bits are base bits, no deviation bits
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, chunk_size);
+        let context = DecompressRandomAccessHandle::new(compressed).unwrap();
 
         let indices = vec![0, 1];
-        let result = decompress_samples_batch(&compressed, &indices).unwrap();
+        let result = context.decompress_samples(&indices).unwrap();
 
         assert_eq!(result.data.num_rows, 2);
         assert_eq!(result.data.total_bits(), chunk_size * 2);

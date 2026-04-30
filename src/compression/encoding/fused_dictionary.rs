@@ -1,7 +1,7 @@
-use fxhash::FxHashMap;
-use std::hash::{Hash, Hasher};
-use rayon::prelude::*;
 use bitvec::prelude::*;
+use fxhash::FxHashMap;
+use rayon::prelude::*;
+use std::hash::{Hash, Hasher};
 
 use super::encoding_core::{
     BaseTable, CompressedData, DeviationData, EncodedData, build_deviation_ranges,
@@ -97,7 +97,10 @@ impl Hash for SignatureKey {
     }
 }
 
-fn build_signature_key(chunk: &BitSlice<usize, Lsb0>, base_bit_positions: &[usize]) -> SignatureKey {
+fn build_signature_key(
+    chunk: &BitSlice<usize, Lsb0>,
+    base_bit_positions: &[usize],
+) -> SignatureKey {
     if base_bit_positions.len() <= 128 {
         let mut packed = 0u128;
         for &bit_pos in base_bit_positions {
@@ -151,7 +154,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         };
         row_to_group_id.push(id);
     }
-    
+
     let num_bases = representative_rows.len();
     let l_id = bits_needed_nonzero(num_bases);
     let mut id_bits_per_base: Vec<BitVec<usize, Lsb0>> = Vec::new();
@@ -165,16 +168,18 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
             id_bits_per_base.push(id_bits);
         }
     }
-    
+
     let symbol_width = num_deviation_bits + l_id;
     // Process rows in parallel chunks to build symbol segments
-    let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).max(256).min(4096);
+    let chunk_size = (num_rows / (rayon::current_num_threads() * 4))
+        .max(256)
+        .min(4096);
     let chunk_results: Vec<BitVec<usize, Lsb0>> = (0..num_rows)
         .into_par_iter()
         .chunks(chunk_size)
         .map(|row_chunk| {
             let mut chunk_stream = BitVec::with_capacity(row_chunk.len() * symbol_width);
-            
+
             for row in row_chunk {
                 let id = row_to_group_id[row];
                 let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
@@ -190,7 +195,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
             chunk_stream
         })
         .collect();
-    
+
     // Merge all chunks in order into the final stream
     let mut encoded_bit_stream = BitVec::with_capacity(num_rows * symbol_width);
     for chunk_stream in chunk_results {

@@ -171,7 +171,8 @@ impl Filter for DeltaEncodeBaseTableFixed {
     type Output = CompressedData;
 
     fn process(&self, mut input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info("Delta encoding base table with fixed prefix (post-encoding)");
+        let _timer =
+            ScopedTimer::info("Delta encoding base table with fixed prefix (post-encoding)");
 
         let Some(order) = input.entropy_sorted_column_order.clone() else {
             tracing::warn!(
@@ -314,7 +315,7 @@ impl Filter for DeltaEncodeBaseTableFixed {
     }
 }
 
-fn build_sort_key_bits(row: &BitSlice<usize, Lsb0>, order: &[usize]) -> BitVec<usize, Lsb0>{
+fn build_sort_key_bits(row: &BitSlice<usize, Lsb0>, order: &[usize]) -> BitVec<usize, Lsb0> {
     let mut out = BitVec::with_capacity(order.len());
     for &col_idx in order.iter().rev() {
         out.push(row.get(col_idx).map(|b| *b).unwrap_or(false));
@@ -326,7 +327,10 @@ fn is_zero_bits(bits: &BitSlice<usize, Lsb0>) -> bool {
     bits.not_any()
 }
 
-fn compare_unsigned(lhs: &BitSlice<usize, Lsb0>, rhs: &BitSlice<usize, Lsb0>) -> std::cmp::Ordering {
+fn compare_unsigned(
+    lhs: &BitSlice<usize, Lsb0>,
+    rhs: &BitSlice<usize, Lsb0>,
+) -> std::cmp::Ordering {
     let max_len = lhs.len().max(rhs.len());
     for idx in (0..max_len).rev() {
         let l = lhs.get(idx).map(|b| *b).unwrap_or(false);
@@ -339,7 +343,10 @@ fn compare_unsigned(lhs: &BitSlice<usize, Lsb0>, rhs: &BitSlice<usize, Lsb0>) ->
     std::cmp::Ordering::Equal
 }
 
-fn subtract_unsigned(minuend: &BitSlice<usize, Lsb0>, subtrahend: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0>{
+fn subtract_unsigned(
+    minuend: &BitSlice<usize, Lsb0>,
+    subtrahend: &BitSlice<usize, Lsb0>,
+) -> BitVec<usize, Lsb0> {
     let max_len = minuend.len().max(subtrahend.len());
     let mut out = BitVec::with_capacity(max_len);
 
@@ -429,7 +436,8 @@ pub const fn get_delta_codec_fixed() -> [(usize, u64); 16] {
     let mut starts = [0u64; CODE_NUM];
     let mut cumulative = 0u64;
     let mut i = 0;
-    while i < CODE_NUM - 1 {  // Don't overflow on the last tier
+    while i < CODE_NUM - 1 {
+        // Don't overflow on the last tier
         starts[i] = cumulative;
         cumulative += 1 << BIT_WIDTHS[i];
         codec[i] = (BIT_WIDTHS[i], starts[i]);
@@ -518,12 +526,9 @@ fn encode_adjusted_delta_bits_with_stats(
 ) -> DeltaBitStats {
     const CODEC: [(usize, u64); 5] = get_delta_codec();
     encode_adjusted_delta_bits_generic(
-        d_bits,
-        lb,
-        out,
-        &CODEC,
-        5,     // prefix_bits (not used for unary, but kept for signature)
-        true,  // use_unary_prefix
+        d_bits, lb, out, &CODEC,
+        5,    // prefix_bits (not used for unary, but kept for signature)
+        true, // use_unary_prefix
     )
 }
 

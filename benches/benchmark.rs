@@ -1,6 +1,5 @@
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use criterion::BatchSize;
 use criterion::BenchmarkId;
@@ -14,7 +13,7 @@ use std::hint::black_box;
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
-use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRowsData};
+use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRandomAccessHandle};
 
 #[derive(Clone, Copy)]
 enum CompressionVariant {
@@ -481,13 +480,11 @@ fn benchmark_decompression_warm(c: &mut Criterion) {
         group.bench_function(BenchmarkId::from_parameter(&prepared.name), |b| {
             b.iter_batched(
                 || {
-                    (
-                        Arc::new(prepared.compressed_seed.clone()),
-                        prepared.row_indices.clone(),
-                    )
+                    let context = DecompressRandomAccessHandle::new(prepared.compressed_seed.clone()).unwrap();
+                    (context, prepared.row_indices.clone())
                 },
-                |input| {
-                    let decompressed = DecompressRowsData {}.process(input).unwrap();
+                |(context, indices)| {
+                    let decompressed = context.decompress_samples(&indices).unwrap();
                     black_box(decompressed);
                 },
                 BatchSize::SmallInput,
@@ -541,9 +538,8 @@ fn benchmark_decompression_cold(c: &mut Criterion) {
                         .process(prepared.compressed_path.clone())
                         .unwrap(),
                 };
-                let decompressed = DecompressRowsData {}
-                    .process((Arc::new(loaded_compressed), prepared.row_indices.clone()))
-                    .unwrap();
+                let context = DecompressRandomAccessHandle::new(loaded_compressed).unwrap();
+                let decompressed = context.decompress_samples(&prepared.row_indices).unwrap();
                 black_box(decompressed);
             });
         });

@@ -1,8 +1,8 @@
+use bitvec::prelude::*;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use bitvec::prelude::*;
 
 use csv::Writer;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
@@ -380,7 +380,10 @@ fn bits_needed_unsigned(bits: &BitSlice<usize, Lsb0>) -> usize {
     0
 }
 
-fn abs_diff_unsigned(lhs: &BitSlice<usize, Lsb0>, rhs: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
+fn abs_diff_unsigned(
+    lhs: &BitSlice<usize, Lsb0>,
+    rhs: &BitSlice<usize, Lsb0>,
+) -> BitVec<usize, Lsb0> {
     match compare_unsigned(lhs, rhs) {
         Ordering::Greater | Ordering::Equal => subtract_unsigned(lhs, rhs),
         Ordering::Less => subtract_unsigned(rhs, lhs),
