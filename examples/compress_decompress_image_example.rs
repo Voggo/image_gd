@@ -77,6 +77,7 @@ fn main() -> Result<(), EntroGdError> {
     .then(SelectBasesOptimized {
         patience: 5,
         base_bit_impl: BaseBitImpl::Naive,
+        entropy_threshold: 0.70,
     })
     .then(BuildBaseTable {})
     .then(EncodeData {});

@@ -173,6 +173,7 @@ pub struct CsvPipelineProfileConfig {
     pub preprocess: Option<CsvPreprocessConfig>,
     pub m_max: usize,
     pub patience: usize,
+    pub entropy_threshold: Option<f64>,
     pub select_impl: ConfigSelectBasesImpl,
     pub base_bit_impl: Option<ConfigBaseBitImpl>,
     pub entropy_impl: Option<ConfigEntropyImpl>,
@@ -203,6 +204,7 @@ pub struct ImagePipelineProfileConfig {
     pub build: ImageBuildConfigSerializable,
     pub m_max: usize,
     pub patience: usize,
+    pub entropy_threshold: Option<f64>,
     pub select_impl: ConfigSelectBasesImpl,
     pub base_bit_impl: Option<ConfigBaseBitImpl>,
     pub entropy_impl: Option<ConfigEntropyImpl>,
@@ -279,6 +281,7 @@ pub struct CsvProfileGroupConfig {
     pub preprocess: Option<CsvPreprocessSweepConfig>,
     pub m_max: Option<IntegerSweepUsize>,
     pub patience: Option<IntegerSweepUsize>,
+    pub entropy_threshold: Option<Vec<f64>>,
     pub select_impl: Option<Vec<ConfigSelectBasesImpl>>,
     pub base_bit_impl: Option<Vec<ConfigBaseBitImpl>>,
     pub entropy_impl: Option<Vec<ConfigEntropyImpl>>,
@@ -303,6 +306,7 @@ pub struct ImageProfileGroupConfig {
     pub build: Option<ImageBuildSweepConfig>,
     pub m_max: Option<IntegerSweepUsize>,
     pub patience: Option<IntegerSweepUsize>,
+    pub entropy_threshold: Option<Vec<f64>>,
     pub select_impl: Option<Vec<ConfigSelectBasesImpl>>,
     pub base_bit_impl: Option<Vec<ConfigBaseBitImpl>>,
     pub entropy_impl: Option<Vec<ConfigEntropyImpl>>,
@@ -322,6 +326,7 @@ pub struct CsvPipelineProfile {
     pub preprocess: PreprocessOptions,
     pub m_max: usize,
     pub patience: usize,
+    pub entropy_threshold: f64,
     pub select_impl: SelectBasesImpl,
     pub base_bit_impl: BaseBitImpl,
     pub entropy_impl: EntropyImpl,
@@ -346,6 +351,7 @@ pub struct ImagePipelineProfile {
     pub build: ImageBuildConfig,
     pub m_max: usize,
     pub patience: usize,
+    pub entropy_threshold: f64,
     pub select_impl: SelectBasesImpl,
     pub base_bit_impl: BaseBitImpl,
     pub entropy_impl: EntropyImpl,
@@ -374,6 +380,7 @@ impl PipelineProfileSet {
                     preprocess: PreprocessOptions::default(),
                     m_max: 0,
                     patience: 6,
+                    entropy_threshold: 0.70,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::SignatureGroups,
                     entropy_impl: EntropyImpl::Naive,
@@ -391,6 +398,7 @@ impl PipelineProfileSet {
                     preprocess: PreprocessOptions::default(),
                     m_max: 25,
                     patience: 10,
+                    entropy_threshold: 0.70,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::IncSignatureGroups,
                     entropy_impl: EntropyImpl::Naive,
@@ -408,6 +416,7 @@ impl PipelineProfileSet {
                     preprocess: PreprocessOptions::default(),
                     m_max: 75,
                     patience: 20,
+                    entropy_threshold: 0.70,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::BatchGroups,
                     entropy_impl: EntropyImpl::Naive,
@@ -429,6 +438,7 @@ impl PipelineProfileSet {
                     },
                     m_max: 0,
                     patience: 6,
+                    entropy_threshold: 0.70,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::SignatureGroups,
                     entropy_impl: EntropyImpl::Naive,
@@ -448,6 +458,7 @@ impl PipelineProfileSet {
                     },
                     m_max: 25,
                     patience: 10,
+                    entropy_threshold: 0.70,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::IncSignatureGroups,
                     entropy_impl: EntropyImpl::Naive,
@@ -467,6 +478,7 @@ impl PipelineProfileSet {
                     },
                     m_max: 75,
                     patience: 20,
+                    entropy_threshold: 0.70,
                     select_impl: SelectBasesImpl::Optimized,
                     base_bit_impl: BaseBitImpl::BatchGroups,
                     entropy_impl: EntropyImpl::Naive,
@@ -587,6 +599,10 @@ fn expand_csv_group(
         .clone()
         .unwrap_or_else(|| vec![ConfigEntropyImpl::Naive]);
     let entropy_skip_rows = expand_usize_sweep(group.entropy_skip_rows.as_ref(), 0)?;
+    let entropy_threshold = group
+        .entropy_threshold
+        .clone()
+        .unwrap_or_else(|| vec![0.70]);
     let use_condensed_samples = group
         .use_condensed_samples
         .clone()
@@ -638,6 +654,7 @@ fn expand_csv_group(
         integer_zero_normalization.len(),
         m_max.len(),
         patience.len(),
+        entropy_threshold.len(),
         select_impl.len(),
         base_bit_impl.len(),
         entropy_impl.len(),
@@ -657,22 +674,24 @@ fn expand_csv_group(
         let int_zero_item = integer_zero_normalization[indices[5]];
         let m_max_item = m_max[indices[6]];
         let patience_item = patience[indices[7]];
-        let select_item = &select_impl[indices[8]];
-        let base_bit_item = &base_bit_impl[indices[9]];
-        let entropy_item = &entropy_impl[indices[10]];
-        let entropy_skip_rows_item = entropy_skip_rows[indices[11]];
-        let use_condensed_item = use_condensed_samples[indices[12]];
-        let base_table_item = &base_table_impl[indices[13]];
-        let delta_codec_item = &delta_codec_impl[indices[14]];
-        let encode_item = &encode_impl[indices[15]];
+        let entropy_threshold_item = entropy_threshold[indices[8]];
+        let select_item = &select_impl[indices[9]];
+        let base_bit_item = &base_bit_impl[indices[10]];
+        let entropy_item = &entropy_impl[indices[11]];
+        let entropy_skip_rows_item = entropy_skip_rows[indices[12]];
+        let use_condensed_item = use_condensed_samples[indices[13]];
+        let base_table_item = &base_table_impl[indices[14]];
+        let delta_codec_item = &delta_codec_impl[indices[15]];
+        let encode_item = &encode_impl[indices[16]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_m{}_p{}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
+            "{}__{:03}_m{}_p{}_th{:.3}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
             group.name,
             run_idx,
             m_max_item,
             patience_item,
+            entropy_threshold_item,
             select_item,
             base_bit_item,
             entropy_item,
@@ -695,6 +714,7 @@ fn expand_csv_group(
             },
             m_max: m_max_item,
             patience: patience_item,
+            entropy_threshold: entropy_threshold_item,
             select_impl: select_item.clone().into(),
             base_bit_impl: base_bit_item.clone().into(),
             entropy_impl: entropy_item.clone().into(),
@@ -745,6 +765,10 @@ fn expand_image_group(
 
     let m_max = expand_usize_sweep(group.m_max.as_ref(), 0)?;
     let patience = expand_usize_sweep(group.patience.as_ref(), 10)?;
+    let entropy_threshold = group
+        .entropy_threshold
+        .clone()
+        .unwrap_or_else(|| vec![0.70]);
     let select_impl = group
         .select_impl
         .clone()
@@ -807,6 +831,7 @@ fn expand_image_group(
         grouping_transform.len(),
         m_max.len(),
         patience.len(),
+        entropy_threshold.len(),
         select_impl.len(),
         base_bit_impl.len(),
         entropy_impl.len(),
@@ -824,24 +849,26 @@ fn expand_image_group(
         let grouping_transform_item = &grouping_transform[indices[3]];
         let m_max_item = m_max[indices[4]];
         let patience_item = patience[indices[5]];
-        let select_item = &select_impl[indices[6]];
-        let base_bit_item = &base_bit_impl[indices[7]];
-        let entropy_item = &entropy_impl[indices[8]];
-        let entropy_skip_rows_item = entropy_skip_rows[indices[9]];
-        let use_condensed_item = use_condensed_samples[indices[10]];
-        let base_table_item = &base_table_impl[indices[11]];
-        let delta_codec_item = &delta_codec_impl[indices[12]];
-        let encode_item = &encode_impl[indices[13]];
+        let entropy_threshold_item = entropy_threshold[indices[6]];
+        let select_item = &select_impl[indices[7]];
+        let base_bit_item = &base_bit_impl[indices[8]];
+        let entropy_item = &entropy_impl[indices[9]];
+        let entropy_skip_rows_item = entropy_skip_rows[indices[10]];
+        let use_condensed_item = use_condensed_samples[indices[11]];
+        let base_table_item = &base_table_impl[indices[12]];
+        let delta_codec_item = &delta_codec_impl[indices[13]];
+        let encode_item = &encode_impl[indices[14]];
         let run_idx = profiles.len();
 
         let name = format!(
-            "{}__{:03}_cm{:?}_pg{}x{}_gt{:?}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
+            "{}__{:03}_cm{:?}_pg{}x{}_gt{:?}_th{:.3}_sel{:?}_bb{:?}_ent{:?}_sk{}_cond{}_tbl{:?}_dc{:?}_enc{:?}",
             group.name,
             run_idx,
             color_model_item,
             pixel_grouping_item.width,
             pixel_grouping_item.height,
             grouping_transform_item,
+            entropy_threshold_item,
             select_item,
             base_bit_item,
             entropy_item,
@@ -865,6 +892,7 @@ fn expand_image_group(
             },
             m_max: m_max_item,
             patience: patience_item,
+            entropy_threshold: entropy_threshold_item,
             select_impl: select_item.clone().into(),
             base_bit_impl: base_bit_item.clone().into(),
             entropy_impl: entropy_item.clone().into(),
@@ -1108,6 +1136,7 @@ impl TryFrom<CsvPipelineProfileConfig> for CsvPipelineProfile {
             preprocess,
             m_max: value.m_max,
             patience: value.patience,
+            entropy_threshold: value.entropy_threshold.unwrap_or(0.70),
             select_impl: value.select_impl.into(),
             base_bit_impl: value
                 .base_bit_impl
@@ -1167,6 +1196,7 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
             },
             m_max: value.m_max,
             patience: value.patience,
+            entropy_threshold: value.entropy_threshold.unwrap_or(0.70),
             select_impl: value.select_impl.into(),
             base_bit_impl: value
                 .base_bit_impl

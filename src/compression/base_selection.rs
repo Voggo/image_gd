@@ -523,6 +523,7 @@ fn select_base_bits_debug(
 pub struct SelectBasesOptimized {
     pub patience: usize,
     pub base_bit_impl: BaseBitImpl,
+    pub entropy_threshold: f64,
 }
 
 impl Filter for SelectBasesOptimized {
@@ -546,7 +547,7 @@ impl Filter for SelectBasesOptimized {
                 BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
                 &constant_positions,
-                0.80,
+                self.entropy_threshold,
                 self.patience,
             ),
             BaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
@@ -554,7 +555,7 @@ impl Filter for SelectBasesOptimized {
                 BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
                 &constant_positions,
-                0.80,
+                self.entropy_threshold,
                 self.patience,
             ),
             BaseBitImpl::IncSignatureGroups => select_base_bits_threshold_optimized(
@@ -562,7 +563,7 @@ impl Filter for SelectBasesOptimized {
                 BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
                 &constant_positions,
-                0.80,
+                self.entropy_threshold,
                 self.patience,
             ),
             BaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
@@ -570,7 +571,7 @@ impl Filter for SelectBasesOptimized {
                 BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
                 &constant_positions,
-                0.80,
+                self.entropy_threshold,
                 self.patience,
             ),
             BaseBitImpl::HyperLogLogCount => select_base_bits_threshold_optimized(
@@ -578,7 +579,7 @@ impl Filter for SelectBasesOptimized {
                 BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
                 &constant_positions,
-                0.80,
+                self.entropy_threshold,
                 self.patience,
             ),
         };

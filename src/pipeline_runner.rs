@@ -92,6 +92,7 @@ pub struct ExperimentConfigColumns {
     pub csv_integer_zero_normalization: Option<bool>,
     pub entropy_impl: Option<String>,
     pub entropy_skip_rows: Option<usize>,
+    pub entropy_threshold: Option<f64>,
     pub use_condensed_samples: Option<bool>,
     pub base_table_impl: Option<String>,
     pub delta_codec_impl: Option<String>,
@@ -426,7 +427,7 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
     let mut file = fs::File::create(path)?;
     writeln!(
         file,
-        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,use_condensed_samples,base_table_impl,delta_codec_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping_width,image_pixel_grouping_height,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
+        "file_path,input_kind,preset,select_impl,base_bit_impl,entropy_impl,entropy_skip_rows,entropy_threshold,use_condensed_samples,base_table_impl,delta_codec_impl,encode_impl,m_max,patience,csv_has_headers,csv_float_storage,csv_missing_value_policy,csv_float_scaling,csv_max_decimal_scale,csv_integer_zero_normalization,image_colorspace,image_color_model,image_pixel_grouping_width,image_pixel_grouping_height,image_grouping_transform,original_bits,load_ms,preprocess_ms,entropy_ms,condensed_ms,select_ms,encode_ms,total_ms,encoded_stream_total_bits,encoded_payload_bits,normal_symbol_stream_bits,rle_symbol_stream_bits,rle_control_stream_bits,rle_packet_count,huffman_pixel_stream_bits,huffman_row_offsets_bits,huffman_symbol_table_bits,huffman_code_lengths_bits,base_table_pattern_bits,base_bit_positions_bits,condensed_weights_bits,estimated_total_bits,png_baseline_bits,png_vs_estimated_ratio"
     )?;
 
     for record in records {
@@ -450,6 +451,11 @@ pub fn write_report_csv(path: &Path, records: &[ExperimentRecord]) -> Result<(),
                 .config
                 .entropy_skip_rows
                 .map(|v| v.to_string())
+                .unwrap_or_default(),
+            record
+                .config
+                .entropy_threshold
+                .map(|v| format!("{:.6}", v))
                 .unwrap_or_default(),
             record
                 .config
@@ -598,6 +604,7 @@ fn run_csv_profile(
         profile.base_bit_impl,
         select_input,
         profile.patience,
+        profile.entropy_threshold,
     )?;
     let select_ms = select_t0.elapsed().as_secs_f64() * 1_000.0;
 
@@ -625,6 +632,7 @@ fn run_csv_profile(
             csv_integer_zero_normalization: Some(profile.preprocess.integer_zero_normalization),
             entropy_impl: Some(format!("{:?}", profile.entropy_impl)),
             entropy_skip_rows: Some(profile.entropy_skip_rows),
+            entropy_threshold: Some(profile.entropy_threshold),
             use_condensed_samples: Some(profile.use_condensed_samples),
             base_table_impl: Some(format!("{:?}", profile.base_table_impl)),
             delta_codec_impl: Some(format!("{:?}", profile.delta_codec_impl)),
@@ -693,6 +701,7 @@ fn run_image_profile(
         profile.base_bit_impl,
         select_input,
         profile.patience,
+        profile.entropy_threshold,
     )?;
     let select_ms = select_t0.elapsed().as_secs_f64() * 1_000.0;
 
@@ -722,6 +731,7 @@ fn run_image_profile(
             image_grouping_transform: Some(format!("{:?}", profile.build.grouping_transform)),
             entropy_impl: Some(format!("{:?}", profile.entropy_impl)),
             entropy_skip_rows: Some(profile.entropy_skip_rows),
+            entropy_threshold: Some(profile.entropy_threshold),
             use_condensed_samples: Some(profile.use_condensed_samples),
             base_table_impl: Some(format!("{:?}", profile.base_table_impl)),
             delta_codec_impl: Some(format!("{:?}", profile.delta_codec_impl)),
@@ -753,6 +763,7 @@ fn select_bases(
     base_bit_impl: BaseBitImpl,
     input: EntropyScoredContext,
     patience: usize,
+    entropy_threshold: f64,
 ) -> Result<BaseSelectionContext, EntroGdError> {
     match implementation {
         SelectBasesImpl::Naive => SelectBases { patience }.process(input),
@@ -773,6 +784,7 @@ fn select_bases(
                     crate::compression::base_selection::BaseBitImpl::HyperLogLogCount
                 }
             },
+            entropy_threshold,
         }
         .process(input),
         SelectBasesImpl::ProfileAllBits => SelectBasesProfileAllBits {

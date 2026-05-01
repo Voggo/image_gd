@@ -72,6 +72,7 @@ CSV explicit profile fields:
   - `integer_zero_normalization`: boolean
 - `m_max`: integer
 - `patience`: integer
+- `entropy_threshold`: number
 - `select_impl`: `naive` | `optimized_v1` | `optimized_v2` | `optimized_v3`
 - `encode_impl`: `naive` | `optimized` | `rle` | `huffman_base_id_only`
 
@@ -84,12 +85,14 @@ Image explicit profile fields:
   - `grouping_transform`: `raw` | `for_first_pixel` | `for_min`
 - `m_max`: integer
 - `patience`: integer
+- `entropy_threshold`: number
 - `select_impl`: `naive` | `optimized_v1` | `optimized_v2` | `optimized_v3`
 - `encode_impl`: `naive` | `optimized` | `rle` | `huffman_base_id_only`
 
 Sweep syntax:
 - Numeric sweep: `{"values": [1, 2, 4]}` or `{"range": {"start": 0, "end": 60, "step": 30}}`
 - Enum/bool sweep: use arrays, e.g. `"encode_impl": ["optimized", "rle"]`
+- Float sweeps: use arrays, e.g. `"entropy_threshold": [0.70, 0.80]`
 
 ---
 

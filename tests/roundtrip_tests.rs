@@ -69,6 +69,7 @@ fn test_csv_roundtrip_compression() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
         .then(EncodeDataOptimized {});
@@ -133,6 +134,7 @@ fn test_csv_roundtrip_compression_rle() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
         .then(EncodeDataRLE {});
@@ -197,6 +199,7 @@ fn test_image_roundtrip_compression() {
     .then(SelectBasesOptimized {
         patience: 10,
         base_bit_impl: BaseBitImpl::BatchGroups,
+        entropy_threshold: 0.70,
     })
     .then(BuildBaseTable {})
     .then(EncodeDataHuffman {});
@@ -264,6 +267,7 @@ fn test_image_roundtrip_compression_rle_offset() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
         .then(EncodeDataOffsetRLE {});

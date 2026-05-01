@@ -34,6 +34,7 @@ fn main() -> Result<(), EntroGdError> {
             .then(SelectBasesOptimized {
                 patience: 20,
                 base_bit_impl: BaseBitImpl::BatchGroups,
+                entropy_threshold: 0.70,
             })
             .then(BuildSortedBaseTable {})
             .process(bit_data)?
@@ -42,6 +43,7 @@ fn main() -> Result<(), EntroGdError> {
             .then(SelectBasesOptimized {
                 patience: 20,
                 base_bit_impl: BaseBitImpl::BatchGroups,
+                entropy_threshold: 0.70,
             })
             .then(BuildBaseTable {})
             .process(bit_data)?

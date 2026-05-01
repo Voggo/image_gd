@@ -221,6 +221,7 @@ impl SelectBasesImpl {
             SelectBasesImpl::Optimized(base_bit_impl) => SelectBasesOptimized {
                 patience,
                 base_bit_impl,
+                entropy_threshold: 0.70,
             }
             .process(input),
         }
@@ -429,6 +430,7 @@ struct StepBenchCase {
     input: StepBenchInput,
     m_max: usize,
     patience: usize,
+    entropy_threshold: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -450,12 +452,14 @@ impl StepBenchCase {
         float_storage: FloatStorage,
         m_max: usize,
         patience: usize,
+        entropy_threshold: f64,
     ) -> Self {
         Self {
             data_file_path,
             input: StepBenchInput::Csv { float_storage },
             m_max,
             patience,
+            entropy_threshold,
         }
     }
 
@@ -466,6 +470,7 @@ impl StepBenchCase {
         grouping_transform: ImageGroupingTransform,
         m_max: usize,
         patience: usize,
+        entropy_threshold: f64,
     ) -> Self {
         Self {
             data_file_path,
@@ -477,6 +482,7 @@ impl StepBenchCase {
             },
             m_max,
             patience,
+            entropy_threshold,
         }
     }
 }
@@ -488,6 +494,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             FloatStorage::F32,
             50,
             20,
+            0.70,
         ),
         StepBenchCase::image_with_transform(
             "data/images/kodim10.png",
@@ -496,6 +503,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             ImageGroupingTransform::ForFirstPixel,
             0,
             10,
+            0.70,
         ),
         StepBenchCase::image_with_transform(
             "data/images/wikipedia_008.png",
@@ -504,6 +512,7 @@ fn step_bench_cases() -> Vec<StepBenchCase> {
             ImageGroupingTransform::ForFirstPixel,
             0,
             10,
+            0.70,
         ),
     ]
 }
@@ -669,6 +678,7 @@ struct PreparedCase {
     source_size: u64,
     m_max: usize,
     patience: usize,
+    entropy_threshold: f64,
     dataset_seed: Option<Dataset>,
     inferred_feature_specs_seed: Option<Vec<FeatureSpec>>,
     bit_data_seed: BitDataSet,
@@ -719,6 +729,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     let selected_seed = SelectBasesOptimized {
         patience: case.patience,
         base_bit_impl: BaseBitImpl::BatchGroups,
+        entropy_threshold: case.entropy_threshold,
     }
     .process(condensed_seed.clone())
     .unwrap();
@@ -796,6 +807,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
         source_size,
         m_max: case.m_max,
         patience: case.patience,
+        entropy_threshold: case.entropy_threshold,
         dataset_seed,
         inferred_feature_specs_seed,
         bit_data_seed,
@@ -961,6 +973,7 @@ fn benchmark_filter_steps(c: &mut Criterion) {
             SelectBasesOptimized {
                 patience: case.patience,
                 base_bit_impl: BaseBitImpl::BatchGroups,
+                entropy_threshold: case.entropy_threshold,
             }
             .process(case.condensed_seed.clone())
             .unwrap()

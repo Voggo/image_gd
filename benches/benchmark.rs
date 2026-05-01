@@ -39,6 +39,7 @@ struct RoundtripCase {
     input: RoundtripInput,
     m_max: usize,
     patience: usize,
+    entropy_threshold: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +69,7 @@ impl RoundtripCase {
             input: RoundtripInput::Csv { float_storage },
             m_max,
             patience,
+            entropy_threshold: 0.70,
         }
     }
 
@@ -88,6 +90,7 @@ impl RoundtripCase {
             },
             m_max,
             patience,
+            entropy_threshold: 0.70,
         }
     }
 
@@ -231,6 +234,7 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
             .then(SelectBasesOptimized {
                 patience: case.patience,
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
+                entropy_threshold: case.entropy_threshold,
             })
             .then(EncodeDataFusedDictionary {})
             .process(bit_data)

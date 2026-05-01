@@ -81,6 +81,7 @@ fn main() -> Result<(), EntroGdError> {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
         .then(EncodeDataOptimized {})

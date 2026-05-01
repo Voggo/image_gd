@@ -17,6 +17,7 @@
       "encode_impl": ["optimized", "rle"],
       "m_max": { "range": { "start": 0, "end": 60, "step": 30 } },
       "patience": { "values": [10] },
+      "entropy_threshold": [0.7],
       "preprocess": {
         "float_scaling": ["scaled_offset_signed_int"],
         "max_decimal_scale": { "values": [9] },
@@ -35,6 +36,7 @@
       },
       "m_max": { "values": [0] },
       "patience": { "values": [30] },
+      "entropy_threshold": [0.7],
       "select_impl": ["naive"],
       "base_bit_impl": ["naive"],
       "entropy_impl": ["naive"],

@@ -47,6 +47,7 @@ fn test_delta_codec_roundtrip_unary_prefix() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
         .then(EncodeDataOptimized {})
@@ -119,6 +120,7 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
         .then(EncodeDataOptimized {})
@@ -192,6 +194,7 @@ fn test_delta_codec_tag_serialization() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
         .then(EncodeDataOptimized {})
@@ -219,6 +222,7 @@ fn test_delta_codec_tag_serialization() {
         .then(SelectBasesOptimized {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
+            entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
         .then(EncodeDataOptimized {})
