@@ -396,11 +396,11 @@ fn subtract_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
 }
 
 fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
-    let mut value = 0u64;
-    for idx in (0..bits.len()).rev() {
-        value = (value << 1) | (bits.get(idx).map(|b| *b).unwrap_or(false) as u64);
+    if bits.is_empty() {
+        0
+    } else {
+        bits.load_le::<u64>()
     }
-    value
 }
 
 fn write_u64_bits<O: BitOrder>(value: u64, width: usize, out: &mut BitVec<usize, O>) {

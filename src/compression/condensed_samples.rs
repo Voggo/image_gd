@@ -135,14 +135,21 @@ fn select_condensed_samples(
     m_max: usize,
 ) -> CondensedSamples {
     fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
-        bits.iter()
-            .fold(0u64, |acc, bit| (acc << 1) | (*bit as u64))
+        if bits.is_empty() {
+            0
+        } else {
+            bits.load_be::<u64>()
+        }
     }
 
     fn push_u64_bits(stream: &mut BitVec<usize, Lsb0>, value: u64, bits: usize) {
-        for shift in (0..bits).rev() {
-            stream.push(((value >> shift) & 1) == 1);
+        if bits == 0 {
+            return;
         }
+
+        let start = stream.len();
+        stream.resize(start + bits, false);
+        stream[start..].store_be(value);
     }
 
     fn mask_for_bits(bits: usize) -> u64 {

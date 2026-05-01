@@ -77,10 +77,11 @@ fn main() -> Result<(), EntroGdError> {
     .then(SelectBasesOptimized {
         patience: 5,
         base_bit_impl: BaseBitImpl::Naive,
-        entropy_threshold: 0.70,
+        entropy_threshold: 0.75,
     })
-    .then(BuildBaseTable {})
-    .then(EncodeData {});
+    .then(BuildSortedBaseTable {})
+    .then(EncodeDataOptimized {})
+    .then(DeltaEncodeBaseTable {});
 
     let load_compressed_data = LoadIgdFile {};
 
@@ -110,9 +111,9 @@ fn main() -> Result<(), EntroGdError> {
             .unwrap();
         write_bitdata_as_image(&bit_data, &decompressed_path)?;
 
-        let decompress_handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;
-        let indices: Vec<usize> = (0..compressed_data.encoded_data.get_num_samples()).collect();
-        let _decompressed_data = decompress_handle.decompress_samples(&indices)?;
+        // let decompress_handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;
+        // let indices: Vec<usize> = (0..compressed_data.encoded_data.get_num_samples()).collect();
+        // let _decompressed_data = decompress_handle.decompress_samples(&indices)?;
 
         tracing::info!(
             "Compression done: original={} bits, encoded={} bits",

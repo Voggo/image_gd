@@ -1361,11 +1361,11 @@ pub fn decode_value_from_bits(bits: &BitSlice<usize, Lsb0>, spec: &FeatureSpec) 
 }
 
 fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
-    let mut value = 0u64;
-    for bit in bits {
-        value = (value << 1) | (*bit as u64);
+    if bits.is_empty() {
+        0
+    } else {
+        bits.load_be::<u64>()
     }
-    value
 }
 
 fn decode_signed(value: u64, bits: usize) -> i64 {
@@ -1382,20 +1382,14 @@ fn scale_float_to_i64(value: f64, decimal_scale: u8) -> i64 {
     (value * factor).round() as i64
 }
 
-fn push_bits(stream: &mut BitVec<usize, Lsb0>, mut value: u64, bits: usize) {
-    if bits == 64 {
-        for shift in (0..64).rev() {
-            stream.push(((value >> shift) & 1) == 1);
-        }
+fn push_bits(stream: &mut BitVec<usize, Lsb0>, value: u64, bits: usize) {
+    if bits == 0 {
         return;
     }
-    if bits < 64 {
-        let mask = (1u64 << bits) - 1;
-        value &= mask;
-    }
-    for shift in (0..bits).rev() {
-        stream.push(((value >> shift) & 1) == 1);
-    }
+
+    let start = stream.len();
+    stream.resize(start + bits, false);
+    stream[start..].store_be(value);
 }
 
 #[cfg(test)]
@@ -1403,6 +1397,11 @@ mod tests {
     use super::*;
     use crate::data_loader::{ColumnData, CsvDataLoader, DataLoader, Dataset};
 
+    #[test]
+    fn test_empty_bitslice_to_u64() {
+        let bits = bitvec![usize, Lsb0;];
+        assert_eq!(bits_to_u64(&bits), 0);
+    }
     #[test]
     fn print_bitdata_head() {
         let loader = CsvDataLoader::new(true);

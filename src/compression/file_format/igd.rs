@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use super::egd::EgdFile;
 use super::path_utils::ensure_igd_extension;
 
+use crate::ScopedTimer;
 use crate::compression::decompression::{decompress_file, write_bitdata_as_image};
 use crate::compression::encoding::CompressedData;
 use crate::compression::preprocessor::{
@@ -189,6 +190,7 @@ impl Filter for SaveIgdFile {
     type Output = PathBuf;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Saving compressed data as IGD file");
         let igd_file = IgdFile::from_compressed_data(&input)?;
         igd_file.save(&self.output_path)
     }
@@ -201,6 +203,7 @@ impl Filter for LoadIgdFile {
     type Output = CompressedData;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Loading compressed data from IGD file");
         IgdFile::load(input)?.to_compressed_data()
     }
 }
