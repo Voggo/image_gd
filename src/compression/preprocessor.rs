@@ -1364,7 +1364,7 @@ fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
     if bits.is_empty() {
         0
     } else {
-        bits.load_be::<u64>()
+        bits.load_le::<u64>()
     }
 }
 
@@ -1389,7 +1389,7 @@ fn push_bits(stream: &mut BitVec<usize, Lsb0>, value: u64, bits: usize) {
 
     let start = stream.len();
     stream.resize(start + bits, false);
-    stream[start..].store_be(value);
+    stream[start..].store_le(value);
 }
 
 #[cfg(test)]

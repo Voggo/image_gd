@@ -445,7 +445,7 @@ pub(super) fn build_id_bits_per_base(l_id: usize, num_bases: usize) -> Vec<BitVe
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
             let mut id_bits = BitVec::repeat(false, l_id);
-            id_bits.as_mut_bitslice().store_be(id);
+            id_bits.as_mut_bitslice().store_le(id);
             id_bits_per_base.push(id_bits);
         }
     }

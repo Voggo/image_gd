@@ -292,13 +292,13 @@ fn build_image_bitdataset(
 }
 
 fn push_bits_u8(out: &mut BitVec<usize, Lsb0>, value: u8) {
-    for shift in (0..8).rev() {
+    for shift in 0..8 {
         out.push(((value >> shift) & 1) == 1);
     }
 }
 
 fn push_bits_u16(out: &mut BitVec<usize, Lsb0>, value: u16, bit_count: usize) {
-    for shift in (0..bit_count).rev() {
+    for shift in 0..bit_count {
         out.push(((value >> shift) & 1) == 1);
     }
 }
@@ -341,7 +341,7 @@ fn build_raw_transform_bitstream_from_raw(
                     &mut grouped_values,
                 );
                 for value in grouped_values {
-                    store_u8_be_at(&mut bitstream, bit_cursor, value);
+                    store_u8_le_at(&mut bitstream, bit_cursor, value);
                     bit_cursor += 8;
                 }
             }
@@ -390,13 +390,13 @@ fn build_for_first_pixel_transform_bitstream_from_raw(
                     &mut grouped_values,
                 );
                 let anchor = grouped_values.first().copied().unwrap_or(0);
-                store_u8_be_at(&mut bitstream, bit_cursor, anchor);
+                store_u8_le_at(&mut bitstream, bit_cursor, anchor);
                 bit_cursor += 8;
 
                 for value in grouped_values.iter().skip(1) {
                     let delta = *value as i16 - anchor as i16;
                     let encoded = zigzag_encode_i16(delta);
-                    store_u16_be_at(&mut bitstream, bit_cursor, encoded, 9);
+                    store_u16_le_at(&mut bitstream, bit_cursor, encoded, 9);
                     bit_cursor += 9;
                 }
             }
@@ -452,17 +452,17 @@ fn build_grouped_transform_bitstream_from_raw(
 }
 
 #[inline(always)]
-fn store_u8_be_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u8) {
-    for shift in (0..8).rev() {
-        out.set(bit_cursor + (7 - shift), ((value >> shift) & 1) == 1);
+fn store_u8_le_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u8) {
+    for shift in 0..8 {
+        out.set(bit_cursor + shift, ((value >> shift) & 1) == 1);
     }
 }
 
 #[inline(always)]
-fn store_u16_be_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u16, bit_count: usize) {
-    for shift in (0..bit_count).rev() {
+fn store_u16_le_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u16, bit_count: usize) {
+    for shift in 0..bit_count {
         out.set(
-            bit_cursor + (bit_count - 1 - shift),
+            bit_cursor + shift,
             ((value >> shift) & 1) == 1,
         );
     }
@@ -723,8 +723,7 @@ mod tests {
     }
 
     fn bits_to_u16(bits: &BitSlice<usize, Lsb0>) -> u16 {
-        bits.iter()
-            .fold(0u16, |acc, bit| (acc << 1) | u16::from(*bit))
+        bits.load_le::<u16>()
     }
 
     fn decode_grouped_feature(
@@ -736,9 +735,7 @@ mod tests {
             ImageGroupingTransform::Raw => bits
                 .chunks(8)
                 .map(|chunk| {
-                    chunk
-                        .iter()
-                        .fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit))
+                    chunk.load_le::<u8>()
                 })
                 .collect(),
             ImageGroupingTransform::ForFirstPixel => {

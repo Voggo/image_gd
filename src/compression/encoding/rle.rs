@@ -288,14 +288,14 @@ pub(super) fn write_rle_control_value(out: &mut BitVec<usize, Lsb0>, value: u8) 
     if value <= RLE_SHORT_MAX {
         // 4-bit packet: 0 + 3-bit payload
         out.push(false);
-        for shift in (0..3).rev() {
+        for shift in 0..3 {
             out.push(((value >> shift) & 1) == 1);
         }
     } else {
         // 8-bit packet: 1 + 7-bit payload with bias -8 (stored payload = value - 8)
         out.push(true);
         let payload = value - RLE_LONG_MIN;
-        for shift in (0..7).rev() {
+        for shift in 0..7 {
             out.push(((payload >> shift) & 1) == 1);
         }
     }
@@ -689,7 +689,7 @@ impl RleDeviationOffsetData {
 }
 
 fn append_u32_bits(out: &mut BitVec<usize, Lsb0>, value: u32) {
-    for shift in (0..32).rev() {
+    for shift in 0..32 {
         out.push(((value >> shift) & 1) == 1);
     }
 }

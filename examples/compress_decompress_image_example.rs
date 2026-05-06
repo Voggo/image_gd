@@ -70,18 +70,17 @@ fn main() -> Result<(), EntroGdError> {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping: PixelGrouping::new(2, 2),
-        grouping_transform: ImageGroupingTransform::ForMin,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
     .then(SelectBasesOptimized {
-        patience: 5,
-        base_bit_impl: BaseBitImpl::Naive,
-        entropy_threshold: 0.75,
+        patience: 10,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+        entropy_threshold: 0.80,
     })
-    .then(BuildSortedBaseTable {})
-    .then(EncodeDataOptimized {})
-    .then(DeltaEncodeBaseTable {});
+    .then(EncodeDataFusedDictionary {});
+
 
     let load_compressed_data = LoadIgdFile {};
 

@@ -26,39 +26,47 @@ impl<'a> BitReader<'a> {
         }
         let byte_index = self.bit_pos / 8;
         let bit_in_byte = self.bit_pos % 8;
-        let bit = ((self.bytes[byte_index] >> (7 - bit_in_byte)) & 1) == 1;
+        let bit = ((self.bytes[byte_index] >> bit_in_byte) & 1) == 1;
         self.bit_pos += 1;
         Ok(bit)
     }
 
     pub(super) fn read_u8(&mut self) -> Result<u8, EntroGdError> {
         let mut value = 0u8;
-        for _ in 0..8 {
-            value = (value << 1) | (self.read_bit()? as u8);
+        for i in 0..8 {
+            if self.read_bit()? {
+                value |= 1 << i;
+            }
         }
         Ok(value)
     }
 
     pub(super) fn read_u16(&mut self) -> Result<u16, EntroGdError> {
         let mut value = 0u16;
-        for _ in 0..16 {
-            value = (value << 1) | (self.read_bit()? as u16);
+        for i in 0..16 {
+            if self.read_bit()? {
+                value |= 1 << i;
+            }
         }
         Ok(value)
     }
 
     pub(super) fn read_u32(&mut self) -> Result<u32, EntroGdError> {
         let mut value = 0u32;
-        for _ in 0..32 {
-            value = (value << 1) | (self.read_bit()? as u32);
+        for i in 0..32 {
+            if self.read_bit()? {
+                value |= 1 << i;
+            }
         }
         Ok(value)
     }
 
     pub(super) fn read_u64(&mut self) -> Result<u64, EntroGdError> {
         let mut value = 0u64;
-        for _ in 0..64 {
-            value = (value << 1) | (self.read_bit()? as u64);
+        for i in 0..64 {
+            if self.read_bit()? {
+                value |= 1 << i;
+            }
         }
         Ok(value)
     }
@@ -70,8 +78,10 @@ impl<'a> BitReader<'a> {
             });
         }
         let mut value = 0u64;
-        for _ in 0..width {
-            value = (value << 1) | (self.read_bit()? as u64);
+        for i in 0..width {
+            if self.read_bit()? {
+                value |= 1 << i;
+            }
         }
         Ok(value)
     }
@@ -83,8 +93,10 @@ impl<'a> BitReader<'a> {
             });
         }
         let mut value = 0usize;
-        for _ in 0..width {
-            value = (value << 1) | (self.read_bit()? as usize);
+        for i in 0..width {
+            if self.read_bit()? {
+                value |= 1 << i;
+            }
         }
         Ok(value)
     }
@@ -129,7 +141,7 @@ impl BitWriter {
             self.bytes.push(0);
         }
         if bit {
-            self.bytes[byte_index] |= 1 << (7 - bit_in_byte);
+            self.bytes[byte_index] |= 1 << bit_in_byte;
         }
         self.bit_len += 1;
     }
@@ -153,19 +165,19 @@ impl BitWriter {
     }
 
     pub(super) fn write_u64(&mut self, value: u64) {
-        for shift in (0..64).rev() {
+        for shift in 0..64 {
             self.write_bit(((value >> shift) & 1) == 1);
         }
     }
 
     pub(super) fn write_u64_bits(&mut self, value: u64, width: usize) {
-        for shift in (0..width).rev() {
+        for shift in 0..width {
             self.write_bit(((value >> shift) & 1) == 1);
         }
     }
 
     pub(super) fn write_usize_bits(&mut self, value: usize, width: usize) {
-        for shift in (0..width).rev() {
+        for shift in 0..width {
             self.write_bit(((value >> shift) & 1) == 1);
         }
     }

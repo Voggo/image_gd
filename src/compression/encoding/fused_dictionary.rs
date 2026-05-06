@@ -103,8 +103,8 @@ fn build_signature_key(
 ) -> SignatureKey {
     if base_bit_positions.len() <= 128 {
         let mut packed = 0u128;
-        for &bit_pos in base_bit_positions {
-            packed = (packed << 1) | (unsafe { *chunk.get_unchecked(bit_pos) } as u128);
+        for (idx, &bit_pos) in base_bit_positions.iter().enumerate() {
+            packed |= (unsafe { *chunk.get_unchecked(bit_pos) } as u128) << idx;
         }
         SignatureKey::PackedU128(packed)
     } else {
@@ -113,7 +113,7 @@ fn build_signature_key(
         for (idx, &bit_pos) in base_bit_positions.iter().enumerate() {
             if unsafe { *chunk.get_unchecked(bit_pos) } {
                 let byte_idx = idx / 8;
-                let bit_in_byte = 7 - (idx % 8);
+                let bit_in_byte = idx % 8;
                 bytes[byte_idx] |= 1u8 << bit_in_byte;
             }
         }
@@ -162,7 +162,7 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
         id_bits_per_base = Vec::with_capacity(num_bases);
         for id in 0..num_bases {
             let mut id_bits = BitVec::repeat(false, l_id);
-            id_bits.as_mut_bitslice().store_be(id);
+            id_bits.as_mut_bitslice().store_le(id);
             id_bits_per_base.push(id_bits);
         }
     }

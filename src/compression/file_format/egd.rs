@@ -1145,7 +1145,7 @@ impl EgdFile {
                     }
                 })?;
 
-                let base_id = sample.id.load::<usize>();
+                let base_id = sample.id.load_le::<usize>();
 
                 if base_id >= num_bases {
                     return Err(EntroGdError::InvalidMetadata {

@@ -181,7 +181,7 @@ fn append_reconstructed_chunk(
     deviation_bits: &BitSlice<usize, Lsb0>,
     id_bits: &BitSlice<usize, Lsb0>,
 ) -> Result<(), EntroGdError> {
-    let base_id = id_bits.load::<usize>();
+    let base_id = id_bits.load_le::<usize>();
     if base_id >= base_table.len() {
         return Err(EntroGdError::InvalidBaseId {
             base_id,
@@ -385,10 +385,7 @@ fn byte_from_bits(bits: &BitSlice<usize, Lsb0>) -> Result<u8, EntroGdError> {
             message: format!("expected 8 bits for image byte, got {}", bits.len()),
         });
     }
-
-    Ok(bits
-        .iter()
-        .fold(0u8, |acc, bit| (acc << 1) | u8::from(*bit)))
+    Ok(bits.load_le::<u8>())
 }
 
 fn bits_to_u16(bits: &BitSlice<usize, Lsb0>) -> Result<u16, EntroGdError> {
@@ -397,10 +394,7 @@ fn bits_to_u16(bits: &BitSlice<usize, Lsb0>) -> Result<u16, EntroGdError> {
             message: format!("expected at most 16 bits, got {}", bits.len()),
         });
     }
-
-    Ok(bits
-        .iter()
-        .fold(0u16, |acc, bit| (acc << 1) | u16::from(*bit)))
+    Ok(bits.load_le::<u16>())
 }
 
 fn decode_grouped_feature(
@@ -956,7 +950,7 @@ mod tests {
         id_bits.push(true);
         id_bits.extend([false; 7]);
 
-        assert_eq!(id_bits.load::<usize>(), 1);
+        assert_eq!(id_bits.load_le::<usize>(), 1);
     }
 
     #[test]

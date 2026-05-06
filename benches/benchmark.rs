@@ -17,7 +17,7 @@ use entro_gd::{BitDataSet, CompressedData, Dataset, DecompressRandomAccessHandle
 
 #[derive(Clone, Copy)]
 enum CompressionVariant {
-    BaselineV1,
+    EntroGD,
     ImageBestRatio,
     ImageFast,
 }
@@ -25,7 +25,7 @@ enum CompressionVariant {
 impl CompressionVariant {
     fn label(self) -> &'static str {
         match self {
-            CompressionVariant::BaselineV1 => "baseline-v1",
+            CompressionVariant::EntroGD => "EntroGD",
             CompressionVariant::ImageBestRatio => "image-best-ratio",
             CompressionVariant::ImageFast => "image-fast",
         }
@@ -90,7 +90,7 @@ impl RoundtripCase {
             },
             m_max,
             patience,
-            entropy_threshold: 0.70,
+            entropy_threshold: 0.80,
         }
     }
 
@@ -117,7 +117,7 @@ fn roundtrip_cases() -> Vec<RoundtripCase> {
     vec![
         RoundtripCase::csv(
             "data/tabular/aarhus-citylab.csv",
-            CompressionVariant::BaselineV1,
+            CompressionVariant::EntroGD,
             FloatStorage::F32,
             50,
             10,
@@ -126,13 +126,13 @@ fn roundtrip_cases() -> Vec<RoundtripCase> {
             "data/images/kodim10.png",
             CompressionVariant::ImageBestRatio,
             0,
-            10,
+            5,
         ),
         RoundtripCase::image(
             "data/images/kodim10.png",
             CompressionVariant::ImageFast,
             0,
-            10,
+            5,
         ),
     ]
 }
@@ -208,11 +208,11 @@ fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
             )
         }
     }
-}
+}        
 
 fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> CompressedData {
     match case.variant {
-        CompressionVariant::BaselineV1 => EntropyBatched {}
+        CompressionVariant::EntroGD => EntropyBatched {}
             .then(GenCondensedSamples { m_max: case.m_max })
             .then(SelectBases {
                 patience: case.patience,
@@ -304,7 +304,6 @@ struct PreparedRoundtripCase {
 
 fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
     let _ = std::fs::create_dir_all("target/bench-artifacts");
-    let source_size = std::fs::metadata(case.data_file_path).unwrap().len() as u64;
     let dataset_seed = if case.is_csv() {
         let loader = build_loader(case);
         Some(loader.load(case.data_file_path).unwrap().dataset)
@@ -315,6 +314,7 @@ fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
         Some(dataset) => BitDataSet::from_dataset(dataset).unwrap(),
         None => build_image_bit_data(case, PathBuf::from(case.data_file_path)),
     };
+    let source_size = (bit_data_seed.info.original_size_bits() / 8) as u64;
     let compressed_seed = run_compression_core(case, bit_data_seed.clone());
     let compressed_path = match case.input {
         RoundtripInput::Csv { .. } => SaveEgdFile {

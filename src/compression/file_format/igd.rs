@@ -44,15 +44,15 @@ impl IgdFile {
         let mut bytes = Vec::with_capacity(32 + payload.len());
         bytes.extend_from_slice(&IMAGE_MAGIC_BYTES);
         bytes.push(IMAGE_FORMAT_VERSION);
-        bytes.extend_from_slice(&image_info.width.to_be_bytes());
-        bytes.extend_from_slice(&image_info.height.to_be_bytes());
+        bytes.extend_from_slice(&image_info.width.to_le_bytes());
+        bytes.extend_from_slice(&image_info.height.to_le_bytes());
         bytes.push(image_info.channels);
         bytes.push(image_info.colorspace);
         bytes.push(image_info.color_model.as_u8());
         bytes.push(image_info.grouping_transform.as_u8());
-        bytes.extend_from_slice(&image_info.pixel_grouping.width().to_be_bytes());
-        bytes.extend_from_slice(&image_info.pixel_grouping.height().to_be_bytes());
-        bytes.extend_from_slice(&payload_len.to_be_bytes());
+        bytes.extend_from_slice(&image_info.pixel_grouping.width().to_le_bytes());
+        bytes.extend_from_slice(&image_info.pixel_grouping.height().to_le_bytes());
+        bytes.extend_from_slice(&payload_len.to_le_bytes());
         bytes.extend_from_slice(payload);
 
         Ok(IgdFile { bytes })
@@ -90,9 +90,9 @@ impl IgdFile {
         }
 
         let width =
-            u32::from_be_bytes([self.bytes[4], self.bytes[5], self.bytes[6], self.bytes[7]]);
+            u32::from_le_bytes([self.bytes[4], self.bytes[5], self.bytes[6], self.bytes[7]]);
         let height =
-            u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]]);
+            u32::from_le_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]]);
         let channels = self.bytes[12];
         let colorspace = self.bytes[13];
         let color_model = ImageColorModel::from_u8(self.bytes[14])?;
@@ -104,13 +104,13 @@ impl IgdFile {
 
         let grouping_transform = ImageGroupingTransform::from_u8(self.bytes[15])?;
 
-        let pixel_grouping_width = u32::from_be_bytes([
+        let pixel_grouping_width = u32::from_le_bytes([
             self.bytes[16],
             self.bytes[17],
             self.bytes[18],
             self.bytes[19],
         ]);
-        let pixel_grouping_height = u32::from_be_bytes([
+        let pixel_grouping_height = u32::from_le_bytes([
             self.bytes[20],
             self.bytes[21],
             self.bytes[22],
@@ -122,7 +122,7 @@ impl IgdFile {
             });
         }
 
-        let payload_len = u64::from_be_bytes([
+        let payload_len = u64::from_le_bytes([
             self.bytes[24],
             self.bytes[25],
             self.bytes[26],

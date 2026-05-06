@@ -138,7 +138,7 @@ fn select_condensed_samples(
         if bits.is_empty() {
             0
         } else {
-            bits.load_be::<u64>()
+            bits.load_le::<u64>()
         }
     }
 
@@ -149,7 +149,7 @@ fn select_condensed_samples(
 
         let start = stream.len();
         stream.resize(start + bits, false);
-        stream[start..].store_be(value);
+        stream[start..].store_le(value);
     }
 
     fn mask_for_bits(bits: usize) -> u64 {
