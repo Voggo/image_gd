@@ -81,7 +81,6 @@ fn main() -> Result<(), EntroGdError> {
     })
     .then(EncodeDataFusedDictionary {});
 
-
     let load_compressed_data = LoadIgdFile {};
 
     for image_file in files_to_process {

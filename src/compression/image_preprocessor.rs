@@ -461,10 +461,7 @@ fn store_u8_le_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u8) {
 #[inline(always)]
 fn store_u16_le_at(out: &mut BitVec<usize, Lsb0>, bit_cursor: usize, value: u16, bit_count: usize) {
     for shift in 0..bit_count {
-        out.set(
-            bit_cursor + shift,
-            ((value >> shift) & 1) == 1,
-        );
+        out.set(bit_cursor + shift, ((value >> shift) & 1) == 1);
     }
 }
 
@@ -509,7 +506,7 @@ fn feature_bits_for_grouping(
             let position_bits = min_position_bits(pixels_per_group);
             let residual_bits = pixels_per_group
                 .saturating_sub(1)
-                .checked_mul(9)
+                .checked_mul(8)
                 .ok_or_else(|| EntroGdError::InvalidMetadata {
                     message: "pixel grouping overflows residual bit width".to_string(),
                 })?;
@@ -581,9 +578,8 @@ fn encode_grouped_channel(
                 if idx == min_position {
                     continue;
                 }
-                let delta = value as i16 - anchor as i16;
-                let encoded = zigzag_encode_i16(delta);
-                push_bits_u16(out, encoded, 9);
+                let delta = value as u16 - anchor as u16;
+                push_bits_u16(out, delta, 8);
             }
         }
     }
@@ -732,12 +728,9 @@ mod tests {
         grouping_transform: ImageGroupingTransform,
     ) -> Vec<u8> {
         match grouping_transform {
-            ImageGroupingTransform::Raw => bits
-                .chunks(8)
-                .map(|chunk| {
-                    chunk.load_le::<u8>()
-                })
-                .collect(),
+            ImageGroupingTransform::Raw => {
+                bits.chunks(8).map(|chunk| chunk.load_le::<u8>()).collect()
+            }
             ImageGroupingTransform::ForFirstPixel => {
                 let anchor = bits_to_u16(&bits[0..8]) as i16;
                 let mut values = Vec::with_capacity(pixel_grouping);
@@ -751,7 +744,7 @@ mod tests {
                 values
             }
             ImageGroupingTransform::ForMin => {
-                let anchor = bits_to_u16(&bits[0..8]) as i16;
+                let anchor = bits_to_u16(&bits[0..8]);
                 let position_bits = min_position_bits(pixel_grouping);
                 let min_position = if position_bits == 0 {
                     0
@@ -764,9 +757,9 @@ mod tests {
                     if idx == min_position {
                         values.push(anchor as u8);
                     } else {
-                        let encoded = bits_to_u16(&bits[residual_cursor..residual_cursor + 9]);
-                        values.push((anchor + zigzag_decode_i16(encoded)) as u8);
-                        residual_cursor += 9;
+                        let encoded = bits_to_u16(&bits[residual_cursor..residual_cursor + 8]);
+                        values.push((anchor + encoded) as u8);
+                        residual_cursor += 8;
                     }
                 }
                 values
@@ -925,7 +918,7 @@ mod tests {
         let bit_data = filter.process(path.clone()).unwrap();
 
         assert_eq!(bit_data.num_rows(), 1);
-        assert_eq!(bit_data.feature_bits(0), 37);
+        assert_eq!(bit_data.feature_bits(0), 34);
         assert_eq!(
             decode_grouped_feature(
                 bit_data.get_feature(0, 0),

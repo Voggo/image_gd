@@ -449,7 +449,7 @@ fn decode_grouped_feature(
             }
 
             let position_bits = min_position_bits(total_pixels);
-            let expected_bits = 8 + position_bits + total_pixels.saturating_sub(1) * 9;
+            let expected_bits = 8 + position_bits + total_pixels.saturating_sub(1) * 8;
             if bits.len() != expected_bits {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
@@ -480,15 +480,15 @@ fn decode_grouped_feature(
                     continue;
                 }
 
-                let encoded = bits_to_u16(&bits[residual_cursor..residual_cursor + 9])?;
-                let value = anchor as i16 + zigzag_decode_i16(encoded);
+                let encoded = bits_to_u16(&bits[residual_cursor..residual_cursor + 8])?;
+                let value = anchor + encoded;
                 if !(0..=255).contains(&value) {
                     return Err(EntroGdError::InvalidMetadata {
                         message: format!("decoded grouped image byte out of range: {}", value),
                     });
                 }
                 values.push(value as u8);
-                residual_cursor += 9;
+                residual_cursor += 8;
             }
 
             Ok(values)

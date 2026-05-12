@@ -208,7 +208,7 @@ fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
             )
         }
     }
-}        
+}
 
 fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> CompressedData {
     match case.variant {
