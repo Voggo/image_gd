@@ -29,6 +29,7 @@ pub enum EncodeImpl {
     Naive,
     Optimized,
     FusedDictionary,
+    FusedDictionarySinglePass,
     Rle,
     OffsetRle,
     HuffmanBaseIdOnly,
@@ -81,6 +82,7 @@ pub enum ConfigEncodeImpl {
     Naive,
     Optimized,
     FusedDictionary,
+    FusedDictionarySinglePass,
     Rle,
     OffsetRle,
     Huffman,
@@ -1226,6 +1228,7 @@ fn convert_encode_impl(value: ConfigEncodeImpl) -> Result<EncodeImpl, EntroGdErr
         ConfigEncodeImpl::Naive => Ok(EncodeImpl::Naive),
         ConfigEncodeImpl::Optimized => Ok(EncodeImpl::Optimized),
         ConfigEncodeImpl::FusedDictionary => Ok(EncodeImpl::FusedDictionary),
+        ConfigEncodeImpl::FusedDictionarySinglePass => Ok(EncodeImpl::FusedDictionarySinglePass),
         ConfigEncodeImpl::Rle => Ok(EncodeImpl::Rle),
         ConfigEncodeImpl::OffsetRle => Ok(EncodeImpl::OffsetRle),
         ConfigEncodeImpl::Huffman => Err(EntroGdError::InvalidMetadata {

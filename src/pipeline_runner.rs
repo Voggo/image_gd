@@ -817,6 +817,9 @@ fn encode_data(
 ) -> Result<CompressedData, EntroGdError> {
     match implementation {
         EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
+        EncodeImpl::FusedDictionarySinglePass => {
+            EncodeDataFusedDictionarySinglePass {}.process(input)
+        }
         _ => {
             let base_table_ctx = match base_table_impl {
                 BaseTableImpl::Raw => BuildBaseTable {}.process(input)?,
@@ -829,7 +832,9 @@ fn encode_data(
                 EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
                 EncodeImpl::OffsetRle => EncodeDataOffsetRLE {}.process(base_table_ctx),
                 EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffman {}.process(base_table_ctx),
-                EncodeImpl::FusedDictionary => unreachable!(),
+                EncodeImpl::FusedDictionary | EncodeImpl::FusedDictionarySinglePass => {
+                    unreachable!()
+                }
             }?;
 
             match delta_codec_impl {

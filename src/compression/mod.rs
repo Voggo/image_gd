@@ -30,7 +30,8 @@ pub use encoding::{
 };
 pub use encoding::{
     DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataFusedDictionary,
-    EncodeDataHuffman, EncodeDataOffsetRLE, EncodeDataOptimized, EncodeDataRLE,
+    EncodeDataFusedDictionarySinglePass, EncodeDataHuffman, EncodeDataOffsetRLE,
+    EncodeDataOptimized, EncodeDataRLE,
 };
 pub use entropy::{
     EntropyBatched, EntropyBitScore, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,

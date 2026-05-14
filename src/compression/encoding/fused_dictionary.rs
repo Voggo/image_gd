@@ -18,6 +18,8 @@ use crate::{EntroGdError, Filter, ScopedTimer};
 
 pub struct EncodeDataFusedDictionary {}
 
+pub struct EncodeDataFusedDictionarySinglePass {}
+
 impl Filter for EncodeDataFusedDictionary {
     type Input = BaseSelectionContext;
     type Output = CompressedData;
@@ -32,6 +34,48 @@ impl Filter for EncodeDataFusedDictionary {
             constant_bit_polarity,
         } = input;
         let fused = encode_data_fused_dictionary(&bit_data, base_bits.as_ref());
+
+        let mut compressed = CompressedData::new(
+            EncodedData::Normal(fused.deviation_data),
+            bit_data.info.clone(),
+        );
+        let selected_positions = base_bits.get_base_bit_positions().to_vec();
+        let layout = build_base_layout_from_constant_polarity(
+            bit_data.chunk_size(),
+            &selected_positions,
+            &constant_bit_polarity.constant_zero_bit_positions,
+            &constant_bit_polarity.constant_one_bit_positions,
+        );
+        let variable_positions = layout.variable_base_bit_positions();
+        compressed.base_table = BaseTable::Raw(project_selected_bases_to_variable(
+            &selected_positions,
+            &variable_positions,
+            &fused.base_table,
+        ));
+        compressed.layout = layout;
+        compressed.entropy_sorted_column_order = None;
+        compressed.condensed_sample_weights = bit_data
+            .info
+            .m_condensed_sample_weights()
+            .map(|weights| weights.to_vec());
+        Ok(compressed)
+    }
+}
+
+impl Filter for EncodeDataFusedDictionarySinglePass {
+    type Input = BaseSelectionContext;
+    type Output = CompressedData;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(
+            "Encoding data into compressed format (fused dictionary single-pass + id/deviation)",
+        );
+        let BaseSelectionContext {
+            bit_data,
+            base_bits,
+            constant_bit_polarity,
+        } = input;
+        let fused = encode_data_fused_dictionary_single_pass(&bit_data, base_bits.as_ref());
 
         let mut compressed = CompressedData::new(
             EncodedData::Normal(fused.deviation_data),
@@ -199,6 +243,95 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
     for chunk_stream in chunk_results {
         encoded_bit_stream.extend_from_bitslice(chunk_stream.as_bitslice());
     }
+    let mut base_table = Vec::with_capacity(num_bases);
+    for (id, &representative_row) in representative_rows.iter().enumerate() {
+        let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
+        let mut packed_base = BitVec::with_capacity(selected_bit_positions.len());
+        for &bit_pos in selected_bit_positions {
+            packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
+        }
+        base_table.push((packed_base, base_counts[id]));
+    }
+
+    FusedEncodingResult {
+        deviation_data: DeviationData::new(encoded_bit_stream, num_rows, num_deviation_bits, l_id),
+        base_table,
+    }
+}
+
+/// Single-pass variant: reads each chunk exactly once, buffering deviation bits and row IDs
+/// as they are produced. The symbol stream is assembled in a second step that does not
+/// re-read the input bit data, so the total number of sequential scans over the input is one.
+///
+/// The sequential hash-map dependency prevents parallelising the emission step, which is the
+/// key trade-off versus the two-pass design (where emission is data-parallel via rayon).
+fn encode_data_fused_dictionary_single_pass<B: BaseBit + ?Sized>(
+    bit_data: &BitDataSet,
+    base_bit_groups: &B,
+) -> FusedEncodingResult {
+    let base_bit_mask = base_bit_groups.get_base_bit_mask();
+    let selected_bit_positions = base_bit_groups.get_base_bit_positions();
+
+    let chunk_size = bit_data.chunk_size();
+    let num_bits_per_base = base_bit_groups.get_num_bits_per_base();
+    let num_deviation_bits = chunk_size.saturating_sub(num_bits_per_base);
+    let deviation_ranges = build_deviation_ranges(base_bit_mask, chunk_size, num_deviation_bits);
+
+    let num_rows = bit_data.num_rows();
+    let mut signature_to_id: FxHashMap<SignatureKey, usize> =
+        FxHashMap::with_capacity_and_hasher(num_rows.min(1024), Default::default());
+    let mut representative_rows: Vec<usize> = Vec::new();
+    let mut base_counts: Vec<usize> = Vec::new();
+
+    // Filled during the single sequential scan over bit_data.
+    let mut row_ids: Vec<usize> = Vec::with_capacity(num_rows);
+    let mut deviation_buf: BitVec<usize, Lsb0> =
+        BitVec::with_capacity(num_rows * num_deviation_bits);
+
+    // Single pass: bit_data is read exactly once.
+    for row in 0..num_rows {
+        let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
+
+        let signature = build_signature_key(chunk, selected_bit_positions);
+        let id = if let Some(&existing_id) = signature_to_id.get(&signature) {
+            base_counts[existing_id] += 1;
+            existing_id
+        } else {
+            let new_id = representative_rows.len();
+            signature_to_id.insert(signature, new_id);
+            representative_rows.push(row);
+            base_counts.push(1);
+            new_id
+        };
+        row_ids.push(id);
+
+        for &(start, end) in &deviation_ranges {
+            deviation_buf.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+        }
+    }
+
+    // l_id is now known; combine buffered deviation bits and IDs without re-reading bit_data.
+    let num_bases = representative_rows.len();
+    let l_id = bits_needed_nonzero(num_bases);
+    let symbol_width = num_deviation_bits + l_id;
+
+    let mut encoded_bit_stream = BitVec::with_capacity(num_rows * symbol_width);
+    for (row_idx, &id) in row_ids.iter().enumerate() {
+        if num_deviation_bits > 0 {
+            let dev_start = row_idx * num_deviation_bits;
+            encoded_bit_stream.extend_from_bitslice(unsafe {
+                deviation_buf.get_unchecked(dev_start..dev_start + num_deviation_bits)
+            });
+        }
+        if l_id > 0 {
+            for bit_idx in 0..l_id {
+                encoded_bit_stream.push((id >> bit_idx) & 1 == 1);
+            }
+        }
+    }
+
+    // Re-read only representative rows (O(num_bases), not a full scan) to build the base table.
+    // This matches the two-pass design's equivalent step.
     let mut base_table = Vec::with_capacity(num_bases);
     for (id, &representative_row) in representative_rows.iter().enumerate() {
         let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };

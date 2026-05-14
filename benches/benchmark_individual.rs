@@ -235,6 +235,7 @@ enum EncodeImpl {
     Optimized,
     Rle,
     FusedDictionary,
+    FusedDictionarySinglePass,
     HuffmanBaseIdOnly,
 }
 
@@ -245,6 +246,7 @@ impl EncodeImpl {
             EncodeImpl::Optimized => "optimized",
             EncodeImpl::Rle => "rle",
             EncodeImpl::FusedDictionary => "fused_dictionary",
+            EncodeImpl::FusedDictionarySinglePass => "fused_dictionary_single_pass",
             EncodeImpl::HuffmanBaseIdOnly => "huffman_base_id_only",
         }
     }
@@ -252,6 +254,7 @@ impl EncodeImpl {
     fn process(self, input: BaseSelectionContext) -> Result<CompressedData, EntroGdError> {
         match self {
             EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
+            EncodeImpl::FusedDictionarySinglePass => EncodeDataFusedDictionarySinglePass {}.process(input),
             _ => {
                 let base_table_ctx = BuildBaseTable {}.process(input)?;
                 match self {
@@ -260,6 +263,7 @@ impl EncodeImpl {
                     EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
                     EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffman {}.process(base_table_ctx),
                     EncodeImpl::FusedDictionary => unreachable!(),
+                    EncodeImpl::FusedDictionarySinglePass => unreachable!(),
                 }
             }
         }
@@ -539,11 +543,12 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
     SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups),
     SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount),
 ];
-const ENCODE_IMPLS: [EncodeImpl; 5] = [
+const ENCODE_IMPLS: [EncodeImpl; 6] = [
     EncodeImpl::Naive,
     EncodeImpl::Optimized,
     EncodeImpl::Rle,
     EncodeImpl::FusedDictionary,
+    EncodeImpl::FusedDictionarySinglePass,
     EncodeImpl::HuffmanBaseIdOnly,
 ];
 const SAVE_IMPLS: [SaveImpl; 1] = [SaveImpl::Current];
