@@ -167,6 +167,7 @@ enum SelectBasesImpl {
     ProfileAllBits(BaseBitImpl),
     DebugNoCsv,
     Optimized(BaseBitImpl),
+    Adaptive(BaseBitImpl),
 }
 
 impl SelectBasesImpl {
@@ -198,6 +199,15 @@ impl SelectBasesImpl {
             SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount) => {
                 "optimized_hyper_log_log_count"
             }
+            SelectBasesImpl::Adaptive(BaseBitImpl::Naive) => "adaptive_naive",
+            SelectBasesImpl::Adaptive(BaseBitImpl::BatchGroups) => "adaptive_batch_groups",
+            SelectBasesImpl::Adaptive(BaseBitImpl::IncSignatureGroups) => {
+                "adaptive_inc_signature_groups"
+            }
+            SelectBasesImpl::Adaptive(BaseBitImpl::SignatureGroups) => "adaptive_signature_groups",
+            SelectBasesImpl::Adaptive(BaseBitImpl::HyperLogLogCount) => {
+                "adaptive_hyper_log_log_count"
+            }
         }
     }
 
@@ -222,6 +232,12 @@ impl SelectBasesImpl {
                 patience,
                 base_bit_impl,
                 entropy_threshold: 0.70,
+            }
+            .process(input),
+            SelectBasesImpl::Adaptive(base_bit_impl) => SelectBasesAdaptive {
+                width_decay: 0.3,
+                patience,
+                base_bit_impl,
             }
             .process(input),
         }
@@ -254,7 +270,9 @@ impl EncodeImpl {
     fn process(self, input: BaseSelectionContext) -> Result<CompressedData, EntroGdError> {
         match self {
             EncodeImpl::FusedDictionary => EncodeDataFusedDictionary {}.process(input),
-            EncodeImpl::FusedDictionarySinglePass => EncodeDataFusedDictionarySinglePass {}.process(input),
+            EncodeImpl::FusedDictionarySinglePass => {
+                EncodeDataFusedDictionarySinglePass {}.process(input)
+            }
             _ => {
                 let base_table_ctx = BuildBaseTable {}.process(input)?;
                 match self {
@@ -532,16 +550,14 @@ const ENTROPY_IMPLS: [EntropyImpl; 4] = [
     EntropyImpl::StrideSampledBatched,
 ];
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
-const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
+const SELECT_BASES_IMPLS: [SelectBasesImpl; 7] = [
     SelectBasesImpl::Current,
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::Naive),
-    SelectBasesImpl::ProfileAllBits(BaseBitImpl::BatchGroups),
-    SelectBasesImpl::ProfileAllBits(BaseBitImpl::IncSignatureGroups),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::HyperLogLogCount),
     SelectBasesImpl::Optimized(BaseBitImpl::Naive),
-    SelectBasesImpl::Optimized(BaseBitImpl::BatchGroups),
-    SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups),
     SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount),
+    SelectBasesImpl::Adaptive(BaseBitImpl::Naive),
+    SelectBasesImpl::Adaptive(BaseBitImpl::HyperLogLogCount),
 ];
 const ENCODE_IMPLS: [EncodeImpl; 6] = [
     EncodeImpl::Naive,

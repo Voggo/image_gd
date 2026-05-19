@@ -16,7 +16,7 @@ pub use base_bits::{
 };
 pub use base_selection::{
     BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesDebug, SelectBasesOptimized,
-    SelectBasesProfileAllBits,
+    SelectBasesProfileAllBits, SelectBasesAdaptive
 };
 pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};
 pub use condensed_samples::GenCondensedSamples;

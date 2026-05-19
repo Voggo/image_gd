@@ -8,6 +8,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use crate::utils::bits_needed_nonzero;
+use fxhash::FxHashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -63,6 +64,14 @@ pub(crate) fn calculate_compressed_size<B: BaseBit + ?Sized>(
     base_bit_groups: &B,
 ) -> usize {
     calculate_compressed_size_breakdown(bit_data, base_bit_groups).total_size
+}
+
+fn format_base_bit_mask<B: BaseBit + ?Sized>(base_bit_groups: &B) -> String {
+    base_bit_groups
+        .get_base_bit_mask()
+        .iter()
+        .map(|b| if *b { "1" } else { "0" })
+        .collect()
 }
 
 struct SelectBasesCsvLogger {
@@ -307,15 +316,10 @@ impl Filter for SelectBasesProfileAllBits {
         }
 
         let compressed_size = calculate_compressed_size(&bit_data, base_bit_groups.as_ref());
-        let selected_mask = base_bit_groups
-            .get_base_bit_mask()
-            .iter()
-            .map(|b| if *b { "1" } else { "0" })
-            .collect::<String>();
         tracing::info!(
             selected_num_bases = base_bit_groups.get_num_bases(),
             selected_num_bits_per_base = base_bit_groups.get_num_bits_per_base(),
-            selected_mask = %selected_mask,
+            selected_mask = %format_base_bit_mask(base_bit_groups.as_ref()),
             selected_compressed_size_bytes = compressed_size / 8,
             "selected base bit mask (profile all bits, compressed size in bytes)"
         );
@@ -433,15 +437,10 @@ fn select_base_bits(
             break;
         }
     }
-    let selected_mask = best_base_bit_groups
-        .get_base_bit_mask()
-        .iter()
-        .map(|b| if *b { "1" } else { "0" })
-        .collect::<String>();
     tracing::info!(
         selected_num_bases = best_base_bit_groups.get_num_bases(),
         selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        selected_mask = %selected_mask,
+        selected_mask = %format_base_bit_mask(&best_base_bit_groups),
         selected_compressed_size_bytes = best_compressed_size / 8,
         "selected base bit mask (compressed size in bytes)"
     );
@@ -505,15 +504,10 @@ fn select_base_bits_debug(
             break;
         }
     }
-    let selected_mask = best_base_bit_groups
-        .get_base_bit_mask()
-        .iter()
-        .map(|b| if *b { "1" } else { "0" })
-        .collect::<String>();
     tracing::info!(
         selected_num_bases = best_base_bit_groups.get_num_bases(),
         selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        selected_mask = %selected_mask,
+        selected_mask = %format_base_bit_mask(&best_base_bit_groups),
         selected_compressed_size_bytes = best_compressed_size / 8,
         "selected base bit mask (debug csv, compressed size in bytes)"
     );
@@ -658,17 +652,284 @@ fn select_base_bits_threshold_optimized(
             break;
         }
     }
-    let selected_mask = best_base_bit_groups
-        .get_base_bit_mask()
-        .iter()
-        .map(|b| if *b { "1" } else { "0" })
-        .collect::<String>();
     tracing::info!(
         selected_num_bases = best_base_bit_groups.get_num_bases(),
         selected_num_bits_per_base = best_base_bit_groups.get_num_bits_per_base(),
-        selected_mask = %selected_mask,
+        selected_mask = %format_base_bit_mask(&best_base_bit_groups),
         selected_compressed_size_bytes = best_compressed_size / 8,
         "selected base bit mask (threshold optimized, compressed size in bytes)"
     );
     Box::new(best_base_bit_groups)
+}
+
+// ─── Adaptive Block Selection ────────────────────────────────────────────────
+
+pub struct SelectBasesAdaptive {
+    /// Geometric width-decay factor for entropy clustering. Must be in (0, 1).
+    /// `0.5` → first cluster spans half the entropy range, then 1/4, 1/8, …
+    pub width_decay: f64,
+    /// Patience for the naive single-bit fallback after a cluster fails.
+    pub patience: usize,
+    pub base_bit_impl: BaseBitImpl,
+}
+
+impl Filter for SelectBasesAdaptive {
+    type Input = EntropyScoredContext;
+    type Output = BaseSelectionContext;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info(format!(
+            "Adaptive entropy-clustered selection (width_decay={}, patience={})",
+            self.width_decay, self.patience
+        ));
+        assert!(
+            self.width_decay > 0.0 && self.width_decay < 1.0,
+            "width_decay must be in (0, 1), got {}",
+            self.width_decay
+        );
+
+        let EntropyScoredContext {
+            bit_data,
+            entropy_scores,
+            constant_bit_polarity,
+        } = input;
+        let constant_positions = merge_constant_bit_positions(&constant_bit_polarity);
+
+        let base_bits = match self.base_bit_impl {
+            BaseBitImpl::Naive => select_base_bits_adaptive(
+                &bit_data,
+                BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy_scores,
+                &constant_positions,
+                self.width_decay,
+                self.patience,
+            ),
+            BaseBitImpl::BatchGroups => select_base_bits_adaptive(
+                &bit_data,
+                BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy_scores,
+                &constant_positions,
+                self.width_decay,
+                self.patience,
+            ),
+            BaseBitImpl::IncSignatureGroups => select_base_bits_adaptive(
+                &bit_data,
+                BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy_scores,
+                &constant_positions,
+                self.width_decay,
+                self.patience,
+            ),
+            BaseBitImpl::SignatureGroups => select_base_bits_adaptive(
+                &bit_data,
+                BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy_scores,
+                &constant_positions,
+                self.width_decay,
+                self.patience,
+            ),
+            BaseBitImpl::HyperLogLogCount => select_base_bits_adaptive(
+                &bit_data,
+                BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size()),
+                entropy_scores,
+                &constant_positions,
+                self.width_decay,
+                self.patience,
+            ),
+        };
+
+        Ok(BaseSelectionContext::new(
+            bit_data,
+            base_bits,
+            constant_bit_polarity,
+        ))
+    }
+}
+
+/// Greedy left-to-right sweep on entropy-sorted bits.
+///
+/// Returns cluster sizes (in order); their sum equals `sorted.len()`. The
+/// first cluster spans up to `width_decay * (e_max - e_min)` of entropy from
+/// its starting value; the allowed width is multiplied by `width_decay` after
+/// each closed cluster. The first cluster is therefore the largest and later
+/// clusters become progressively more sensitive, degenerating to size 1 once
+/// `width` drops below the smallest gap between consecutive values.
+fn cluster_by_entropy_width(sorted: &[(usize, f64)], width_decay: f64) -> Vec<usize> {
+    if sorted.is_empty() {
+        return Vec::new();
+    }
+    let e_min = sorted.first().unwrap().1;
+    let e_max = sorted.last().unwrap().1;
+    let range = e_max - e_min;
+    if range == 0.0 {
+        return vec![sorted.len()];
+    }
+
+    let mut sizes = Vec::new();
+    let mut i = 0;
+    let mut width = range * width_decay;
+    while i < sorted.len() {
+        let start_e = sorted[i].1;
+        let mut j = i + 1;
+        while j < sorted.len() && sorted[j].1 - start_e <= width {
+            j += 1;
+        }
+        sizes.push(j - i);
+        i = j;
+        width *= width_decay;
+    }
+    sizes
+}
+
+/// Two-phase entropy-clustered selector.
+///
+/// Phase A: cluster the entropy-sorted bits by `width_decay`, add a cluster at
+/// a time from the current best state — on improvement keep it, on failure
+/// roll back and proceed to Phase B.
+///
+/// Phase B: naive single-bit additions on the remaining bits, with `patience`
+/// consecutive non-improving attempts before stopping.
+fn select_base_bits_adaptive<B: BaseBit + Clone + 'static>(
+    bit_data: &BitDataSet,
+    mut base_bit_groups: B,
+    mut entropy: Vec<(usize, f64)>,
+    constant_positions: &[usize],
+    width_decay: f64,
+    patience: usize,
+) -> Box<dyn BaseBit> {
+    entropy.sort_by(|a, b| a.1.total_cmp(&b.1));
+    base_bit_groups.add_constant_bit_positions(constant_positions);
+
+    let constant_set: FxHashSet<usize> = constant_positions.iter().copied().collect();
+    let non_const: Vec<(usize, f64)> = entropy
+        .into_iter()
+        .filter(|(pos, _)| !constant_set.contains(pos))
+        .collect();
+
+    let mut best = base_bit_groups;
+    let mut best_size = calculate_compressed_size(bit_data, &best);
+
+    // Phase A — entropy-clustered batched additions.
+    let cluster_sizes = cluster_by_entropy_width(&non_const, width_decay);
+    let mut cursor = 0usize;
+    let mut phase_a_clusters_committed = 0usize;
+    for cluster_size in cluster_sizes {
+        let end = cursor + cluster_size;
+        let block: Vec<usize> = non_const[cursor..end].iter().map(|(p, _)| *p).collect();
+
+        let mut trial = best.clone();
+        trial.add_bit_positions(bit_data, &block);
+        let trial_size = calculate_compressed_size(bit_data, &trial);
+
+        tracing::debug!(
+            cluster_size,
+            cursor,
+            trial_size,
+            best_size,
+            "evaluated entropy cluster"
+        );
+
+        if trial_size < best_size {
+            best = trial;
+            best_size = trial_size;
+            cursor = end;
+            phase_a_clusters_committed += 1;
+        } else {
+            break;
+        }
+    }
+
+    tracing::info!(
+        phase_a_clusters_committed,
+        phase_a_bits_committed = cursor,
+        phase_a_size_bytes = best_size / 8,
+        "adaptive phase A complete"
+    );
+
+    // Phase B — naive single-bit fallback on the remainder.
+    let mut fails = 0usize;
+    let mut phase_b_bits_committed = 0usize;
+    for (bit_pos, _) in non_const[cursor..].iter() {
+        let mut trial = best.clone();
+        trial.add_bit_position(bit_data, *bit_pos);
+        let trial_size = calculate_compressed_size(bit_data, &trial);
+
+        tracing::debug!(
+            bit_pos = *bit_pos,
+            trial_size,
+            best_size,
+            "evaluated single bit (phase B)"
+        );
+
+        if trial_size < best_size {
+            best = trial;
+            best_size = trial_size;
+            fails = 0;
+            phase_b_bits_committed += 1;
+        } else {
+            fails += 1;
+            if fails >= patience {
+                break;
+            }
+        }
+    }
+
+    tracing::info!(
+        selected_num_bases = best.get_num_bases(),
+        selected_num_bits_per_base = best.get_num_bits_per_base(),
+        selected_mask = %format_base_bit_mask(&best),
+        selected_compressed_size_bytes = best_size / 8,
+        phase_b_bits_committed,
+        "adaptive entropy-clustered selection complete"
+    );
+
+    Box::new(best)
+}
+
+#[cfg(test)]
+mod adaptive_clustering_tests {
+    use super::cluster_by_entropy_width;
+
+    #[test]
+    fn empty_input_returns_empty() {
+        let sizes = cluster_by_entropy_width(&[], 0.5);
+        assert!(sizes.is_empty());
+    }
+
+    #[test]
+    fn all_equal_entropies_single_cluster() {
+        let data: Vec<(usize, f64)> = (0..10).map(|i| (i, 0.42)).collect();
+        let sizes = cluster_by_entropy_width(&data, 0.5);
+        assert_eq!(sizes, vec![10]);
+    }
+
+    #[test]
+    fn uniform_entropies_halve_geometrically() {
+        // entropies 0.0, 1.0, 2.0, ..., 15.0 → range 15.
+        // decay=0.5 → widths 7.5, 3.75, 1.875, ...
+        let data: Vec<(usize, f64)> = (0..16).map(|i| (i, i as f64)).collect();
+        let sizes = cluster_by_entropy_width(&data, 0.5);
+        assert_eq!(sizes.iter().sum::<usize>(), 16);
+        // First cluster should be the largest.
+        for i in 1..sizes.len() {
+            assert!(sizes[0] >= sizes[i], "first cluster must dominate");
+        }
+        // Once width drops below 1.0, every subsequent cluster is size 1.
+        assert_eq!(*sizes.last().unwrap(), 1);
+    }
+
+    #[test]
+    fn skewed_distribution_captures_dense_region_first() {
+        // 90 bits with low entropy ~0, 10 bits scattered in (0.5, 1.0].
+        let mut data: Vec<(usize, f64)> =
+            (0..90).map(|i| (i, 0.001 * i as f64)).collect();
+        for i in 0..10 {
+            data.push((90 + i, 0.5 + 0.05 * i as f64));
+        }
+        data.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let sizes = cluster_by_entropy_width(&data, 0.5);
+        assert_eq!(sizes.iter().sum::<usize>(), 100);
+        // First cluster should swallow the dense low-entropy region.
+        assert!(sizes[0] >= 90, "first cluster should capture dense region (got {})", sizes[0]);
+    }
 }

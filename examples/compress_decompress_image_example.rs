@@ -1,5 +1,6 @@
 use entro_gd::ImageColorModel;
 use entro_gd::ScopedTimer;
+use entro_gd::compression::base_selection::SelectBasesAdaptive;
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::prelude::*;
 use entro_gd::{EntroGdError, init_logging, write_bitdata_as_image};
@@ -70,16 +71,21 @@ fn main() -> Result<(), EntroGdError> {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping: PixelGrouping::new(2, 2),
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        grouping_transform: ImageGroupingTransform::Raw,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
     .then(SelectBasesOptimized {
         patience: 10,
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
-        entropy_threshold: 0.80,
+        entropy_threshold: 0.70,
     })
     .then(EncodeDataFusedDictionary {});
+    // .then(SelectBasesAdaptive {
+    //     width_decay: 0.1,
+    //     patience: 5,
+    //     base_bit_impl: BaseBitImpl::Naive,
+    // })
 
     let load_compressed_data = LoadIgdFile {};
 
