@@ -517,6 +517,68 @@ impl HuffmanDeviationData {
         Ok(())
     }
 
+    pub(crate) fn for_each_sample_range(
+        &self,
+        start: usize,
+        count: usize,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let capped_count = count.min(self.num_samples.saturating_sub(start));
+        if capped_count == 0 {
+            return Ok(());
+        }
+
+        // Seek to the row boundary closest to `start`, then skip within-row symbols.
+        let (mut bit_pos, col_skip) = if self.row_width > 0 && start < self.original_num_samples {
+            let row_idx = start / self.row_width;
+            let col_offset = start % self.row_width;
+            let row_bit_pos =
+                *self
+                    .row_offsets
+                    .get(row_idx)
+                    .ok_or(EntroGdError::InvalidMetadata {
+                        message: format!("Huffman row offset missing for row {}", row_idx),
+                    })? as usize;
+            (row_bit_pos, col_offset)
+        } else {
+            // Padded samples: start from end of original stream, skip forward.
+            (
+                self.original_stream_end_offset_bits,
+                start.saturating_sub(self.original_num_samples),
+            )
+        };
+
+        // Skip col_skip symbols to reach the exact starting sample.
+        for _ in 0..col_skip {
+            let (_, consumed) = self.decode_one(bit_pos)?;
+            bit_pos += consumed;
+        }
+
+        let mut id_bits_buffer = BitVec::with_capacity(self.num_id_bits);
+
+        for sample_idx in start..start + capped_count {
+            let (symbol, consumed) = self.decode_one(bit_pos)?;
+            bit_pos += consumed;
+
+            let deviation_start = sample_idx * self.num_deviation_bits;
+            let deviation_end = deviation_start + self.num_deviation_bits;
+            let deviation_bits = unsafe {
+                self.raw_deviation_bit_stream
+                    .get_unchecked(deviation_start..deviation_end)
+            };
+
+            id_bits_buffer.clear();
+            append_symbol_bits(&mut id_bits_buffer, symbol, self.num_id_bits);
+
+            f(DeviationSampleRef {
+                deviation: deviation_bits,
+                id: id_bits_buffer.as_bitslice(),
+            })?;
+        }
+
+        Ok(())
+    }
+
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
         let expected_bits = self.num_samples.checked_mul(symbol_width).ok_or_else(|| {

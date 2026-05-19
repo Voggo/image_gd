@@ -329,6 +329,32 @@ impl DeviationData {
         }
         Ok(())
     }
+
+    pub(crate) fn for_each_sample_range(
+        &self,
+        start: usize,
+        count: usize,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let sample_width = self.num_deviation_bits + self.num_id_bits;
+        let end = (start + count).min(self.num_samples);
+        for sample_idx in start..end {
+            let bit_start = sample_idx * sample_width;
+            let bit_end = bit_start + sample_width;
+            debug_assert!(bit_end <= self.encoded_bit_stream.len());
+            f(DeviationSampleRef {
+                deviation: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(bit_start..bit_start + self.num_deviation_bits)
+                },
+                id: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(bit_start + self.num_deviation_bits..bit_end)
+                },
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl EncodedData {
@@ -413,6 +439,25 @@ impl EncodedData {
             EncodedData::Huffman(data) => {
                 data.for_each_sample_at_sorted_indices(sorted_indices, f)
             }
+        }
+    }
+
+    /// Decode a contiguous range of samples `[start, start + count)` in a single forward pass.
+    /// Not supported for `Rle` (no stored row offsets) — callers must use `for_each_sample_n` there.
+    pub(crate) fn for_each_sample_range(
+        &self,
+        start: usize,
+        count: usize,
+        f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        match self {
+            EncodedData::Normal(data) => data.for_each_sample_range(start, count, f),
+            EncodedData::RleOffset(data) => data.for_each_sample_range(start, count, f),
+            EncodedData::Huffman(data) => data.for_each_sample_range(start, count, f),
+            EncodedData::Rle(_) => Err(EntroGdError::InvalidMetadata {
+                message: "for_each_sample_range is not supported for Rle encoding (no row offsets)"
+                    .to_string(),
+            }),
         }
     }
 

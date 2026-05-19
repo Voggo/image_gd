@@ -1,4 +1,4 @@
-use crate::compression::encoding::{CompressedData, CondensedSamples};
+use crate::compression::encoding::{CompressedData, CondensedSamples, EncodedData};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     decode_value_from_bits,
@@ -10,9 +10,12 @@ use crate::timing::ScopedTimer;
 use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
 use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+const PARALLEL_MIN_ROWS: usize = 256;
 
 /// Decompression context containing file-scoped state computed once per file.
 /// Use this to perform multiple row decompression operations without recomputing layout.
@@ -121,8 +124,90 @@ impl Filter for DecompressFileData {
 pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
     let data_info = &compressed.metadata;
     let chunk_size = data_info.chunk_size();
-    let stride = data_info.row_stride();
     let original_num_rows = data_info.original_size_bits() / chunk_size;
+    let stride = data_info.row_stride();
+
+    let use_parallel = !matches!(compressed.encoded_data, EncodedData::Rle(_))
+        && original_num_rows >= PARALLEL_MIN_ROWS;
+
+    if use_parallel {
+        decompress_file_parallel(compressed, data_info, chunk_size, stride, original_num_rows)
+    } else {
+        decompress_file_sequential(compressed, data_info, chunk_size, stride, original_num_rows)
+    }
+}
+
+fn decompress_file_parallel(
+    compressed: &CompressedData,
+    data_info: &crate::compression::preprocessor::BitDataInfo,
+    chunk_size: usize,
+    stride: usize,
+    original_num_rows: usize,
+) -> Result<BitDataSet, EntroGdError> {
+    let _timer = ScopedTimer::trace("Reconstructing bit data (parallel)");
+
+    let deviation_positions = compressed.layout.deviation_bit_positions();
+    let variable_base_positions = compressed.layout.variable_base_bit_positions();
+    let constant_one_positions = compressed.layout.constant_one_bit_positions();
+    let base_table = compressed.base_table.as_raw();
+
+    let num_threads = rayon::current_num_threads();
+    let rows_per_thread = original_num_rows.div_ceil(num_threads);
+
+    let chunks: Result<Vec<BitVec<usize, Lsb0>>, EntroGdError> = (0..num_threads)
+        .into_par_iter()
+        .map(|thread_idx| {
+            let start = thread_idx * rows_per_thread;
+            let count = rows_per_thread.min(original_num_rows.saturating_sub(start));
+            if count == 0 {
+                return Ok(BitVec::new());
+            }
+
+            let mut chunk_bits = bitvec![usize, Lsb0; 0; stride * count];
+            let mut local_cursor = 0usize;
+
+            compressed.encoded_data.for_each_sample_range(start, count, |sample| {
+                append_reconstructed_chunk(
+                    &mut chunk_bits,
+                    local_cursor,
+                    &deviation_positions,
+                    &variable_base_positions,
+                    &constant_one_positions,
+                    base_table,
+                    sample.deviation,
+                    sample.id,
+                )?;
+                local_cursor += stride;
+                Ok(())
+            })?;
+
+            Ok(chunk_bits)
+        })
+        .collect();
+
+    let mut reconstructed_bits = BitVec::with_capacity(stride * original_num_rows);
+    for chunk in chunks? {
+        reconstructed_bits.extend_from_bitslice(&chunk);
+    }
+
+    let data = BitData {
+        data: reconstructed_bits,
+        chunk_size,
+        stride,
+        num_rows: original_num_rows,
+    };
+    let info =
+        data_info.with_original_size_bits_and_row_stride(chunk_size * original_num_rows, stride);
+    Ok(BitDataSet { data, info })
+}
+
+fn decompress_file_sequential(
+    compressed: &CompressedData,
+    data_info: &crate::compression::preprocessor::BitDataInfo,
+    chunk_size: usize,
+    stride: usize,
+    original_num_rows: usize,
+) -> Result<BitDataSet, EntroGdError> {
     let deviation_positions = &compressed.layout.deviation_bit_positions();
     let variable_base_positions = &compressed.layout.variable_base_bit_positions();
     let constant_one_positions = &compressed.layout.constant_one_bit_positions();
@@ -131,7 +216,7 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let mut decoded_rows = 0usize;
     let mut cursor = 0usize;
 
-    let _timer = ScopedTimer::trace("Reconstrunting bit data");
+    let _timer = ScopedTimer::trace("Reconstructing bit data (sequential)");
 
     compressed
         .encoded_data
@@ -139,9 +224,9 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
             append_reconstructed_chunk(
                 &mut reconstructed_bits,
                 cursor,
-                &deviation_positions,
-                &variable_base_positions,
-                &constant_one_positions,
+                deviation_positions,
+                variable_base_positions,
+                constant_one_positions,
                 base_table,
                 sample.deviation,
                 sample.id,

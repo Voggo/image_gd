@@ -743,6 +743,113 @@ impl RleDeviationOffsetData {
         Ok(())
     }
 
+    pub(crate) fn for_each_sample_range(
+        &self,
+        start: usize,
+        count: usize,
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let capped_count = count.min(self.num_samples.saturating_sub(start));
+        if capped_count == 0 {
+            return Ok(());
+        }
+
+        // Jump to the nearest stored row boundary, then skip remaining columns within that row.
+        let (start_rm_idx, sym_cursor_init, skip_from_boundary) =
+            if self.row_width > 0 && start < self.original_num_samples {
+                let row_idx = start / self.row_width;
+                let col_offset = start % self.row_width;
+                let (rm_start, sym_start) = self.row_offsets[row_idx];
+                (rm_start as usize, sym_start as usize, col_offset)
+            } else {
+                // Padded samples have no stored offset — scan from stream beginning.
+                (0, 0, start)
+            };
+
+        let mut sym_cursor = sym_cursor_init;
+        // `processed` counts samples from the row boundary (or stream start) before emitting.
+        let mut processed = 0usize;
+        let mut yielded = 0usize;
+
+        for &(r_encoded, m_count) in self.rm_values.iter().skip(start_rm_idx) {
+            if yielded >= capped_count {
+                break;
+            }
+
+            if r_encoded > 0 {
+                let run_len = (r_encoded as usize) + 1;
+                if sym_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE offset run symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+
+                // Intersection of this run with the requested window [skip, skip+capped_count).
+                let run_start = processed;
+                let run_end = processed + run_len;
+                let emit_start = run_start.max(skip_from_boundary);
+                let emit_end = run_end.min(skip_from_boundary + capped_count);
+
+                if emit_start < emit_end {
+                    let run_sym = unsafe {
+                        self.symbol_bit_stream
+                            .get_unchecked(sym_cursor..sym_cursor + symbol_width)
+                    };
+                    let sample = DeviationSampleRef {
+                        deviation: unsafe { run_sym.get_unchecked(..self.num_deviation_bits) },
+                        id: unsafe { run_sym.get_unchecked(self.num_deviation_bits..) },
+                    };
+                    for _ in 0..(emit_end - emit_start) {
+                        f(DeviationSampleRef {
+                            deviation: sample.deviation,
+                            id: sample.id,
+                        })?;
+                        yielded += 1;
+                    }
+                }
+
+                processed += run_len;
+                sym_cursor += symbol_width;
+            }
+
+            if yielded >= capped_count {
+                break;
+            }
+
+            let literals = m_count as usize;
+            let lit_start = processed;
+            let lit_end = processed + literals;
+            let emit_start = lit_start.max(skip_from_boundary);
+            let emit_end = lit_end.min(skip_from_boundary + capped_count);
+
+            if emit_start < emit_end {
+                let start_offset_in_lit = emit_start - lit_start;
+                let start_bit = sym_cursor + start_offset_in_lit * symbol_width;
+
+                for i in 0..(emit_end - emit_start) {
+                    let s = start_bit + i * symbol_width;
+                    if s + symbol_width > self.symbol_bit_stream.len() {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: "RLE offset literal exceeds symbol stream length".to_string(),
+                        });
+                    }
+                    let sym = unsafe { self.symbol_bit_stream.get_unchecked(s..s + symbol_width) };
+                    f(DeviationSampleRef {
+                        deviation: unsafe { sym.get_unchecked(..self.num_deviation_bits) },
+                        id: unsafe { sym.get_unchecked(self.num_deviation_bits..) },
+                    })?;
+                    yielded += 1;
+                }
+            }
+
+            processed += literals;
+            sym_cursor += literals * symbol_width;
+        }
+
+        Ok(())
+    }
+
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
         let _timer =
             ScopedTimer::debug("Converting RLE offset deviation data to raw deviation data");
