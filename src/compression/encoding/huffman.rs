@@ -433,6 +433,90 @@ impl HuffmanDeviationData {
         Ok(())
     }
 
+    pub(crate) fn for_each_sample_at_sorted_indices(
+        &self,
+        sorted_indices: &[usize],
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        if sorted_indices.is_empty() {
+            return Ok(());
+        }
+
+        let mut id_bits_buffer = BitVec::with_capacity(self.num_id_bits);
+        let mut req_ptr = 0usize;
+
+        // Process original samples row by row, seeking to the row's bit offset.
+        if self.row_width > 0 {
+            while req_ptr < sorted_indices.len()
+                && sorted_indices[req_ptr] < self.original_num_samples
+            {
+                let sample_idx = sorted_indices[req_ptr];
+                let row_idx = sample_idx / self.row_width;
+                let row_start_sample = row_idx * self.row_width;
+                let row_end = row_start_sample + self.row_width;
+
+                let mut bit_pos = *self
+                    .row_offsets
+                    .get(row_idx)
+                    .ok_or(EntroGdError::InvalidMetadata {
+                        message: format!("Huffman row offset missing for row {}", row_idx),
+                    })? as usize;
+                let mut col = 0usize;
+                let mut last_symbol = 0u64;
+
+                // Advance symbol by symbol through this row, yielding at each requested column.
+                while req_ptr < sorted_indices.len() && sorted_indices[req_ptr] < row_end {
+                    let target_col = sorted_indices[req_ptr] - row_start_sample;
+
+                    // Decode symbols up to and including target_col.
+                    while col <= target_col {
+                        let (sym, consumed) = self.decode_one(bit_pos)?;
+                        last_symbol = sym;
+                        bit_pos += consumed;
+                        col += 1;
+                    }
+
+                    let abs_sample_idx = row_start_sample + target_col;
+                    let deviation_start = abs_sample_idx * self.num_deviation_bits;
+                    let deviation_end = deviation_start + self.num_deviation_bits;
+                    let deviation_bits = unsafe {
+                        self.raw_deviation_bit_stream
+                            .get_unchecked(deviation_start..deviation_end)
+                    };
+
+                    id_bits_buffer.clear();
+                    append_symbol_bits(&mut id_bits_buffer, last_symbol, self.num_id_bits);
+
+                    // Yield once (and again for any duplicate indices at the same position).
+                    while req_ptr < sorted_indices.len() && sorted_indices[req_ptr] < row_end
+                        && sorted_indices[req_ptr] - row_start_sample == target_col
+                    {
+                        f(DeviationSampleRef {
+                            deviation: deviation_bits,
+                            id: id_bits_buffer.as_bitslice(),
+                        })?;
+                        req_ptr += 1;
+                    }
+                }
+            }
+        }
+
+        // Fall back to get_sample for any padded samples (>= original_num_samples).
+        while req_ptr < sorted_indices.len() {
+            let sample_idx = sorted_indices[req_ptr];
+            let sample = self
+                .get_sample(sample_idx)
+                .ok_or(EntroGdError::DecompressionSampleMissing { sample_idx })?;
+            f(DeviationSampleRef {
+                deviation: sample.deviation.as_bitslice(),
+                id: sample.id.as_bitslice(),
+            })?;
+            req_ptr += 1;
+        }
+
+        Ok(())
+    }
+
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
         let expected_bits = self.num_samples.checked_mul(symbol_width).ok_or_else(|| {

@@ -60,6 +60,7 @@ impl DecompressRandomAccessHandle {
     }
 
     /// Decompress a batch of rows from a context without recomputing file-scoped state.
+    /// Output rows are in ascending sample-index order (sorted), regardless of `indices` order.
     pub fn decompress_samples(&self, indices: &[usize]) -> Result<BitDataSet, EntroGdError> {
         // Validate indices
         if let Some(&sample_idx) = indices.iter().find(|&&idx| idx >= self.original_num_rows) {
@@ -69,27 +70,27 @@ impl DecompressRandomAccessHandle {
         // Allocate reconstructed bits once for all rows
         let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; self.stride * indices.len()];
 
-        // Decompress each sample
-        for (out_idx, &sample_idx) in indices.iter().enumerate() {
-            let sample = match self.compressed.encoded_data.get_sample(sample_idx) {
-                Some(s) => s,
-                None => {
-                    return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
-                }
-            };
+        // Sort indices so the streaming decoder can do a single forward pass.
+        let mut sorted_indices = indices.to_vec();
+        sorted_indices.sort_unstable();
 
-            let out_start = out_idx * self.stride;
-            append_reconstructed_chunk(
-                &mut reconstructed_bits,
-                out_start,
-                &self.deviation_positions,
-                &self.variable_base_positions,
-                &self.constant_one_positions,
-                self.compressed.base_table.as_raw(),
-                sample.deviation.as_bitslice(),
-                sample.id.as_bitslice(),
-            )?;
-        }
+        let mut out_cursor = 0usize;
+        self.compressed
+            .encoded_data
+            .for_each_sample_at_sorted_indices(&sorted_indices, |sample| {
+                append_reconstructed_chunk(
+                    &mut reconstructed_bits,
+                    out_cursor,
+                    &self.deviation_positions,
+                    &self.variable_base_positions,
+                    &self.constant_one_positions,
+                    self.compressed.base_table.as_raw(),
+                    sample.deviation,
+                    sample.id,
+                )?;
+                out_cursor += self.stride;
+                Ok(())
+            })?;
 
         let data = BitData {
             data: reconstructed_bits,

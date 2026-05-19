@@ -302,6 +302,33 @@ impl DeviationData {
 
         Ok(())
     }
+
+    pub(crate) fn for_each_sample_at_sorted_indices(
+        &self,
+        sorted_indices: &[usize],
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        let sample_width = self.num_deviation_bits + self.num_id_bits;
+        for &sample_idx in sorted_indices {
+            if sample_idx >= self.num_samples {
+                return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
+            }
+            let start_bit = sample_idx * sample_width;
+            let end_bit = start_bit + sample_width;
+            debug_assert!(end_bit <= self.encoded_bit_stream.len());
+            f(DeviationSampleRef {
+                deviation: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(start_bit..start_bit + self.num_deviation_bits)
+                },
+                id: unsafe {
+                    self.encoded_bit_stream
+                        .get_unchecked(start_bit + self.num_deviation_bits..end_bit)
+                },
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl EncodedData {
@@ -369,6 +396,23 @@ impl EncodedData {
             EncodedData::Rle(data) => data.for_each_sample_n(limit, f),
             EncodedData::RleOffset(data) => data.for_each_sample_n(limit, f),
             EncodedData::Huffman(data) => data.for_each_sample_n(limit, f),
+        }
+    }
+
+    pub(crate) fn for_each_sample_at_sorted_indices(
+        &self,
+        sorted_indices: &[usize],
+        f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        match self {
+            EncodedData::Normal(data) => data.for_each_sample_at_sorted_indices(sorted_indices, f),
+            EncodedData::Rle(data) => data.for_each_sample_at_sorted_indices(sorted_indices, f),
+            EncodedData::RleOffset(data) => {
+                data.for_each_sample_at_sorted_indices(sorted_indices, f)
+            }
+            EncodedData::Huffman(data) => {
+                data.for_each_sample_at_sorted_indices(sorted_indices, f)
+            }
         }
     }
 

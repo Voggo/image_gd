@@ -199,6 +199,79 @@ impl RleDeviationData {
         Ok(())
     }
 
+    pub(crate) fn for_each_sample_at_sorted_indices(
+        &self,
+        sorted_indices: &[usize],
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        if sorted_indices.is_empty() {
+            return Ok(());
+        }
+
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let mut symbol_cursor = 0usize;
+        let mut logical_idx = 0usize;
+        let mut req_ptr = 0usize;
+
+        for &(r_encoded, m_count) in &self.rm_values {
+            if req_ptr >= sorted_indices.len() {
+                break;
+            }
+
+            if r_encoded > 0 {
+                if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE run symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+                let run_len = (r_encoded as usize) + 1;
+                let run_symbol = unsafe {
+                    self.symbol_bit_stream
+                        .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                };
+                while req_ptr < sorted_indices.len()
+                    && sorted_indices[req_ptr] < logical_idx + run_len
+                {
+                    f(DeviationSampleRef {
+                        deviation: unsafe { run_symbol.get_unchecked(..self.num_deviation_bits) },
+                        id: unsafe { run_symbol.get_unchecked(self.num_deviation_bits..) },
+                    })?;
+                    req_ptr += 1;
+                }
+                symbol_cursor += symbol_width;
+                logical_idx += run_len;
+            }
+
+            if req_ptr >= sorted_indices.len() {
+                break;
+            }
+
+            let literal_count = m_count as usize;
+            while req_ptr < sorted_indices.len()
+                && sorted_indices[req_ptr] < logical_idx + literal_count
+            {
+                let offset = sorted_indices[req_ptr] - logical_idx;
+                let start = symbol_cursor + offset * symbol_width;
+                let end = start + symbol_width;
+                if end > self.symbol_bit_stream.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "RLE literal symbol exceeds symbol stream length".to_string(),
+                    });
+                }
+                let symbol = unsafe { self.symbol_bit_stream.get_unchecked(start..end) };
+                f(DeviationSampleRef {
+                    deviation: unsafe { symbol.get_unchecked(..self.num_deviation_bits) },
+                    id: unsafe { symbol.get_unchecked(self.num_deviation_bits..) },
+                })?;
+                req_ptr += 1;
+            }
+            symbol_cursor += literal_count * symbol_width;
+            logical_idx += literal_count;
+        }
+
+        Ok(())
+    }
+
     pub fn to_deviation_data(&self) -> Result<DeviationData, EntroGdError> {
         let _timer = ScopedTimer::debug("Converting RLE deviation data to raw deviation data");
         let symbol_width = self.num_deviation_bits + self.num_id_bits;
@@ -548,6 +621,123 @@ impl RleDeviationOffsetData {
                 symbol_cursor += symbol_width;
             }
             decoded_samples += to_emit;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn for_each_sample_at_sorted_indices(
+        &self,
+        sorted_indices: &[usize],
+        mut f: impl FnMut(DeviationSampleRef<'_>) -> Result<(), EntroGdError>,
+    ) -> Result<(), EntroGdError> {
+        if sorted_indices.is_empty() {
+            return Ok(());
+        }
+
+        let symbol_width = self.num_deviation_bits + self.num_id_bits;
+        let mut req_ptr = 0usize;
+
+        // Process original samples row by row, jumping to each row's start offset.
+        if self.row_width > 0 {
+            while req_ptr < sorted_indices.len()
+                && sorted_indices[req_ptr] < self.original_num_samples
+            {
+                let sample_idx = sorted_indices[req_ptr];
+                let row_idx = sample_idx / self.row_width;
+                let (start_rm_idx, start_sym_bit) = self.row_offsets[row_idx];
+                let row_end = (row_idx + 1) * self.row_width;
+
+                let mut symbol_cursor = start_sym_bit as usize;
+                let mut logical_idx = 0usize; // col position within this row
+
+                for &(r_encoded, m_count) in self.rm_values.iter().skip(start_rm_idx as usize) {
+                    if req_ptr >= sorted_indices.len()
+                        || sorted_indices[req_ptr] >= row_end
+                    {
+                        break;
+                    }
+
+                    if r_encoded > 0 {
+                        if symbol_cursor + symbol_width > self.symbol_bit_stream.len() {
+                            return Err(EntroGdError::InvalidMetadata {
+                                message: "RLE offset run symbol exceeds symbol stream length"
+                                    .to_string(),
+                            });
+                        }
+                        let run_len = (r_encoded as usize) + 1;
+                        let run_symbol = unsafe {
+                            self.symbol_bit_stream
+                                .get_unchecked(symbol_cursor..symbol_cursor + symbol_width)
+                        };
+                        while req_ptr < sorted_indices.len()
+                            && sorted_indices[req_ptr] < row_end
+                            && sorted_indices[req_ptr] - (row_idx * self.row_width)
+                                < logical_idx + run_len
+                        {
+                            f(DeviationSampleRef {
+                                deviation: unsafe {
+                                    run_symbol.get_unchecked(..self.num_deviation_bits)
+                                },
+                                id: unsafe {
+                                    run_symbol.get_unchecked(self.num_deviation_bits..)
+                                },
+                            })?;
+                            req_ptr += 1;
+                        }
+                        symbol_cursor += symbol_width;
+                        logical_idx += run_len;
+                    }
+
+                    if req_ptr >= sorted_indices.len() || sorted_indices[req_ptr] >= row_end {
+                        break;
+                    }
+
+                    let literal_count = m_count as usize;
+                    while req_ptr < sorted_indices.len()
+                        && sorted_indices[req_ptr] < row_end
+                        && sorted_indices[req_ptr] - (row_idx * self.row_width)
+                            < logical_idx + literal_count
+                    {
+                        let col = sorted_indices[req_ptr] - (row_idx * self.row_width);
+                        let offset = col - logical_idx;
+                        let start = symbol_cursor + offset * symbol_width;
+                        let end = start + symbol_width;
+                        if end > self.symbol_bit_stream.len() {
+                            return Err(EntroGdError::InvalidMetadata {
+                                message: "RLE offset literal symbol exceeds symbol stream length"
+                                    .to_string(),
+                            });
+                        }
+                        let symbol = unsafe { self.symbol_bit_stream.get_unchecked(start..end) };
+                        f(DeviationSampleRef {
+                            deviation: unsafe { symbol.get_unchecked(..self.num_deviation_bits) },
+                            id: unsafe { symbol.get_unchecked(self.num_deviation_bits..) },
+                        })?;
+                        req_ptr += 1;
+                    }
+                    symbol_cursor += literal_count * symbol_width;
+                    logical_idx += literal_count;
+
+                    if logical_idx >= self.row_width {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Fall back to get_sample for any padded samples (>= original_num_samples).
+        // Padded samples are rare (partial row padding) so individual lookups are acceptable.
+        while req_ptr < sorted_indices.len() {
+            let sample_idx = sorted_indices[req_ptr];
+            let sample = self
+                .get_sample(sample_idx)
+                .ok_or(EntroGdError::DecompressionSampleMissing { sample_idx })?;
+            f(DeviationSampleRef {
+                deviation: sample.deviation.as_bitslice(),
+                id: sample.id.as_bitslice(),
+            })?;
+            req_ptr += 1;
         }
 
         Ok(())
