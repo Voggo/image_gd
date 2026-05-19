@@ -75,7 +75,7 @@ fn main() -> Result<(), EntroGdError> {
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBasesOptimized {
+    .then(SelectBasesThreshold {
         patience: 10,
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
         entropy_threshold: 0.70,

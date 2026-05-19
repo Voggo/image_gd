@@ -44,7 +44,7 @@ fn test_delta_codec_roundtrip_unary_prefix() {
 
     let compression_pipeline = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,
@@ -117,7 +117,7 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
 
     let compression_pipeline = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,
@@ -191,7 +191,7 @@ fn test_delta_codec_tag_serialization() {
     // Test unary prefix codec serialization
     let compression_pipeline_unary = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,
@@ -219,7 +219,7 @@ fn test_delta_codec_tag_serialization() {
     // Test fixed prefix codec serialization
     let compression_pipeline_fixed = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,

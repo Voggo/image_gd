@@ -514,13 +514,13 @@ fn select_base_bits_debug(
     best_base_bit_groups
 }
 
-pub struct SelectBasesOptimized {
+pub struct SelectBasesThreshold {
     pub patience: usize,
     pub base_bit_impl: BaseBitImpl,
     pub entropy_threshold: f64,
 }
 
-impl Filter for SelectBasesOptimized {
+impl Filter for SelectBasesThreshold {
     type Input = EntropyScoredContext;
     type Output = BaseSelectionContext;
 
@@ -661,8 +661,6 @@ fn select_base_bits_threshold_optimized(
     );
     Box::new(best_base_bit_groups)
 }
-
-// ─── Adaptive Block Selection ────────────────────────────────────────────────
 
 pub struct SelectBasesAdaptive {
     /// Geometric width-decay factor for entropy clustering. Must be in (0, 1).

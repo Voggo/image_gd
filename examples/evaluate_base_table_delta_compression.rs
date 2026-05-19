@@ -9,7 +9,7 @@ use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use entro_gd::prelude::*;
 use entro_gd::{
     BaseBitImpl, BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet,
-    BuildSortedBaseTable, EntroGdError, InferFeatureSpecs, PreprocessOptions, SelectBasesOptimized,
+    BuildSortedBaseTable, EntroGdError, InferFeatureSpecs, PreprocessOptions, SelectBasesThreshold,
 };
 
 fn main() -> Result<(), EntroGdError> {
@@ -31,7 +31,7 @@ fn main() -> Result<(), EntroGdError> {
 
     let context = if use_sorted {
         EntropyBatched {}
-            .then(SelectBasesOptimized {
+            .then(SelectBasesThreshold {
                 patience: 20,
                 base_bit_impl: BaseBitImpl::BatchGroups,
                 entropy_threshold: 0.70,
@@ -40,7 +40,7 @@ fn main() -> Result<(), EntroGdError> {
             .process(bit_data)?
     } else {
         EntropyBatched {}
-            .then(SelectBasesOptimized {
+            .then(SelectBasesThreshold {
                 patience: 20,
                 base_bit_impl: BaseBitImpl::BatchGroups,
                 entropy_threshold: 0.70,

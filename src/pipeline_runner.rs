@@ -767,7 +767,7 @@ fn select_bases(
 ) -> Result<BaseSelectionContext, EntroGdError> {
     match implementation {
         SelectBasesImpl::Naive => SelectBases { patience }.process(input),
-        SelectBasesImpl::Optimized => SelectBasesOptimized {
+        SelectBasesImpl::Optimized => SelectBasesThreshold {
             patience,
             base_bit_impl: match base_bit_impl {
                 BaseBitImpl::Naive => crate::compression::base_selection::BaseBitImpl::Naive,

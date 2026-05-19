@@ -15,7 +15,7 @@ pub use base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
 };
 pub use base_selection::{
-    BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesDebug, SelectBasesOptimized,
+    BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesDebug, SelectBasesThreshold,
     SelectBasesProfileAllBits, SelectBasesAdaptive
 };
 pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};

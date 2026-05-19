@@ -66,7 +66,7 @@ fn test_csv_roundtrip_compression() {
 
     let compression_pipeline = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,
@@ -131,7 +131,7 @@ fn test_csv_roundtrip_compression_rle() {
 
     let compression_pipeline = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 50 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,
@@ -196,7 +196,7 @@ fn test_image_roundtrip_compression() {
     }
     .then(EntropyBatched {})
     .then(GenCondensedSamples { m_max: 0 })
-    .then(SelectBasesOptimized {
+    .then(SelectBasesThreshold {
         patience: 10,
         base_bit_impl: BaseBitImpl::BatchGroups,
         entropy_threshold: 0.70,
@@ -264,7 +264,7 @@ fn test_image_roundtrip_compression_rle_offset() {
 
     let compression_pipeline = EntropyBatched {}
         .then(GenCondensedSamples { m_max: 0 })
-        .then(SelectBasesOptimized {
+        .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::BatchGroups,
             entropy_threshold: 0.70,

@@ -23,7 +23,7 @@ pub use compression::{
     ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo, InferFeatureSpecs,
     LoadEgdFile, LoadIgdFile, MAGIC_BYTES, PixelGrouping, PreEncodeContext, PreprocessOptions,
     RleDeviationData, RleDeviationOffsetData, SaveEgdFile, SaveIgdFile, SelectBases,
-    SelectBasesAdaptive, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
+    SelectBasesAdaptive, SelectBasesDebug, SelectBasesThreshold, SelectBasesProfileAllBits,
     calculate_entropy, calculate_entropy_stride_sampled, decode_value_from_bits,
     decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
     load_and_decompress_igd, write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
@@ -62,7 +62,7 @@ pub mod prelude {
         EntropyStrideSampledBatched, Filter, FilterExt, FloatScalingMode, GenCondensedSamples,
         ImageColorModel, ImageColorSpace, ImageGroupingTransform, InferFeatureSpecs, LoadEgdFile,
         LoadIgdFile, PixelGrouping, PreprocessOptions, SaveEgdFile, SaveIgdFile, SelectBases,
-        SelectBasesAdaptive, SelectBasesDebug, SelectBasesOptimized, SelectBasesProfileAllBits,
+        SelectBasesAdaptive, SelectBasesDebug, SelectBasesThreshold, SelectBasesProfileAllBits,
     };
 }
 

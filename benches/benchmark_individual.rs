@@ -166,7 +166,7 @@ enum SelectBasesImpl {
     Current,
     ProfileAllBits(BaseBitImpl),
     DebugNoCsv,
-    Optimized(BaseBitImpl),
+    Threshold(BaseBitImpl),
     Adaptive(BaseBitImpl),
 }
 
@@ -188,16 +188,16 @@ impl SelectBasesImpl {
                 "profile_all_bits_hyper_log_log_count"
             }
             SelectBasesImpl::DebugNoCsv => "debug_no_csv",
-            SelectBasesImpl::Optimized(BaseBitImpl::Naive) => "optimized_naive",
-            SelectBasesImpl::Optimized(BaseBitImpl::BatchGroups) => "optimized_batch_groups",
-            SelectBasesImpl::Optimized(BaseBitImpl::IncSignatureGroups) => {
-                "optimized_inc_signature_groups"
+            SelectBasesImpl::Threshold(BaseBitImpl::Naive) => "threshold_naive",
+            SelectBasesImpl::Threshold(BaseBitImpl::BatchGroups) => "threshold_batch_groups",
+            SelectBasesImpl::Threshold(BaseBitImpl::IncSignatureGroups) => {
+                "threshold_inc_signature_groups"
             }
-            SelectBasesImpl::Optimized(BaseBitImpl::SignatureGroups) => {
-                "optimized_signature_groups"
+            SelectBasesImpl::Threshold(BaseBitImpl::SignatureGroups) => {
+                "threshold_signature_groups"
             }
-            SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount) => {
-                "optimized_hyper_log_log_count"
+            SelectBasesImpl::Threshold(BaseBitImpl::HyperLogLogCount) => {
+                "threshold_hyper_log_log_count"
             }
             SelectBasesImpl::Adaptive(BaseBitImpl::Naive) => "adaptive_naive",
             SelectBasesImpl::Adaptive(BaseBitImpl::BatchGroups) => "adaptive_batch_groups",
@@ -228,7 +228,7 @@ impl SelectBasesImpl {
                 debug_csv_paths: Mutex::new(Vec::new()),
             }
             .process(input),
-            SelectBasesImpl::Optimized(base_bit_impl) => SelectBasesOptimized {
+            SelectBasesImpl::Threshold(base_bit_impl) => SelectBasesThreshold {
                 patience,
                 base_bit_impl,
                 entropy_threshold: 0.70,
@@ -554,8 +554,8 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 7] = [
     SelectBasesImpl::Current,
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::Naive),
     SelectBasesImpl::ProfileAllBits(BaseBitImpl::HyperLogLogCount),
-    SelectBasesImpl::Optimized(BaseBitImpl::Naive),
-    SelectBasesImpl::Optimized(BaseBitImpl::HyperLogLogCount),
+    SelectBasesImpl::Threshold(BaseBitImpl::Naive),
+    SelectBasesImpl::Threshold(BaseBitImpl::HyperLogLogCount),
     SelectBasesImpl::Adaptive(BaseBitImpl::Naive),
     SelectBasesImpl::Adaptive(BaseBitImpl::HyperLogLogCount),
 ];
@@ -747,7 +747,7 @@ fn prepare_case(case: StepBenchCase) -> PreparedCase {
     let condensed_seed = GenCondensedSamples { m_max: case.m_max }
         .process(entropy_seed.clone())
         .unwrap();
-    let selected_seed = SelectBasesOptimized {
+    let selected_seed = SelectBasesThreshold {
         patience: case.patience,
         base_bit_impl: BaseBitImpl::BatchGroups,
         entropy_threshold: case.entropy_threshold,
@@ -991,7 +991,7 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         &ENCODE_IMPLS,
         EncodeImpl::label,
         |case| {
-            SelectBasesOptimized {
+            SelectBasesThreshold {
                 patience: case.patience,
                 base_bit_impl: BaseBitImpl::BatchGroups,
                 entropy_threshold: case.entropy_threshold,

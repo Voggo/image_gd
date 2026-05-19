@@ -231,7 +231,7 @@ fn run_compression_core(case: RoundtripCase, bit_data: BitDataSet) -> Compressed
             .process(bit_data)
             .unwrap(),
         CompressionVariant::ImageFast => EntropyNaive {}
-            .then(SelectBasesOptimized {
+            .then(SelectBasesThreshold {
                 patience: case.patience,
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 entropy_threshold: case.entropy_threshold,
