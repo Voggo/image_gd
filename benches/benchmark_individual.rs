@@ -76,7 +76,7 @@ impl BuildImageBitDataSetImpl {
 
     fn process(
         self,
-        input: PathBuf,
+        input: image::DynamicImage,
         image_input: StepBenchInput,
     ) -> Result<BitDataSet, EntroGdError> {
         match (self, image_input) {
@@ -659,13 +659,13 @@ fn build_bit_data_seed(case: StepBenchCase, dataset_seed: Option<&Dataset>) -> B
             color_model,
             pixel_grouping,
             grouping_transform,
-        } => BuildImageBitDataSet {
+        } => OpenImage.then(BuildImageBitDataSet {
             colorspace,
             color_model,
             pixel_grouping,
             grouping_transform,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
-        }
+        })
         .process(PathBuf::from(case.data_file_path))
         .unwrap(),
     }
@@ -942,7 +942,7 @@ fn benchmark_filter_steps(c: &mut Criterion) {
         &prepared_cases,
         &BUILD_IMAGE_BIT_DATA_SET_IMPLS,
         BuildImageBitDataSetImpl::label,
-        |case| PathBuf::from(case.data_file_path),
+        |case| OpenImage.process(PathBuf::from(case.data_file_path)).unwrap(),
         |implementation, input, case| implementation.process(input, case.input),
         PreparedCase::is_image,
         |_, _| true,

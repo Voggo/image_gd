@@ -66,16 +66,27 @@ impl Default for BuildImageBitDataSet {
     }
 }
 
-impl Filter for BuildImageBitDataSet {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenImage;
+
+impl Filter for OpenImage {
     type Input = PathBuf;
+    type Output = DynamicImage;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::debug(format!("OpenImage for {}", input.display()));
+        let decoded = image::open(&input)?;
+        Ok(decoded)
+    }
+}
+
+impl Filter for BuildImageBitDataSet {
+    type Input = DynamicImage;
     type Output = BitDataSet;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::debug(format!("BuildImageBitDataSet for {}", input.display()));
-        let _decode_timer = ScopedTimer::trace("Decoding image file via Image::open");
-        let decoded = image::open(&input)?;
-        drop(_decode_timer);
-        match decoded {
+        let _timer = ScopedTimer::debug("BuildImageBitDataSet".to_string());
+        match input {
             DynamicImage::ImageRgb8(img) => build_image_bitdataset(
                 ImageBuildInput {
                     width: img.width(),
@@ -659,7 +670,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(bit_data.num_rows(), 2);
         assert_eq!(bit_data.num_features(), 3);
@@ -696,7 +709,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(bit_data.num_rows(), 2);
         assert_eq!(bit_data.num_features(), 4);
@@ -803,7 +818,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(bit_data.num_rows(), 1);
         assert_eq!(bit_data.num_features(), 3);
@@ -866,7 +883,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(bit_data.num_rows(), 1);
         assert_eq!(bit_data.feature_bits(0), 35);
@@ -915,7 +934,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForMin,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(bit_data.num_rows(), 1);
         assert_eq!(bit_data.feature_bits(0), 34);
@@ -973,7 +994,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(
             decode_grouped_feature(
@@ -1024,7 +1047,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(
             decode_grouped_feature(
@@ -1071,7 +1096,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(
             decode_grouped_feature(
@@ -1130,7 +1157,9 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         };
-        let bit_data = filter.process(path.clone()).unwrap();
+        let bit_data = filter
+            .process(OpenImage.process(path.clone()).unwrap())
+            .unwrap();
 
         assert_eq!(
             decode_grouped_feature(
@@ -1159,7 +1188,7 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: false,
         }
-        .process(path.clone())
+        .process(OpenImage.process(path.clone()).unwrap())
         .unwrap();
         assert_eq!(compact.chunk_size(), 24);
         assert_eq!(compact.data.stride, 24);
@@ -1171,7 +1200,7 @@ mod tests {
             grouping_transform: ImageGroupingTransform::ForFirstPixel,
             pad_rows_to_word: true,
         }
-        .process(path.clone())
+        .process(OpenImage.process(path.clone()).unwrap())
         .unwrap();
         assert_eq!(padded.chunk_size(), 24);
         assert_eq!(padded.data.stride, 64);

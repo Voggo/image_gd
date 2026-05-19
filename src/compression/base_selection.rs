@@ -919,8 +919,7 @@ mod adaptive_clustering_tests {
     #[test]
     fn skewed_distribution_captures_dense_region_first() {
         // 90 bits with low entropy ~0, 10 bits scattered in (0.5, 1.0].
-        let mut data: Vec<(usize, f64)> =
-            (0..90).map(|i| (i, 0.001 * i as f64)).collect();
+        let mut data: Vec<(usize, f64)> = (0..90).map(|i| (i, 0.001 * i as f64)).collect();
         for i in 0..10 {
             data.push((90 + i, 0.5 + 0.05 * i as f64));
         }
@@ -928,6 +927,10 @@ mod adaptive_clustering_tests {
         let sizes = cluster_by_entropy_width(&data, 0.5);
         assert_eq!(sizes.iter().sum::<usize>(), 100);
         // First cluster should swallow the dense low-entropy region.
-        assert!(sizes[0] >= 90, "first cluster should capture dense region (got {})", sizes[0]);
+        assert!(
+            sizes[0] >= 90,
+            "first cluster should capture dense region (got {})",
+            sizes[0]
+        );
     }
 }

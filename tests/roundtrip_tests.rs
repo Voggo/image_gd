@@ -205,7 +205,7 @@ fn test_image_roundtrip_compression() {
     .then(EncodeDataHuffman {});
 
     let compressed = compression_pipeline
-        .process(input_path.clone())
+        .process(OpenImage.process(input_path.clone()).unwrap())
         .expect("Failed to compress image");
 
     let temp_igd_path = env::temp_dir().join("test_rustacean.igd");
@@ -259,7 +259,7 @@ fn test_image_roundtrip_compression_rle_offset() {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: true,
     }
-    .process(input_path)
+    .process(OpenImage.process(input_path).unwrap())
     .expect("Failed to build image BitDataSet");
 
     let compression_pipeline = EntropyBatched {}

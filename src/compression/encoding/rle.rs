@@ -652,9 +652,7 @@ impl RleDeviationOffsetData {
                 let mut logical_idx = 0usize; // col position within this row
 
                 for &(r_encoded, m_count) in self.rm_values.iter().skip(start_rm_idx as usize) {
-                    if req_ptr >= sorted_indices.len()
-                        || sorted_indices[req_ptr] >= row_end
-                    {
+                    if req_ptr >= sorted_indices.len() || sorted_indices[req_ptr] >= row_end {
                         break;
                     }
 
@@ -679,9 +677,7 @@ impl RleDeviationOffsetData {
                                 deviation: unsafe {
                                     run_symbol.get_unchecked(..self.num_deviation_bits)
                                 },
-                                id: unsafe {
-                                    run_symbol.get_unchecked(self.num_deviation_bits..)
-                                },
+                                id: unsafe { run_symbol.get_unchecked(self.num_deviation_bits..) },
                             })?;
                             req_ptr += 1;
                         }

@@ -436,9 +436,7 @@ impl EncodedData {
             EncodedData::RleOffset(data) => {
                 data.for_each_sample_at_sorted_indices(sorted_indices, f)
             }
-            EncodedData::Huffman(data) => {
-                data.for_each_sample_at_sorted_indices(sorted_indices, f)
-            }
+            EncodedData::Huffman(data) => data.for_each_sample_at_sorted_indices(sorted_indices, f),
         }
     }
 

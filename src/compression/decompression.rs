@@ -166,20 +166,22 @@ fn decompress_file_parallel(
             let mut chunk_bits = bitvec![usize, Lsb0; 0; stride * count];
             let mut local_cursor = 0usize;
 
-            compressed.encoded_data.for_each_sample_range(start, count, |sample| {
-                append_reconstructed_chunk(
-                    &mut chunk_bits,
-                    local_cursor,
-                    &deviation_positions,
-                    &variable_base_positions,
-                    &constant_one_positions,
-                    base_table,
-                    sample.deviation,
-                    sample.id,
-                )?;
-                local_cursor += stride;
-                Ok(())
-            })?;
+            compressed
+                .encoded_data
+                .for_each_sample_range(start, count, |sample| {
+                    append_reconstructed_chunk(
+                        &mut chunk_bits,
+                        local_cursor,
+                        &deviation_positions,
+                        &variable_base_positions,
+                        &constant_one_positions,
+                        base_table,
+                        sample.deviation,
+                        sample.id,
+                    )?;
+                    local_cursor += stride;
+                    Ok(())
+                })?;
 
             Ok(chunk_bits)
         })

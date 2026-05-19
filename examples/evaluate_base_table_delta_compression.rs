@@ -128,8 +128,11 @@ fn main() -> Result<(), EntroGdError> {
     for (file, _kind) in &typed_files {
         let result = evaluate_file(file, use_sorted, &image_build_options)?;
 
-        let per_file_csv =
-            run_dir.join(build_per_file_csv_name(file, use_sorted, &image_build_options));
+        let per_file_csv = run_dir.join(build_per_file_csv_name(
+            file,
+            use_sorted,
+            &image_build_options,
+        ));
         write_delta_distribution_csv(&per_file_csv, &result.delta_rows)?;
 
         for (bit_len, count) in &result.distribution {
@@ -365,7 +368,10 @@ fn walk_dir(path: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<(), 
 }
 
 fn classify(path: &Path) -> Option<InputKind> {
-    let ext = path.extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "bmp" | "gif" => Some(InputKind::Image),
         "csv" => Some(InputKind::Csv),
@@ -457,7 +463,7 @@ fn write_delta_distribution_csv(
 
 fn load_bit_data(input_path: &Path) -> Result<BitDataSet, EntroGdError> {
     if classify(input_path) == Some(InputKind::Image) {
-        image_build_options().process(input_path.to_path_buf())
+        OpenImage.then(image_build_options()).process(input_path.to_path_buf())
     } else {
         let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
         let loaded = loader.load(input_path)?;

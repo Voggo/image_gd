@@ -1,6 +1,6 @@
 use entro_gd::ImageColorModel;
 use entro_gd::ScopedTimer;
-use entro_gd::compression::base_selection::SelectBasesAdaptive;
+
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::prelude::*;
 use entro_gd::{EntroGdError, init_logging, write_bitdata_as_image};
@@ -51,6 +51,14 @@ fn main() -> Result<(), EntroGdError> {
         tracing::warn!("No image files found to process");
         return Ok(());
     }
+    let image_opener = OpenImage {};
+    let images = files_to_process
+        .iter()
+        .map(|file| {
+            tracing::info!("Loading image: {}", file.display());
+            image_opener.process(file.to_path_buf())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let data_folder = Path::new("data");
     let compressed_folder = data_folder.join("compressed");
@@ -77,21 +85,17 @@ fn main() -> Result<(), EntroGdError> {
     .then(EntropyNaive {})
     .then(SelectBasesThreshold {
         patience: 10,
-        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+        base_bit_impl: BaseBitImpl::Naive,
         entropy_threshold: 0.70,
     })
-    .then(EncodeDataFusedDictionary {});
-    // .then(SelectBasesAdaptive {
-    //     width_decay: 0.1,
-    //     patience: 5,
-    //     base_bit_impl: BaseBitImpl::Naive,
-    // })
+    .then(BuildSortedBaseTable {})
+    .then(EncodeDataHuffman {})
+    .then(DeltaEncodeBaseTable {});
+
 
     let load_compressed_data = LoadIgdFile {};
 
-    for image_file in files_to_process {
-        tracing::info!("Processing: {}", image_file.display());
-
+    for (image_file, image) in files_to_process.into_iter().zip(images.into_iter()) {
         let stem = image_file
             .file_stem()
             .and_then(|s| s.to_str())
@@ -103,7 +107,7 @@ fn main() -> Result<(), EntroGdError> {
         tracing::info!("IGD output: {}", igd_path.display());
         tracing::info!("Decoded image output: {}", decompressed_path.display());
 
-        let compressed = compression_pipeline.process(image_file.clone())?;
+        let compressed = compression_pipeline.process(image.clone())?;
         let compressed_path = SaveIgdFile {
             output_path: igd_path.clone(),
         }

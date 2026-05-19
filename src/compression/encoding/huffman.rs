@@ -455,12 +455,13 @@ impl HuffmanDeviationData {
                 let row_start_sample = row_idx * self.row_width;
                 let row_end = row_start_sample + self.row_width;
 
-                let mut bit_pos = *self
-                    .row_offsets
-                    .get(row_idx)
-                    .ok_or(EntroGdError::InvalidMetadata {
-                        message: format!("Huffman row offset missing for row {}", row_idx),
-                    })? as usize;
+                let mut bit_pos =
+                    *self
+                        .row_offsets
+                        .get(row_idx)
+                        .ok_or(EntroGdError::InvalidMetadata {
+                            message: format!("Huffman row offset missing for row {}", row_idx),
+                        })? as usize;
                 let mut col = 0usize;
                 let mut last_symbol = 0u64;
 
@@ -488,7 +489,8 @@ impl HuffmanDeviationData {
                     append_symbol_bits(&mut id_bits_buffer, last_symbol, self.num_id_bits);
 
                     // Yield once (and again for any duplicate indices at the same position).
-                    while req_ptr < sorted_indices.len() && sorted_indices[req_ptr] < row_end
+                    while req_ptr < sorted_indices.len()
+                        && sorted_indices[req_ptr] < row_end
                         && sorted_indices[req_ptr] - row_start_sample == target_col
                     {
                         f(DeviationSampleRef {

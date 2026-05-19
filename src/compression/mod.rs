@@ -15,8 +15,8 @@ pub use base_bits::{
     BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
 };
 pub use base_selection::{
-    BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesDebug, SelectBasesThreshold,
-    SelectBasesProfileAllBits, SelectBasesAdaptive
+    BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesAdaptive, SelectBasesDebug,
+    SelectBasesProfileAllBits, SelectBasesThreshold,
 };
 pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};
 pub use condensed_samples::GenCondensedSamples;
@@ -43,7 +43,7 @@ pub use file_format::{
     decompress_igd_to_image, load_and_decompress_egd, load_and_decompress_igd,
 };
 pub use image_preprocessor::{
-    BuildImageBitDataSet, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
+    BuildImageBitDataSet, ImageColorModel, ImageColorSpace, ImageGroupingTransform, OpenImage,
 };
 pub use preprocessor::{
     BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,

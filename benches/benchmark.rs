@@ -185,7 +185,7 @@ fn build_loader(case: RoundtripCase) -> CsvDataLoader {
     }
 }
 
-fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
+fn build_image_bit_data(case: RoundtripCase, image: image::DynamicImage) -> BitDataSet {
     match case.input {
         RoundtripInput::Image {
             colorspace,
@@ -199,7 +199,7 @@ fn build_image_bit_data(case: RoundtripCase, path: PathBuf) -> BitDataSet {
             grouping_transform,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
-        .process(path)
+        .process(image)
         .unwrap(),
         RoundtripInput::Csv { .. } => {
             panic!(
@@ -312,7 +312,7 @@ fn prepare_roundtrip_case(case: RoundtripCase) -> PreparedRoundtripCase {
     };
     let bit_data_seed = match &dataset_seed {
         Some(dataset) => BitDataSet::from_dataset(dataset).unwrap(),
-        None => build_image_bit_data(case, PathBuf::from(case.data_file_path)),
+        None => build_image_bit_data(case, OpenImage.process(PathBuf::from(case.data_file_path)).unwrap()),
     };
     let source_size = (bit_data_seed.info.original_size_bits() / 8) as u64;
     let compressed_seed = run_compression_core(case, bit_data_seed.clone());
@@ -399,9 +399,9 @@ fn benchmark_preprocess_to_bitdata(c: &mut Criterion) {
                     BatchSize::SmallInput,
                 ),
                 RoundtripInput::Image { .. } => b.iter_batched(
-                    || PathBuf::from(prepared.case.data_file_path),
-                    |path| {
-                        let bit_data = build_image_bit_data(prepared.case, path);
+                    || OpenImage.process(PathBuf::from(prepared.case.data_file_path)).unwrap(),
+                    |image| {
+                        let bit_data = build_image_bit_data(prepared.case, image);
                         black_box(bit_data);
                     },
                     BatchSize::SmallInput,

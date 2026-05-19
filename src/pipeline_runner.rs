@@ -2,7 +2,7 @@ use crate::BitDataSet;
 use crate::compression::base_selection::BaseSelectionContext;
 use crate::compression::encoding::{CompressedData, EncodedData};
 use crate::compression::entropy::EntropyScoredContext;
-use crate::compression::image_preprocessor::BuildImageBitDataSet;
+use crate::compression::image_preprocessor::{BuildImageBitDataSet, OpenImage};
 use crate::compression::preprocessor::{
     BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, InferFeatureSpecs,
 };
@@ -674,7 +674,7 @@ fn run_image_profile(
         grouping_transform: profile.build.grouping_transform,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .process(file.to_path_buf())?;
+    .process(OpenImage.process(file.to_path_buf())?)?;
     let load_ms = load_t0.elapsed().as_secs_f64() * 1_000.0;
 
     let entropy_t0 = Instant::now();
