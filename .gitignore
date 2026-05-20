@@ -1,11 +1,6 @@
 /target
 /logs
 *.pdf
-/data/**/*.igd
-/data/**/*.egd
-/data/**/decompressed*
-/data/**/compressed*
-/data/images_2
-/data/base_selection_debug
+/data/
 /.vscode
 results*
