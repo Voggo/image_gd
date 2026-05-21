@@ -310,12 +310,18 @@ impl BuildBaseTableImpl {
     }
 }
 
+struct EncodeSeed {
+    pre_encode: PreEncodeContext,
+    base_selection: BaseSelectionContext,
+}
+
 #[derive(Clone, Copy)]
 enum EncodeImpl {
     Normal,
     Rle,
     RleOffset,
     Huffman,
+    Fused,
 }
 
 impl EncodeImpl {
@@ -325,15 +331,17 @@ impl EncodeImpl {
             Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
+            Self::Fused => "fused_dictionary",
         }
     }
 
-    fn process(self, input: PreEncodeContext) -> Result<CompressedData, EntroGdError> {
+    fn process(self, input: EncodeSeed) -> Result<CompressedData, EntroGdError> {
         match self {
-            Self::Normal => EncodeDataOptimized {}.process(input),
-            Self::Rle => EncodeDataRLE {}.process(input),
-            Self::RleOffset => EncodeDataOffsetRLE {}.process(input),
-            Self::Huffman => EncodeDataHuffman {}.process(input),
+            Self::Normal => EncodeDataOptimized {}.process(input.pre_encode),
+            Self::Rle => EncodeDataRLE {}.process(input.pre_encode),
+            Self::RleOffset => EncodeDataOffsetRLE {}.process(input.pre_encode),
+            Self::Huffman => EncodeDataHuffman {}.process(input.pre_encode),
+            Self::Fused => EncodeDataFusedDictionary {}.process(input.base_selection),
         }
     }
 }
@@ -453,31 +461,29 @@ impl DecompressRowsImpl {
 // Add / remove / edit rows here to change which preprocessing configs seed the
 // downstream benchmark stages (Entropy, SelectBases, Encode, Save, Load, Decompress).
 
-const SEED_PREPROCESSING_CONFIGS: [SeedPreprocessing; 4] = [
-    SeedPreprocessing {
-        color_model: ImageColorModel::Rgb,
-        group_w: 1,
-        group_h: 1,
-        grouping_transform: ImageGroupingTransform::Raw,
-    },
-    SeedPreprocessing {
-        color_model: ImageColorModel::YCoCgR,
-        group_w: 2,
-        group_h: 2,
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
-    },
-    SeedPreprocessing {
-        color_model: ImageColorModel::YCoCgR,
-        group_w: 2,
-        group_h: 3,
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
-    },
-    SeedPreprocessing {
-        color_model: ImageColorModel::YCoCgR,
-        group_w: 4,
-        group_h: 4,
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
-    },
+macro_rules! seed_configs {
+    ( $( ($cm:ident, $w:expr, $h:expr, $gt:ident) ),* $(,)? ) => {
+        &[
+            $(
+                SeedPreprocessing {
+                    color_model: ImageColorModel::$cm,
+                    group_w: $w,
+                    group_h: $h,
+                    grouping_transform: ImageGroupingTransform::$gt,
+                }
+            ),*
+        ]
+    };
+}
+
+const SEED_PREPROCESSING_CONFIGS: &[SeedPreprocessing] = seed_configs![
+    (Rgb, 1, 1, Raw),
+    (YCoCgR, 2, 1, ForMin),
+    (YCoCgR, 3, 1, ForMin),
+    (YCoCgR, 2, 2, ForMin),
+    (YCoCgR, 2, 3, ForMin),
+    (YCoCgR, 3, 3, ForMin),
+    (YCoCgR, 4, 4, ForMin),
 ];
 
 // ── Standard arrays ───────────────────────────────────────────────────────────
@@ -498,46 +504,47 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
     SelectBasesImpl::Naive { patience: 10 },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::Naive,
-        patience: 10,
+        patience: 5,
     },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: 10,
+        patience: 5,
     },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: 10,
+        patience: 5,
     },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
-        patience: 10,
+        patience: 5,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::Naive,
-        patience: 10,
+        patience: 3,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: 10,
+        patience: 3,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: 10,
+        patience: 3,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
-        patience: 10,
+        patience: 3,
     },
 ];
 
 const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 2] =
     [BuildBaseTableImpl::Unsorted, BuildBaseTableImpl::Sorted];
 
-const ENCODE_IMPLS: [EncodeImpl; 4] = [
+const ENCODE_IMPLS: [EncodeImpl; 5] = [
     EncodeImpl::Normal,
     EncodeImpl::Rle,
     EncodeImpl::RleOffset,
     EncodeImpl::Huffman,
+    EncodeImpl::Fused,
 ];
 
 const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 1] = [DeltaEncodeImpl::Current];
@@ -591,7 +598,6 @@ struct DecompressRowsSeeds {
 
 struct PreparedCase {
     name: String,
-    data_file_path: String,
     source_size: u64,
     preprocessing: SeedPreprocessing,
     bit_data_seed: BitDataSet,
@@ -699,7 +705,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
 
     PreparedCase {
         name,
-        data_file_path: image_path.to_string_lossy().into_owned(),
         source_size,
         preprocessing,
         bit_data_seed,
@@ -728,8 +733,13 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
     }
 }
 
-fn discover_cases() -> Vec<PreparedCase> {
-    let _ = std::fs::create_dir_all("target/bench-artifacts");
+struct ImageCase {
+    name: String,
+    path: PathBuf,
+    source_size: u64,
+}
+
+fn sorted_image_paths() -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = std::fs::read_dir(IMAGE_DIR)
         .unwrap_or_else(|e| panic!("cannot read {IMAGE_DIR}: {e}"))
         .filter_map(|entry| {
@@ -740,6 +750,22 @@ fn discover_cases() -> Vec<PreparedCase> {
         .collect();
     paths.sort();
     paths
+}
+
+fn discover_image_cases() -> Vec<ImageCase> {
+    sorted_image_paths()
+        .into_iter()
+        .map(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let source_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            ImageCase { name, path, source_size }
+        })
+        .collect()
+}
+
+fn discover_cases() -> Vec<PreparedCase> {
+    let _ = std::fs::create_dir_all("target/bench-artifacts");
+    sorted_image_paths()
         .iter()
         .flat_map(|path| {
             SEED_PREPROCESSING_CONFIGS
@@ -747,6 +773,41 @@ fn discover_cases() -> Vec<PreparedCase> {
                 .map(|&pre| prepare_case(path.clone(), pre))
         })
         .collect()
+}
+
+fn bench_build_image_step(image_cases: &[ImageCase]) {
+    let stage_name = "Step/BuildImageBitDataSet.process";
+    let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
+    if !filter.is_empty() && !stage_name.contains(filter.as_str()) {
+        return;
+    }
+    let total = image_cases.len() * BUILD_IMAGE_IMPLS.len();
+    let mut done = 0;
+    for case in image_cases {
+        for &implementation in &BUILD_IMAGE_IMPLS {
+            let label = implementation.label();
+            done += 1;
+            eprintln!("[{done}/{total}] {stage_name}/{label}/{}", case.name);
+            let _ = black_box(implementation.process(case.path.clone()));
+            for _ in 0..N_RUNS {
+                let start = Instant::now();
+                let output = implementation.process(case.path.clone()).unwrap();
+                let elapsed = start.elapsed();
+                black_box(output);
+                BENCH_RECORDS.lock().unwrap().push(BenchRecord {
+                    stage: stage_name,
+                    impl_name: label.to_string(),
+                    file: case.name.clone(),
+                    sample_time_ns: elapsed.as_nanos(),
+                    source_bytes: case.source_size,
+                    color_model_seed: String::new(),
+                    pixel_grouping_seed: String::new(),
+                    group_transform_seed: String::new(),
+                    grouped_pixels_seed: String::new(),
+                });
+            }
+        }
+    }
 }
 
 // ── Generic benchmark harness ─────────────────────────────────────────────────
@@ -807,11 +868,10 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn
 // ── All benchmark groups ──────────────────────────────────────────────────────
 
 fn benchmark_filter_steps() {
+    bench_build_image_step(&discover_image_cases());
+
     let prepared_cases = discover_cases();
 
-    let no_seed = |_: &PreparedCase| {
-        (String::new(), String::new(), String::new(), String::new())
-    };
     let seed_meta = |case: &PreparedCase| {
         let p = case.preprocessing;
         (
@@ -821,16 +881,6 @@ fn benchmark_filter_steps() {
             p.grouped_pixels().to_string(),
         )
     };
-
-    bench_step_group(
-        "Step/BuildImageBitDataSet.process",
-        &prepared_cases,
-        &BUILD_IMAGE_IMPLS,
-        BuildImageBitDataSetImpl::label,
-        |_, case| PathBuf::from(&case.data_file_path),
-        |implementation, path| implementation.process(path),
-        no_seed,
-    );
 
     bench_step_group(
         "Step/Entropy.process",
@@ -877,7 +927,10 @@ fn benchmark_filter_steps() {
         &prepared_cases,
         &ENCODE_IMPLS,
         EncodeImpl::label,
-        |_, case| case.base_table_ctx_seed.clone(),
+        |_, case| EncodeSeed {
+            pre_encode: case.base_table_ctx_seed.clone(),
+            base_selection: canonical_select_bases(case.entropy_seed.clone()),
+        },
         |implementation, input| implementation.process(input),
         seed_meta,
     );
