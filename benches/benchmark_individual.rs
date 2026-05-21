@@ -19,6 +19,10 @@ struct BenchRecord {
     file: String,
     sample_time_ns: u128,
     source_bytes: u64,
+    color_model_seed: String,
+    pixel_grouping_seed: String,
+    group_transform_seed: String,
+    grouped_pixels_seed: String,
 }
 
 static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex::new(Vec::new()));
@@ -91,6 +95,66 @@ impl BuildImageBitDataSetImpl {
             color_model,
             pixel_grouping,
             grouping_transform,
+            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
+        }
+        .process(image)
+    }
+}
+
+// ── Seed preprocessing config ─────────────────────────────────────────────────
+// Edit SEED_PREPROCESSING_CONFIGS to change which preprocessing configs are used
+// as seeds for all downstream benchmark stages.
+
+#[derive(Clone, Copy)]
+struct SeedPreprocessing {
+    color_model: ImageColorModel,
+    group_w: u32,
+    group_h: u32,
+    grouping_transform: ImageGroupingTransform,
+}
+
+impl SeedPreprocessing {
+    fn color_model_label(self) -> &'static str {
+        match self.color_model {
+            ImageColorModel::Rgb => "rgb",
+            ImageColorModel::YCoCg => "ycocg",
+            ImageColorModel::YCoCgR => "ycocgr",
+        }
+    }
+
+    fn pixel_grouping_label(self) -> String {
+        format!("{}x{}", self.group_w, self.group_h)
+    }
+
+    fn group_transform_label(self) -> &'static str {
+        match self.grouping_transform {
+            ImageGroupingTransform::Raw => "raw",
+            ImageGroupingTransform::ForFirstPixel => "for_first_pixel",
+            ImageGroupingTransform::ForMin => "for_min",
+        }
+    }
+
+    fn grouped_pixels(self) -> u32 {
+        self.group_w * self.group_h
+    }
+
+    fn artifact_label(self) -> String {
+        format!(
+            "{}_{}x{}_{}",
+            self.color_model_label(),
+            self.group_w,
+            self.group_h,
+            self.group_transform_label()
+        )
+    }
+
+    fn process(self, path: PathBuf) -> Result<BitDataSet, EntroGdError> {
+        let image = OpenImage.process(path)?;
+        BuildImageBitDataSet {
+            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+            color_model: self.color_model,
+            pixel_grouping: PixelGrouping::new(self.group_w, self.group_h),
+            grouping_transform: self.grouping_transform,
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
         .process(image)
@@ -385,6 +449,37 @@ impl DecompressRowsImpl {
     }
 }
 
+// ── Seed preprocessing configs ────────────────────────────────────────────────
+// Add / remove / edit rows here to change which preprocessing configs seed the
+// downstream benchmark stages (Entropy, SelectBases, Encode, Save, Load, Decompress).
+
+const SEED_PREPROCESSING_CONFIGS: [SeedPreprocessing; 4] = [
+    SeedPreprocessing {
+        color_model: ImageColorModel::Rgb,
+        group_w: 1,
+        group_h: 1,
+        grouping_transform: ImageGroupingTransform::Raw,
+    },
+    SeedPreprocessing {
+        color_model: ImageColorModel::YCoCgR,
+        group_w: 2,
+        group_h: 2,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+    },
+    SeedPreprocessing {
+        color_model: ImageColorModel::YCoCgR,
+        group_w: 2,
+        group_h: 3,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+    },
+    SeedPreprocessing {
+        color_model: ImageColorModel::YCoCgR,
+        group_w: 4,
+        group_h: 4,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+    },
+];
+
 // ── Standard arrays ───────────────────────────────────────────────────────────
 
 const BUILD_IMAGE_IMPLS: [BuildImageBitDataSetImpl; 5] = [
@@ -498,6 +593,7 @@ struct PreparedCase {
     name: String,
     data_file_path: String,
     source_size: u64,
+    preprocessing: SeedPreprocessing,
     bit_data_seed: BitDataSet,
     entropy_seed: EntropyScoredContext,
     base_table_ctx_seed: PreEncodeContext,
@@ -518,35 +614,24 @@ fn canonical_select_bases(input: EntropyScoredContext) -> BaseSelectionContext {
     .unwrap()
 }
 
-fn igd_artifact_path(name: &str, encoding: &str) -> PathBuf {
-    PathBuf::from(format!("target/bench-artifacts/{}-{}.igd", name, encoding))
+fn igd_artifact_path(name: &str, preprocessing_label: &str, encoding: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "target/bench-artifacts/{}-{}-{}.igd",
+        name, preprocessing_label, encoding
+    ))
 }
 
-fn prepare_case(image_path: PathBuf) -> PreparedCase {
+fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> PreparedCase {
     let name = image_path
         .file_name()
         .unwrap()
         .to_string_lossy()
         .into_owned();
 
-    let bit_data_seed = OpenImage {}
-        .then(BuildImageBitDataSet {
-            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
-            color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: PixelGrouping::new(4, 4),
-            grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
-        })
-        .process(image_path.clone())
-        .unwrap();
+    let bit_data_seed = preprocessing.process(image_path.clone()).unwrap();
     let source_size = (bit_data_seed.data.num_rows * bit_data_seed.data.chunk_size / 8) as u64;
 
     let entropy_seed = EntropyBatched {}.process(bit_data_seed.clone()).unwrap();
-    // let condensed_seed = GenCondensedSamples {
-    //     m_max: CANONICAL_M_MAX,
-    // }
-    // .process(entropy_seed.clone())
-    // .unwrap();
 
     let base_table_ctx_seed = {
         let sel = canonical_select_bases(entropy_seed.clone());
@@ -569,11 +654,12 @@ fn prepare_case(image_path: PathBuf) -> PreparedCase {
     let huffman = EncodeDataHuffman {}.process(sorted_ctx).unwrap();
     let pre_delta_compressed_seed = normal.clone();
 
+    let pre_label = preprocessing.artifact_label();
     let igd_paths = IgdPaths {
-        normal: igd_artifact_path(&name, "normal"),
-        rle: igd_artifact_path(&name, "rle"),
-        rle_offset: igd_artifact_path(&name, "rle_offset"),
-        huffman: igd_artifact_path(&name, "huffman"),
+        normal: igd_artifact_path(&name, &pre_label, "normal"),
+        rle: igd_artifact_path(&name, &pre_label, "rle"),
+        rle_offset: igd_artifact_path(&name, &pre_label, "rle_offset"),
+        huffman: igd_artifact_path(&name, &pre_label, "huffman"),
     };
 
     SaveIgdFile {
@@ -615,6 +701,7 @@ fn prepare_case(image_path: PathBuf) -> PreparedCase {
         name,
         data_file_path: image_path.to_string_lossy().into_owned(),
         source_size,
+        preprocessing,
         bit_data_seed,
         entropy_seed,
         base_table_ctx_seed,
@@ -652,23 +739,32 @@ fn discover_cases() -> Vec<PreparedCase> {
         })
         .collect();
     paths.sort();
-    paths.into_iter().map(prepare_case).collect()
+    paths
+        .iter()
+        .flat_map(|path| {
+            SEED_PREPROCESSING_CONFIGS
+                .iter()
+                .map(|&pre| prepare_case(path.clone(), pre))
+        })
+        .collect()
 }
 
 // ── Generic benchmark harness ─────────────────────────────────────────────────
 
-fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn>(
+fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn>(
     stage_name: &'static str,
     prepared_cases: &[PreparedCase],
     implementations: &[ImplType],
     impl_label: LabelFn,
     make_input: InputFn,
     run_impl: RunFn,
+    seed_meta: SeedMetaFn,
 ) where
     ImplType: Copy,
     LabelFn: Fn(ImplType) -> &'static str + Copy,
     InputFn: Fn(ImplType, &PreparedCase) -> Input + Copy,
     RunFn: Fn(ImplType, Input) -> Result<Output, EntroGdError> + Copy,
+    SeedMetaFn: Fn(&PreparedCase) -> (String, String, String, String) + Copy,
 {
     let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
     if !filter.is_empty() && !stage_name.contains(filter.as_str()) {
@@ -691,12 +787,17 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn>(
                 let output = run_impl(implementation, input).unwrap();
                 let elapsed = start.elapsed();
                 black_box(output);
+                let (cm, pg, gt, gp) = seed_meta(case);
                 BENCH_RECORDS.lock().unwrap().push(BenchRecord {
                     stage: stage_name,
                     impl_name: label.to_string(),
                     file: case.name.clone(),
                     sample_time_ns: elapsed.as_nanos(),
                     source_bytes: case.source_size,
+                    color_model_seed: cm,
+                    pixel_grouping_seed: pg,
+                    group_transform_seed: gt,
+                    grouped_pixels_seed: gp,
                 });
             }
         }
@@ -708,6 +809,19 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn>(
 fn benchmark_filter_steps() {
     let prepared_cases = discover_cases();
 
+    let no_seed = |_: &PreparedCase| {
+        (String::new(), String::new(), String::new(), String::new())
+    };
+    let seed_meta = |case: &PreparedCase| {
+        let p = case.preprocessing;
+        (
+            p.color_model_label().to_string(),
+            p.pixel_grouping_label(),
+            p.group_transform_label().to_string(),
+            p.grouped_pixels().to_string(),
+        )
+    };
+
     bench_step_group(
         "Step/BuildImageBitDataSet.process",
         &prepared_cases,
@@ -715,6 +829,7 @@ fn benchmark_filter_steps() {
         BuildImageBitDataSetImpl::label,
         |_, case| PathBuf::from(&case.data_file_path),
         |implementation, path| implementation.process(path),
+        no_seed,
     );
 
     bench_step_group(
@@ -724,6 +839,7 @@ fn benchmark_filter_steps() {
         EntropyImpl::label,
         |_, case| case.bit_data_seed.clone(),
         |implementation, input| implementation.process(input),
+        seed_meta,
     );
 
     // bench_step_group(
@@ -733,6 +849,7 @@ fn benchmark_filter_steps() {
     //     GenCondensedImpl::label,
     //     |_, case| case.entropy_seed.clone(),
     //     |implementation, input| implementation.process(input),
+    //     seed_meta,
     // );
 
     bench_step_group(
@@ -742,6 +859,7 @@ fn benchmark_filter_steps() {
         SelectBasesImpl::label,
         |_, case| case.entropy_seed.clone(),
         |implementation, input| implementation.process(input),
+        seed_meta,
     );
 
     bench_step_group(
@@ -751,6 +869,7 @@ fn benchmark_filter_steps() {
         BuildBaseTableImpl::label,
         |_, case| canonical_select_bases(case.entropy_seed.clone()),
         |implementation, input| implementation.process(input),
+        seed_meta,
     );
 
     bench_step_group(
@@ -760,6 +879,7 @@ fn benchmark_filter_steps() {
         EncodeImpl::label,
         |_, case| case.base_table_ctx_seed.clone(),
         |implementation, input| implementation.process(input),
+        seed_meta,
     );
 
     bench_step_group(
@@ -769,6 +889,7 @@ fn benchmark_filter_steps() {
         DeltaEncodeImpl::label,
         |_, case| case.pre_delta_compressed_seed.clone(),
         |implementation, input| implementation.process(input),
+        seed_meta,
     );
 
     bench_step_group(
@@ -795,6 +916,7 @@ fn benchmark_filter_steps() {
             ),
         },
         |implementation, (compressed, path)| implementation.process(compressed, path),
+        seed_meta,
     );
 
     bench_step_group(
@@ -809,6 +931,7 @@ fn benchmark_filter_steps() {
             LoadIgdImpl::Huffman => case.igd_paths.huffman.clone(),
         },
         |implementation, path| implementation.process(path),
+        seed_meta,
     );
 
     bench_step_group(
@@ -823,6 +946,7 @@ fn benchmark_filter_steps() {
             DecompressFileImpl::Huffman => case.loaded_compressed_seeds.huffman.clone(),
         },
         |implementation, input| implementation.process(input),
+        seed_meta,
     );
 
     bench_step_group(
@@ -849,6 +973,7 @@ fn benchmark_filter_steps() {
             ),
         },
         |implementation, (handle, indices)| implementation.process(handle, indices),
+        seed_meta,
     );
 }
 
@@ -864,7 +989,9 @@ fn write_bench_csv() {
         "target/bench-results/{}.csv",
         IMAGE_DIR.split('/').last().unwrap_or("results")
     );
-    let mut out = String::from("stage,impl,file,sample_time_ns,throughput_bytes_s\n");
+    let mut out = String::from(
+        "stage,impl,file,sample_time_ns,throughput_bytes_s,color_model_seed,pixel_grouping_seed,group_transform_seed,grouped_pixels_seed\n",
+    );
     for r in records.iter() {
         let throughput = if r.sample_time_ns > 0 {
             r.source_bytes as u128 * 1_000_000_000 / r.sample_time_ns
@@ -872,8 +999,16 @@ fn write_bench_csv() {
             0
         };
         out.push_str(&format!(
-            "{},{},{},{},{}\n",
-            r.stage, r.impl_name, r.file, r.sample_time_ns, throughput
+            "{},{},{},{},{},{},{},{},{}\n",
+            r.stage,
+            r.impl_name,
+            r.file,
+            r.sample_time_ns,
+            throughput,
+            r.color_model_seed,
+            r.pixel_grouping_seed,
+            r.group_transform_seed,
+            r.grouped_pixels_seed,
         ));
     }
     std::fs::write(&path, out).unwrap_or_else(|e| eprintln!("failed to write {path}: {e}"));
