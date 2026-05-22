@@ -478,12 +478,21 @@ macro_rules! seed_configs {
 
 const SEED_PREPROCESSING_CONFIGS: &[SeedPreprocessing] = seed_configs![
     (Rgb, 1, 1, Raw),
+    (YCoCgR, 2, 1, Raw),
     (YCoCgR, 2, 1, ForMin),
+    (YCoCgR, 2, 1, ForFirstPixel),
+    (YCoCgR, 3, 1, Raw),
     (YCoCgR, 3, 1, ForMin),
+    (YCoCgR, 3, 1, ForFirstPixel),
+    (YCoCgR, 2, 2, Raw),
     (YCoCgR, 2, 2, ForMin),
+    (YCoCgR, 2, 2, ForFirstPixel),
+    (YCoCgR, 2, 3, Raw),
     (YCoCgR, 2, 3, ForMin),
+    (YCoCgR, 2, 3, ForFirstPixel),
+    (YCoCgR, 3, 3, Raw),
     (YCoCgR, 3, 3, ForMin),
-    (YCoCgR, 4, 4, ForMin),
+    (YCoCgR, 3, 3, ForFirstPixel),
 ];
 
 // ── Standard arrays ───────────────────────────────────────────────────────────
