@@ -32,9 +32,12 @@ static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex
 
 // ── Canonical pipeline config ─────────────────────────────────────────────────
 
-const CANONICAL_PATIENCE: usize = 10;
-const CANONICAL_ENTROPY_THRESHOLD: f64 = 0.70;
-const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
+const NORMAL_PATIENCE: usize = 10;
+const THRESHOLD_PATIENCE: usize = 5;
+const ADAPTIVE_PATIENCE: usize = 5;
+const ENTROPY_THRESHOLD: f64 = 0.70;
+const WEIGHT_DECAY: f64 = 0.5;
+const IMAGE_DIR: &str = "data/bench_datasets/cifar10_balanced_subset";
 
 // ── Seed preprocessing ────────────────────────────────────────────────────────
 
@@ -105,14 +108,19 @@ macro_rules! seed_configs {
 
 const SEED_PREPROCESSING_CONFIGS: &[SeedPreprocessing] = seed_configs![
     (Rgb, 1, 1, Raw),
+    (YCoCgR, 2, 1, Raw),
     (YCoCgR, 2, 1, ForMin),
     (YCoCgR, 2, 1, ForFirstPixel),
+    (YCoCgR, 3, 1, Raw),
     (YCoCgR, 3, 1, ForMin),
     (YCoCgR, 3, 1, ForFirstPixel),
+    (YCoCgR, 2, 2, Raw),
     (YCoCgR, 2, 2, ForMin),
     (YCoCgR, 2, 2, ForFirstPixel),
+    (YCoCgR, 2, 3, Raw),
     (YCoCgR, 2, 3, ForMin),
     (YCoCgR, 2, 3, ForFirstPixel),
+    (YCoCgR, 3, 3, Raw),
     (YCoCgR, 3, 3, ForMin),
     (YCoCgR, 3, 3, ForFirstPixel),
 ];
@@ -214,28 +222,28 @@ impl SelectBasesVariant {
 
     fn process(self, ctx: EntropyScoredContext) -> Result<BaseSelectionContext, EntroGdError> {
         match self {
-            Self::Naive => SelectBases { patience: CANONICAL_PATIENCE }.process(ctx),
+            Self::Naive => SelectBases { patience: NORMAL_PATIENCE }.process(ctx),
             Self::ThresholdNaive => SelectBasesThreshold {
-                patience: CANONICAL_PATIENCE,
+                patience: THRESHOLD_PATIENCE,
                 base_bit_impl: BaseBitImpl::Naive,
-                entropy_threshold: CANONICAL_ENTROPY_THRESHOLD,
+                entropy_threshold: ENTROPY_THRESHOLD,
             }
             .process(ctx),
             Self::ThresholdHll => SelectBasesThreshold {
-                patience: CANONICAL_PATIENCE,
+                patience: THRESHOLD_PATIENCE,
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
-                entropy_threshold: CANONICAL_ENTROPY_THRESHOLD,
+                entropy_threshold: ENTROPY_THRESHOLD,
             }
             .process(ctx),
             Self::AdaptiveNaive => SelectBasesAdaptive {
-                width_decay: 0.3,
-                patience: CANONICAL_PATIENCE,
+                width_decay: WEIGHT_DECAY,
+                patience: ADAPTIVE_PATIENCE,
                 base_bit_impl: BaseBitImpl::Naive,
             }
             .process(ctx),
             Self::AdaptiveHll => SelectBasesAdaptive {
-                width_decay: 0.3,
-                patience: CANONICAL_PATIENCE,
+                width_decay: WEIGHT_DECAY,
+                patience: ADAPTIVE_PATIENCE,
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
             }
             .process(ctx),
@@ -356,7 +364,7 @@ fn bench_encoding(paths: &[PathBuf]) {
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
             let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
-            let base_sel = SelectBases { patience: CANONICAL_PATIENCE }
+            let base_sel = SelectBases { patience: NORMAL_PATIENCE }
                 .process(entropy_ctx)
                 .unwrap();
             let pre_encode_base = BuildBaseTable {}.process(base_sel).unwrap();
@@ -422,7 +430,7 @@ impl DeltaVariant {
     // BuildSortedBaseTable) and monotonically-ordered rows. When BuildBaseTable is used
     // (delta_unsorted), the encoder silently keeps the raw table, yielding a ratio of 1.0.
     fn process(self, entropy_ctx: EntropyScoredContext) -> Result<CompressedData, EntroGdError> {
-        let base_sel = SelectBases { patience: CANONICAL_PATIENCE }.process(entropy_ctx)?;
+        let base_sel = SelectBases { patience: NORMAL_PATIENCE }.process(entropy_ctx)?;
         match self {
             Self::Unsorted => {
                 let pre = BuildBaseTable {}.process(base_sel)?;
