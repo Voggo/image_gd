@@ -38,6 +38,10 @@ harness = false
 name = "benchmark_individual"
 harness = false
 
+[[bench]]
+name = "benchmark_compression_ratio"
+harness = false
+
 [[example]]
 name = "run_folder_experiments"
 required-features = ["experiment-runner"]
