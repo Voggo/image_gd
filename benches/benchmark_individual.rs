@@ -33,10 +33,13 @@ const N_RUNS: usize = 3;
 
 // ── Canonical pipeline config ─────────────────────────────────────────────────
 
-const CANONICAL_M_MAX: usize = 0;
-const CANONICAL_PATIENCE: usize = 10;
-const CANONICAL_ENTROPY_THRESHOLD: f64 = 0.70;
-const CANONICAL_BASE_BIT_IMPL: BaseBitImpl = BaseBitImpl::BatchGroups;
+const NORMAL_PATIENCE: usize = 10;
+const THRESHOLD_PATIENCE: usize = 5;
+const ADAPTIVE_PATIENCE: usize = 5;
+const ENTROPY_THRESHOLD: f64 = 0.70;
+const WEIGHT_DECAY: f64 = 0.5;
+const M_MAX: usize = 0;
+const BASE_BIT_IMPL: BaseBitImpl = BaseBitImpl::Naive;
 const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
 
 // ── Implementation enums ──────────────────────────────────────────────────────
@@ -195,7 +198,7 @@ impl GenCondensedImpl {
 
     fn process(self, input: EntropyScoredContext) -> Result<EntropyScoredContext, EntroGdError> {
         GenCondensedSamples {
-            m_max: CANONICAL_M_MAX,
+            m_max: M_MAX,
         }
         .process(input)
     }
@@ -272,14 +275,14 @@ impl SelectBasesImpl {
             } => SelectBasesThreshold {
                 patience,
                 base_bit_impl,
-                entropy_threshold: CANONICAL_ENTROPY_THRESHOLD,
+                entropy_threshold: ENTROPY_THRESHOLD,
             }
             .process(input),
             Self::Adaptive {
                 base_bit_impl,
                 patience,
             } => SelectBasesAdaptive {
-                width_decay: 0.5,
+                width_decay: WEIGHT_DECAY,
                 patience,
                 base_bit_impl,
             }
@@ -477,7 +480,7 @@ macro_rules! seed_configs {
 }
 
 const SEED_PREPROCESSING_CONFIGS: &[SeedPreprocessing] = seed_configs![
-    (Rgb, 1, 1, Raw),
+    (YCoCgR, 1, 1, Raw),
     (YCoCgR, 2, 1, Raw),
     (YCoCgR, 2, 1, ForMin),
     (YCoCgR, 2, 1, ForFirstPixel),
@@ -510,38 +513,38 @@ const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Batche
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
 
 const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
-    SelectBasesImpl::Naive { patience: 10 },
+    SelectBasesImpl::Naive { patience: NORMAL_PATIENCE },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::Naive,
-        patience: 5,
+        patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: 5,
+        patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: 5,
+        patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
-        patience: 5,
+        patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::Naive,
-        patience: 3,
+        patience: ADAPTIVE_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: 3,
+        patience: ADAPTIVE_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: 3,
+        patience: ADAPTIVE_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
-        patience: 3,
+        patience: ADAPTIVE_PATIENCE,
     },
 ];
 
@@ -621,9 +624,9 @@ struct PreparedCase {
 
 fn canonical_select_bases(input: EntropyScoredContext) -> BaseSelectionContext {
     SelectBasesThreshold {
-        patience: CANONICAL_PATIENCE,
-        base_bit_impl: CANONICAL_BASE_BIT_IMPL,
-        entropy_threshold: CANONICAL_ENTROPY_THRESHOLD,
+        patience: THRESHOLD_PATIENCE,
+        base_bit_impl: BASE_BIT_IMPL,
+        entropy_threshold: ENTROPY_THRESHOLD,
     }
     .process(input)
     .unwrap()
@@ -772,20 +775,8 @@ fn discover_image_cases() -> Vec<ImageCase> {
         .collect()
 }
 
-fn discover_cases() -> Vec<PreparedCase> {
-    let _ = std::fs::create_dir_all("target/bench-artifacts");
-    sorted_image_paths()
-        .iter()
-        .flat_map(|path| {
-            SEED_PREPROCESSING_CONFIGS
-                .iter()
-                .map(|&pre| prepare_case(path.clone(), pre))
-        })
-        .collect()
-}
-
 fn bench_build_image_step(image_cases: &[ImageCase]) {
-    let stage_name = "Step/BuildImageBitDataSet.process";
+    let stage_name = "BuildImageBitDataSet";
     let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
     if !filter.is_empty() && !stage_name.contains(filter.as_str()) {
         return;
@@ -879,7 +870,10 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn
 fn benchmark_filter_steps() {
     bench_build_image_step(&discover_image_cases());
 
-    let prepared_cases = discover_cases();
+    let _ = std::fs::create_dir_all("target/bench-artifacts");
+    let paths = sorted_image_paths();
+    let total_cases = paths.len() * SEED_PREPROCESSING_CONFIGS.len();
+    let mut done = 0;
 
     let seed_meta = |case: &PreparedCase| {
         let p = case.preprocessing;
@@ -891,152 +885,154 @@ fn benchmark_filter_steps() {
         )
     };
 
-    bench_step_group(
-        "Step/Entropy.process",
-        &prepared_cases,
-        &ENTROPY_IMPLS,
-        EntropyImpl::label,
-        |_, case| case.bit_data_seed.clone(),
-        |implementation, input| implementation.process(input),
-        seed_meta,
-    );
+    for path in paths {
+        for &pre in SEED_PREPROCESSING_CONFIGS {
+            done += 1;
+            let file_name = path.file_name().unwrap().to_string_lossy();
+            eprintln!("[{done}/{total_cases}] preparing {file_name} ({})", pre.artifact_label());
+            let case = prepare_case(path.clone(), pre);
+            let cases = std::slice::from_ref(&case);
 
-    // bench_step_group(
-    //     "Step/GenCondensedSamples.process",
-    //     &prepared_cases,
-    //     &GEN_CONDENSED_IMPLS,
-    //     GenCondensedImpl::label,
-    //     |_, case| case.entropy_seed.clone(),
-    //     |implementation, input| implementation.process(input),
-    //     seed_meta,
-    // );
+            bench_step_group(
+                "Entropy",
+                cases,
+                &ENTROPY_IMPLS,
+                EntropyImpl::label,
+                |_, case| case.bit_data_seed.clone(),
+                |implementation, input| implementation.process(input),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/SelectBases.process",
-        &prepared_cases,
-        &SELECT_BASES_IMPLS,
-        SelectBasesImpl::label,
-        |_, case| case.entropy_seed.clone(),
-        |implementation, input| implementation.process(input),
-        seed_meta,
-    );
+            bench_step_group(
+                "SelectBases",
+                cases,
+                &SELECT_BASES_IMPLS,
+                SelectBasesImpl::label,
+                |_, case| case.entropy_seed.clone(),
+                |implementation, input| implementation.process(input),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/BuildBaseTable.process",
-        &prepared_cases,
-        &BUILD_BASE_TABLE_IMPLS,
-        BuildBaseTableImpl::label,
-        |_, case| canonical_select_bases(case.entropy_seed.clone()),
-        |implementation, input| implementation.process(input),
-        seed_meta,
-    );
+            bench_step_group(
+                "BuildBaseTable",
+                cases,
+                &BUILD_BASE_TABLE_IMPLS,
+                BuildBaseTableImpl::label,
+                |_, case| canonical_select_bases(case.entropy_seed.clone()),
+                |implementation, input| implementation.process(input),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/EncodeData.process",
-        &prepared_cases,
-        &ENCODE_IMPLS,
-        EncodeImpl::label,
-        |_, case| EncodeSeed {
-            pre_encode: case.base_table_ctx_seed.clone(),
-            base_selection: canonical_select_bases(case.entropy_seed.clone()),
-        },
-        |implementation, input| implementation.process(input),
-        seed_meta,
-    );
+            bench_step_group(
+                "EncodeData",
+                cases,
+                &ENCODE_IMPLS,
+                EncodeImpl::label,
+                |_, case| EncodeSeed {
+                    pre_encode: case.base_table_ctx_seed.clone(),
+                    base_selection: canonical_select_bases(case.entropy_seed.clone()),
+                },
+                |implementation, input| implementation.process(input),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/DeltaEncodeBaseTable.process",
-        &prepared_cases,
-        &DELTA_ENCODE_IMPLS,
-        DeltaEncodeImpl::label,
-        |_, case| case.pre_delta_compressed_seed.clone(),
-        |implementation, input| implementation.process(input),
-        seed_meta,
-    );
+            bench_step_group(
+                "DeltaEncodeBaseTable",
+                cases,
+                &DELTA_ENCODE_IMPLS,
+                DeltaEncodeImpl::label,
+                |_, case| case.pre_delta_compressed_seed.clone(),
+                |implementation, input| implementation.process(input),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/SaveIgdFile.process",
-        &prepared_cases,
-        &SAVE_IGD_IMPLS,
-        SaveIgdImpl::label,
-        |impl_, case| match impl_ {
-            SaveIgdImpl::Normal => (
-                case.compressed_seeds.normal.clone(),
-                case.igd_paths.normal.clone(),
-            ),
-            SaveIgdImpl::Rle => (
-                case.compressed_seeds.rle.clone(),
-                case.igd_paths.rle.clone(),
-            ),
-            SaveIgdImpl::RleOffset => (
-                case.compressed_seeds.rle_offset.clone(),
-                case.igd_paths.rle_offset.clone(),
-            ),
-            SaveIgdImpl::Huffman => (
-                case.compressed_seeds.huffman.clone(),
-                case.igd_paths.huffman.clone(),
-            ),
-        },
-        |implementation, (compressed, path)| implementation.process(compressed, path),
-        seed_meta,
-    );
+            bench_step_group(
+                "SaveIgdFile",
+                cases,
+                &SAVE_IGD_IMPLS,
+                SaveIgdImpl::label,
+                |impl_, case| match impl_ {
+                    SaveIgdImpl::Normal => (
+                        case.compressed_seeds.normal.clone(),
+                        case.igd_paths.normal.clone(),
+                    ),
+                    SaveIgdImpl::Rle => (
+                        case.compressed_seeds.rle.clone(),
+                        case.igd_paths.rle.clone(),
+                    ),
+                    SaveIgdImpl::RleOffset => (
+                        case.compressed_seeds.rle_offset.clone(),
+                        case.igd_paths.rle_offset.clone(),
+                    ),
+                    SaveIgdImpl::Huffman => (
+                        case.compressed_seeds.huffman.clone(),
+                        case.igd_paths.huffman.clone(),
+                    ),
+                },
+                |implementation, (compressed, path)| implementation.process(compressed, path),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/LoadIgdFile.process",
-        &prepared_cases,
-        &LOAD_IGD_IMPLS,
-        LoadIgdImpl::label,
-        |impl_, case| match impl_ {
-            LoadIgdImpl::Normal => case.igd_paths.normal.clone(),
-            LoadIgdImpl::Rle => case.igd_paths.rle.clone(),
-            LoadIgdImpl::RleOffset => case.igd_paths.rle_offset.clone(),
-            LoadIgdImpl::Huffman => case.igd_paths.huffman.clone(),
-        },
-        |implementation, path| implementation.process(path),
-        seed_meta,
-    );
+            bench_step_group(
+                "LoadIgdFile",
+                cases,
+                &LOAD_IGD_IMPLS,
+                LoadIgdImpl::label,
+                |impl_, case| match impl_ {
+                    LoadIgdImpl::Normal => case.igd_paths.normal.clone(),
+                    LoadIgdImpl::Rle => case.igd_paths.rle.clone(),
+                    LoadIgdImpl::RleOffset => case.igd_paths.rle_offset.clone(),
+                    LoadIgdImpl::Huffman => case.igd_paths.huffman.clone(),
+                },
+                |implementation, path| implementation.process(path),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/DecompressFileData.process",
-        &prepared_cases,
-        &DECOMPRESS_FILE_IMPLS,
-        DecompressFileImpl::label,
-        |impl_, case| match impl_ {
-            DecompressFileImpl::Normal => case.loaded_compressed_seeds.normal.clone(),
-            DecompressFileImpl::Rle => case.loaded_compressed_seeds.rle.clone(),
-            DecompressFileImpl::RleOffset => case.loaded_compressed_seeds.rle_offset.clone(),
-            DecompressFileImpl::Huffman => case.loaded_compressed_seeds.huffman.clone(),
-        },
-        |implementation, input| implementation.process(input),
-        seed_meta,
-    );
+            bench_step_group(
+                "DecompressFileData",
+                cases,
+                &DECOMPRESS_FILE_IMPLS,
+                DecompressFileImpl::label,
+                |impl_, case| match impl_ {
+                    DecompressFileImpl::Normal => case.loaded_compressed_seeds.normal.clone(),
+                    DecompressFileImpl::Rle => case.loaded_compressed_seeds.rle.clone(),
+                    DecompressFileImpl::RleOffset => {
+                        case.loaded_compressed_seeds.rle_offset.clone()
+                    }
+                    DecompressFileImpl::Huffman => case.loaded_compressed_seeds.huffman.clone(),
+                },
+                |implementation, input| implementation.process(input),
+                seed_meta,
+            );
 
-    bench_step_group(
-        "Step/DecompressRowsData.process",
-        &prepared_cases,
-        &DECOMPRESS_ROWS_IMPLS,
-        DecompressRowsImpl::label,
-        |impl_, case| match impl_ {
-            DecompressRowsImpl::Normal => (
-                case.rows_context_seeds.normal.0.clone(),
-                case.rows_context_seeds.normal.1.clone(),
-            ),
-            DecompressRowsImpl::Rle => (
-                case.rows_context_seeds.rle.0.clone(),
-                case.rows_context_seeds.rle.1.clone(),
-            ),
-            DecompressRowsImpl::RleOffset => (
-                case.rows_context_seeds.rle_offset.0.clone(),
-                case.rows_context_seeds.rle_offset.1.clone(),
-            ),
-            DecompressRowsImpl::Huffman => (
-                case.rows_context_seeds.huffman.0.clone(),
-                case.rows_context_seeds.huffman.1.clone(),
-            ),
-        },
-        |implementation, (handle, indices)| implementation.process(handle, indices),
-        seed_meta,
-    );
+            bench_step_group(
+                "DecompressRowsData",
+                cases,
+                &DECOMPRESS_ROWS_IMPLS,
+                DecompressRowsImpl::label,
+                |impl_, case| match impl_ {
+                    DecompressRowsImpl::Normal => (
+                        case.rows_context_seeds.normal.0.clone(),
+                        case.rows_context_seeds.normal.1.clone(),
+                    ),
+                    DecompressRowsImpl::Rle => (
+                        case.rows_context_seeds.rle.0.clone(),
+                        case.rows_context_seeds.rle.1.clone(),
+                    ),
+                    DecompressRowsImpl::RleOffset => (
+                        case.rows_context_seeds.rle_offset.0.clone(),
+                        case.rows_context_seeds.rle_offset.1.clone(),
+                    ),
+                    DecompressRowsImpl::Huffman => (
+                        case.rows_context_seeds.huffman.0.clone(),
+                        case.rows_context_seeds.huffman.1.clone(),
+                    ),
+                },
+                |implementation, (handle, indices)| implementation.process(handle, indices),
+                seed_meta,
+            );
+        }
+    }
 }
 
 // ── CSV output ────────────────────────────────────────────────────────────────
@@ -1048,7 +1044,7 @@ fn write_bench_csv() {
     }
     let _ = std::fs::create_dir_all("target/bench-results");
     let path = format!(
-        "target/bench-results/{}.csv",
+        "target/bench-results/performance_{}.csv",
         IMAGE_DIR.split('/').last().unwrap_or("results")
     );
     let mut out = String::from(

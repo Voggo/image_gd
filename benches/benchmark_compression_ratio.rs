@@ -37,7 +37,7 @@ const THRESHOLD_PATIENCE: usize = 5;
 const ADAPTIVE_PATIENCE: usize = 5;
 const ENTROPY_THRESHOLD: f64 = 0.70;
 const WEIGHT_DECAY: f64 = 0.5;
-const IMAGE_DIR: &str = "data/bench_datasets/cifar10_balanced_subset";
+const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
 
 // ── Seed preprocessing ────────────────────────────────────────────────────────
 
@@ -402,50 +402,33 @@ fn bench_encoding(paths: &[PathBuf]) {
 
 // ── Group 3: delta_encoding ───────────────────────────────────────────────────
 //
-// Isolates the effect of base-table delta encoding on sorted/unsorted tables.
+// Isolates the effect of base-table delta encoding.
 // Fixed: naive SelectBases, EncodeDataOptimized.
+// Delta encoding requires a sorted base table (BuildSortedBaseTable); without it
+// DeltaEncodeBaseTable is a no-op, so only Raw vs. Delta are meaningful variants.
 
 #[derive(Clone, Copy)]
 enum DeltaVariant {
-    Unsorted,
-    Sorted,
-    DeltaUnsorted,
-    DeltaSorted,
+    Raw,
+    Delta,
 }
 
 impl DeltaVariant {
     fn name(self) -> &'static str {
         match self {
-            Self::Unsorted => "unsorted",
-            Self::Sorted => "sorted",
-            Self::DeltaUnsorted => "delta_unsorted",
-            Self::DeltaSorted => "delta_sorted",
+            Self::Raw => "raw",
+            Self::Delta => "delta",
         }
     }
 
-    // Takes EntropyScoredContext (not BaseSelectionContext) because BaseSelectionContext
-    // is not Clone — selection is re-run per variant so each gets an owned context.
-    //
-    // Note: DeltaEncodeBaseTable requires entropy_sorted_column_order (set only by
-    // BuildSortedBaseTable) and monotonically-ordered rows. When BuildBaseTable is used
-    // (delta_unsorted), the encoder silently keeps the raw table, yielding a ratio of 1.0.
     fn process(self, entropy_ctx: EntropyScoredContext) -> Result<CompressedData, EntroGdError> {
         let base_sel = SelectBases { patience: NORMAL_PATIENCE }.process(entropy_ctx)?;
         match self {
-            Self::Unsorted => {
+            Self::Raw => {
                 let pre = BuildBaseTable {}.process(base_sel)?;
                 EncodeDataOptimized {}.process(pre)
             }
-            Self::Sorted => {
-                let pre = BuildSortedBaseTable {}.process(base_sel)?;
-                EncodeDataOptimized {}.process(pre)
-            }
-            Self::DeltaUnsorted => {
-                let pre = BuildBaseTable {}.process(base_sel)?;
-                let compressed = EncodeDataOptimized {}.process(pre)?;
-                DeltaEncodeBaseTable {}.process(compressed)
-            }
-            Self::DeltaSorted => {
+            Self::Delta => {
                 let pre = BuildSortedBaseTable {}.process(base_sel)?;
                 let compressed = EncodeDataOptimized {}.process(pre)?;
                 DeltaEncodeBaseTable {}.process(compressed)
@@ -454,12 +437,7 @@ impl DeltaVariant {
     }
 }
 
-const DELTA_VARIANTS: [DeltaVariant; 4] = [
-    DeltaVariant::Unsorted,
-    DeltaVariant::Sorted,
-    DeltaVariant::DeltaUnsorted,
-    DeltaVariant::DeltaSorted,
-];
+const DELTA_VARIANTS: [DeltaVariant; 2] = [DeltaVariant::Raw, DeltaVariant::Delta];
 
 fn bench_delta_encoding(paths: &[PathBuf]) {
     let total = paths.len() * SEED_PREPROCESSING_CONFIGS.len() * DELTA_VARIANTS.len();
@@ -488,14 +466,12 @@ fn bench_delta_encoding(paths: &[PathBuf]) {
 
                 let compressed = variant.process(entropy_ctx.clone()).unwrap();
                 let sizes = compute_sizes(&compressed).unwrap();
-                // For non-delta variants leave blank; for delta variants show the ratio
-                // (1.0000 if delta encoding was silently skipped due to unsorted input).
                 let bt_delta_ratio = match variant {
-                    DeltaVariant::DeltaUnsorted | DeltaVariant::DeltaSorted => {
+                    DeltaVariant::Delta => {
                         let r = base_table_delta_ratio(&compressed);
                         if r.is_empty() { "1.0000".to_string() } else { r }
                     }
-                    _ => String::new(),
+                    DeltaVariant::Raw => String::new(),
                 };
 
                 BENCH_RECORDS.lock().unwrap().push(BenchRecord {
