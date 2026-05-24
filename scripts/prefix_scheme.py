@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 """Analyze tiered prefix+payload schemes from delta bit-length histograms.
 
-This script helps choose an approximate optimal prefix encoding by combining:
-- exact DP minimization of expected coded bits for each tier count,
-- diminishing-returns (knee) detection,
-- a complexity-aware objective that discourages too many tiers.
+The script finds the best (mode, prefix_bits, tier_count) configuration for a
+given bit-length histogram. The per-configuration search uses exact dynamic
+programming, so within each family the result is provably optimal — the only
+remaining uncertainty is whether the outer search bounds are wide enough.
+Each family table prints a saturation note (interior vs boundary).
+
+Encoding model:
+- Bit lengths are sorted and partitioned into contiguous tiers.
+- Each tier's payload width = the maximum bit_len in its bin range
+  (fixed-width within tier). Contiguous tiers are without loss of generality:
+  a non-contiguous tier could only increase its payload width.
+- Prefix length is determined by mode:
+    * unary: tier i uses i+1 bits, with the last tier omitting the
+      terminator (truncated unary). Pass --unary-include-terminator to keep
+      a terminator on the last tier too.
+    * fixed: every tier uses a constant number of prefix bits.
 
 Input CSV format must include at least:
   bit_len,count
@@ -15,9 +27,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -34,10 +47,13 @@ class PlanResult:
     prefix_bits: int  # fixed prefix bits, 0 for unary
     n_tiers: int
     total_bits: int
-    ratio_vs_lb: float
+    overhead_pct: float
     avg_bits_per_delta: float
     payload_maxima: Tuple[int, ...]
     segments: Tuple[TierSegment, ...]
+
+
+FamilyKey = Tuple[str, int]
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,8 +87,8 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.20,
         help=(
-            "Knee threshold in percent: when incremental improvement drops below this percent, "
-            "extra tiers are likely not worth it."
+            "Knee threshold in percent: when incremental improvement drops "
+            "below this percent, extra tiers are likely not worth it."
         ),
     )
     parser.add_argument(
@@ -80,15 +96,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.05,
         help=(
-            "Percent of lower-bound bits to penalize per tier in complexity-aware ranking. "
-            "Higher -> prefers fewer tiers."
+            "Percent of lower-bound bits to penalize per tier in "
+            "complexity-aware ranking. Higher -> prefers fewer tiers."
         ),
     )
     parser.add_argument(
-        "--top-k",
-        type=int,
-        default=8,
-        help="How many top candidates to print in each recommendation table.",
+        "--unary-include-terminator",
+        action="store_true",
+        help=(
+            "Use the old unary model where the last tier also carries a "
+            "terminator bit. Default is truncated unary (last tier saves "
+            "one bit)."
+        ),
     )
     parser.add_argument(
         "--show-segments-for",
@@ -136,20 +155,20 @@ def range_sum(prefix: Sequence[int], left: int, right: int) -> int:
 
 def optimize_for_tiers(
     bit_lens: Sequence[int],
-    counts: Sequence[int],
     count_prefix: Sequence[int],
     n_tiers: int,
     mode: str,
     fixed_prefix_bits: int,
+    unary_include_terminator: bool,
 ) -> Tuple[int, Tuple[int, ...], Tuple[TierSegment, ...]]:
     n = len(bit_lens)
     if n_tiers < 1 or n_tiers > n:
         raise ValueError("n_tiers must be between 1 and number of distinct bit lengths")
 
-    inf = 10**30
-
     def prefix_cost(tier_idx: int) -> int:
         if mode == "unary":
+            if not unary_include_terminator and tier_idx == n_tiers - 1:
+                return n_tiers - 1
             return tier_idx + 1
         return fixed_prefix_bits
 
@@ -158,8 +177,9 @@ def optimize_for_tiers(
         group_count = range_sum(count_prefix, i, j)
         return (prefix_cost(tier_idx) + payload_bits) * group_count
 
-    dp = [[inf] * n for _ in range(n_tiers)]
-    prev = [[-1] * n for _ in range(n_tiers)]
+    inf = math.inf
+    dp: List[List[float]] = [[inf] * n for _ in range(n_tiers)]
+    prev: List[List[int]] = [[-1] * n for _ in range(n_tiers)]
 
     for j in range(n):
         dp[0][j] = group_cost(0, j, 0)
@@ -197,7 +217,7 @@ def optimize_for_tiers(
             )
         )
 
-    return dp[n_tiers - 1][n - 1], tuple(payloads), tuple(segments)
+    return int(dp[n_tiers - 1][n - 1]), tuple(payloads), tuple(segments)
 
 
 def evaluate_candidates(
@@ -207,59 +227,43 @@ def evaluate_candidates(
     total_count: int,
     max_unary_tiers: int,
     max_fixed_prefix_bits: int,
-) -> List[PlanResult]:
+    unary_include_terminator: bool,
+) -> Dict[FamilyKey, List[PlanResult]]:
     count_prefix = build_prefix_sums(counts)
     n = len(bit_lens)
-    results: List[PlanResult] = []
+    families: Dict[FamilyKey, List[PlanResult]] = {}
+
+    def add_plan(mode: str, prefix_bits: int, tiers: int) -> None:
+        bits, payloads, segments = optimize_for_tiers(
+            bit_lens,
+            count_prefix,
+            tiers,
+            mode=mode,
+            fixed_prefix_bits=prefix_bits if mode == "fixed" else 0,
+            unary_include_terminator=unary_include_terminator,
+        )
+        plan = PlanResult(
+            mode=mode,
+            prefix_bits=prefix_bits if mode == "fixed" else 0,
+            n_tiers=tiers,
+            total_bits=bits,
+            overhead_pct=100.0 * (bits / lb_bits - 1.0),
+            avg_bits_per_delta=bits / total_count,
+            payload_maxima=payloads,
+            segments=segments,
+        )
+        families.setdefault((mode, plan.prefix_bits), []).append(plan)
 
     unary_limit = min(max_unary_tiers, n)
     for tiers in range(1, unary_limit + 1):
-        bits, payloads, segments = optimize_for_tiers(
-            bit_lens,
-            counts,
-            count_prefix,
-            tiers,
-            mode="unary",
-            fixed_prefix_bits=0,
-        )
-        results.append(
-            PlanResult(
-                mode="unary",
-                prefix_bits=0,
-                n_tiers=tiers,
-                total_bits=bits,
-                ratio_vs_lb=bits / lb_bits,
-                avg_bits_per_delta=bits / total_count,
-                payload_maxima=payloads,
-                segments=segments,
-            )
-        )
+        add_plan("unary", 0, tiers)
 
     for pb in range(1, max_fixed_prefix_bits + 1):
         fixed_limit = min(1 << pb, n)
         for tiers in range(1, fixed_limit + 1):
-            bits, payloads, segments = optimize_for_tiers(
-                bit_lens,
-                counts,
-                count_prefix,
-                tiers,
-                mode="fixed",
-                fixed_prefix_bits=pb,
-            )
-            results.append(
-                PlanResult(
-                    mode="fixed",
-                    prefix_bits=pb,
-                    n_tiers=tiers,
-                    total_bits=bits,
-                    ratio_vs_lb=bits / lb_bits,
-                    avg_bits_per_delta=bits / total_count,
-                    payload_maxima=payloads,
-                    segments=segments,
-                )
-            )
+            add_plan("fixed", pb, tiers)
 
-    return results
+    return families
 
 
 def describe_mode(plan: PlanResult) -> str:
@@ -268,50 +272,68 @@ def describe_mode(plan: PlanResult) -> str:
     return f"fixed/{plan.prefix_bits}b"
 
 
-def find_knee_by_family(
-    plans: Sequence[PlanResult],
-    min_improvement_pct: float,
-) -> Dict[Tuple[str, int], PlanResult]:
-    families: Dict[Tuple[str, int], List[PlanResult]] = {}
-    for p in plans:
-        key = (p.mode, p.prefix_bits)
-        families.setdefault(key, []).append(p)
+def family_label(key: FamilyKey) -> str:
+    mode, pb = key
+    return "unary" if mode == "unary" else f"fixed-{pb}b"
 
-    knees: Dict[Tuple[str, int], PlanResult] = {}
-    for key, family in families.items():
-        family_sorted = sorted(family, key=lambda x: x.n_tiers)
-        best_so_far = family_sorted[0]
-        knee = best_so_far
 
-        for idx in range(1, len(family_sorted)):
-            prev = family_sorted[idx - 1]
-            cur = family_sorted[idx]
-            gain = prev.total_bits - cur.total_bits
-            gain_pct = 100.0 * gain / prev.total_bits if prev.total_bits > 0 else 0.0
-            if gain_pct < min_improvement_pct:
-                knee = prev
-                break
-            if cur.total_bits < best_so_far.total_bits:
-                best_so_far = cur
-                knee = cur
+def family_tier_limit(key: FamilyKey, n_distinct: int, args: argparse.Namespace) -> int:
+    mode, pb = key
+    if mode == "unary":
+        return min(args.max_unary_tiers, n_distinct)
+    return min(1 << pb, n_distinct)
 
-        knees[key] = knee
 
-    return knees
+def find_knee(family: Sequence[PlanResult], min_improvement_pct: float) -> PlanResult:
+    if not family:
+        raise ValueError("empty family")
+    ordered = sorted(family, key=lambda x: x.n_tiers)
+    knee = ordered[0]
+    for idx in range(1, len(ordered)):
+        prev = ordered[idx - 1]
+        cur = ordered[idx]
+        if prev.total_bits <= 0:
+            knee = prev
+            break
+        gain_pct = 100.0 * (prev.total_bits - cur.total_bits) / prev.total_bits
+        if gain_pct < min_improvement_pct:
+            knee = prev
+            break
+        knee = cur
+    return knee
 
 
 def complexity_aware_best(
-    plans: Sequence[PlanResult],
+    families: Dict[FamilyKey, List[PlanResult]],
     lb_bits: int,
     penalty_pct_per_tier: float,
-) -> List[Tuple[float, PlanResult]]:
+) -> PlanResult:
     penalty_bits_per_tier = lb_bits * (penalty_pct_per_tier / 100.0)
-    scored: List[Tuple[float, PlanResult]] = []
-    for p in plans:
-        score = p.total_bits + penalty_bits_per_tier * p.n_tiers
-        scored.append((score, p))
-    scored.sort(key=lambda x: x[0])
-    return scored
+    best: Optional[Tuple[float, PlanResult]] = None
+    for family in families.values():
+        for p in family:
+            score = p.total_bits + penalty_bits_per_tier * p.n_tiers
+            if best is None or score < best[0]:
+                best = (score, p)
+    assert best is not None
+    return best[1]
+
+
+def shannon_entropy(counts: Iterable[int]) -> float:
+    cs = list(counts)
+    total = sum(cs)
+    if total == 0:
+        return 0.0
+    h = 0.0
+    for c in cs:
+        if c <= 0:
+            continue
+        p = c / total
+        h -= p * math.log2(p)
+    return h
+
+
+# ---------- printing ----------
 
 
 def print_header(input_path: Path, histogram: Dict[int, int]) -> Tuple[int, int]:
@@ -320,97 +342,150 @@ def print_header(input_path: Path, histogram: Dict[int, int]) -> Tuple[int, int]
     min_bit = min(histogram)
     max_bit = max(histogram)
     distinct = len(histogram)
+    mean = lb_bits / total
+    entropy = shannon_entropy(histogram.values())
 
-    print(f"Input CSV      : {input_path}")
-    print(f"Distinct bins  : {distinct} (range {min_bit}..{max_bit})")
-    print(f"Total deltas   : {total}")
-    print(f"Lower bound    : {lb_bits} bits ({lb_bits / 8.0:.1f} bytes)")
+    print(f"Input CSV          : {input_path}")
+    print(f"Distinct bit-lens  : {distinct}  (range {min_bit}..{max_bit})")
+    print(f"Total deltas       : {total:,}")
+    print(f"Mean bit-len       : {mean:.3f} bits/delta")
+    print(f"Bit-len entropy    : {entropy:.3f} bits over the bin distribution")
+    print(f"Lower bound        : {lb_bits:,} bits  ({lb_bits / 8.0:,.1f} bytes)")
+    print()
+    print(
+        "DP is exact per (mode, prefix_bits, k). The outer search is exhaustive\n"
+        "over the configured ranges, so the reported best is the global optimum\n"
+        "unless a BOUNDARY HIT warning fires below."
+    )
     print()
 
     return total, lb_bits
 
 
-def print_top_by_bits(plans: Sequence[PlanResult], top_k: int) -> None:
-    print("Best by expected coded bits:")
-    print(
-        "  {:<10} {:>5} {:>12} {:>9} {:>9}  {}".format(
-            "scheme", "tiers", "bits", "ratio", "avg", "payload maxima"
-        )
-    )
-    for p in sorted(plans, key=lambda x: x.total_bits)[:top_k]:
-        print(
-            "  {:<10} {:>5} {:>12} {:>9.4f} {:>9.3f}  {}".format(
-                describe_mode(p),
-                p.n_tiers,
-                p.total_bits,
-                p.ratio_vs_lb,
-                p.avg_bits_per_delta,
-                list(p.payload_maxima),
-            )
-        )
-    print()
+FAMILY_HEADER = "  {:<3} {:>4} {:>14} {:>10} {:>9} {:>9}  {}"
+FAMILY_ROW = "  {:<3} {:>4} {:>14,} {:>9.2f}% {:>9.3f} {:>9}  {}"
+FAMILY_COLS = ("tag", "k", "bits", "vs-lb", "avg/Δ", "Δ-prev", "payload maxima")
 
 
-def print_knee_summary(
-    plans: Sequence[PlanResult],
-    knees: Dict[Tuple[str, int], PlanResult],
+def fmt_delta_prev(curr: PlanResult, prev: Optional[PlanResult]) -> str:
+    if prev is None or prev.total_bits == 0:
+        return "—"
+    pct = 100.0 * (curr.total_bits - prev.total_bits) / prev.total_bits
+    return f"{pct:+.2f}%"
+
+
+def print_family(
+    key: FamilyKey,
+    family: Sequence[PlanResult],
+    tier_limit: int,
+    knee: PlanResult,
+    raise_flag_name: str,
 ) -> None:
-    print("Knee-point candidates (first diminishing-return point per scheme family):")
-    print(
-        "  {:<10} {:>5} {:>12} {:>9} {:>9}  {}".format(
-            "scheme", "tiers", "bits", "ratio", "avg", "payload maxima"
-        )
-    )
-
-    for key in sorted(knees.keys(), key=lambda x: (x[0], x[1])):
-        p = knees[key]
+    ordered = sorted(family, key=lambda x: x.n_tiers)
+    best = min(ordered, key=lambda x: x.total_bits)
+    label = family_label(key)
+    print(f"Family: {label}  (k = 1..{tier_limit}, {len(ordered)} configurations)")
+    print(FAMILY_HEADER.format(*FAMILY_COLS))
+    for idx, p in enumerate(ordered):
+        prev = ordered[idx - 1] if idx > 0 else None
+        tag = ""
+        if p is best:
+            tag += "*"
+        if p is knee and p is not best:
+            tag += "+"
         print(
-            "  {:<10} {:>5} {:>12} {:>9.4f} {:>9.3f}  {}".format(
-                describe_mode(p),
+            FAMILY_ROW.format(
+                tag,
                 p.n_tiers,
                 p.total_bits,
-                p.ratio_vs_lb,
+                p.overhead_pct,
                 p.avg_bits_per_delta,
+                fmt_delta_prev(p, prev),
                 list(p.payload_maxima),
             )
         )
-    print()
-
-
-def print_complexity_ranking(
-    scored: Sequence[Tuple[float, PlanResult]],
-    top_k: int,
-) -> None:
-    print("Complexity-aware ranking (bits + tier penalty):")
-    print(
-        "  {:<10} {:>5} {:>12} {:>12} {:>9}  {}".format(
-            "scheme", "tiers", "bits", "score", "ratio", "payload maxima"
-        )
-    )
-    for score, p in scored[:top_k]:
+    if best.n_tiers < tier_limit:
         print(
-            "  {:<10} {:>5} {:>12} {:>12.1f} {:>9.4f}  {}".format(
-                describe_mode(p),
-                p.n_tiers,
-                p.total_bits,
-                score,
-                p.ratio_vs_lb,
-                list(p.payload_maxima),
-            )
+            f"  -> best at k={best.n_tiers}; tested up to k={tier_limit} "
+            f"(interior, converged)."
         )
+    else:
+        print(
+            f"  -> best at k={best.n_tiers} = tier limit; "
+            f"BOUNDARY HIT -- raise {raise_flag_name} to confirm optimum."
+        )
+    print("  legend: * = family best   + = knee")
     print()
 
 
-def print_plan_segments(plan: PlanResult) -> None:
+def print_recommendation(
+    best_by_bits: PlanResult,
+    best_by_complexity: PlanResult,
+    best_unary_knee: Optional[PlanResult],
+    best_fixed_knee: Optional[PlanResult],
+) -> None:
+    print("Recommendation:")
+    rec_fmt = (
+        "  {:<22} {:<10} k={:>2}  bits={:>14,}  vs-lb={:>+7.2f}%  payload={}"
+    )
+
+    def row(label: str, p: PlanResult) -> str:
+        return rec_fmt.format(
+            label,
+            describe_mode(p),
+            p.n_tiers,
+            p.total_bits,
+            p.overhead_pct,
+            list(p.payload_maxima),
+        )
+
+    print(row("pure-bit optimum", best_by_bits))
+    print(row("complexity-aware", best_by_complexity))
+    if best_unary_knee is not None:
+        print(row("best unary knee", best_unary_knee))
+    if best_fixed_knee is not None:
+        print(row("best fixed knee", best_fixed_knee))
+    print()
+
+
+def unary_prefix_string(tier_idx: int, n_tiers: int, include_terminator: bool) -> str:
+    if n_tiers == 1:
+        return "(none)"
+    if tier_idx == n_tiers - 1 and not include_terminator:
+        return "1" * tier_idx
+    return "1" * tier_idx + "0"
+
+
+def fixed_prefix_string(tier_idx: int, prefix_bits: int) -> str:
+    return format(tier_idx, f"0{prefix_bits}b")
+
+
+def print_plan_segments(plan: PlanResult, include_terminator: bool) -> None:
     print(
         f"Tier segments for {describe_mode(plan)} with {plan.n_tiers} tiers "
-        f"(bits={plan.total_bits}, ratio={plan.ratio_vs_lb:.4f}):"
+        f"(bits={plan.total_bits:,}, vs-lb={plan.overhead_pct:+.2f}%):"
     )
-    print("  {:>5} {:>12} {:>12} {:>12}".format("tier", "bit_min", "bit_max", "count"))
+    print(
+        "  {:>4} {:>10} {:>8} {:>8} {:>12} {:>14}".format(
+            "tier", "prefix", "bit_min", "bit_max", "count", "tier bits"
+        )
+    )
     for seg in plan.segments:
+        if plan.mode == "unary":
+            pref = unary_prefix_string(seg.tier_index, plan.n_tiers, include_terminator)
+            pref_bits = 0 if pref == "(none)" else len(pref)
+        else:
+            pref = fixed_prefix_string(seg.tier_index, plan.prefix_bits)
+            pref_bits = plan.prefix_bits
+        tier_bits = (pref_bits + seg.bit_max) * seg.count
         print(
-            "  {:>5} {:>12} {:>12} {:>12}".format(
-                seg.tier_index, seg.bit_min, seg.bit_max, seg.count
+            "  {:>4} {:>10} {:>8} {:>8} {:>12,} {:>14,}".format(
+                seg.tier_index,
+                pref,
+                seg.bit_min,
+                seg.bit_max,
+                seg.count,
+                tier_bits,
             )
         )
     print()
@@ -426,66 +501,69 @@ def main() -> None:
     bit_lens = sorted(histogram)
     counts = [histogram[b] for b in bit_lens]
 
-    plans = evaluate_candidates(
+    families = evaluate_candidates(
         bit_lens=bit_lens,
         counts=counts,
         lb_bits=lb_bits,
         total_count=total_count,
         max_unary_tiers=args.max_unary_tiers,
         max_fixed_prefix_bits=args.max_fixed_prefix_bits,
+        unary_include_terminator=args.unary_include_terminator,
     )
-
-    if not plans:
+    if not families:
         raise RuntimeError("No plans generated. Check your input and limits.")
 
-    knees = find_knee_by_family(plans, args.knee_min_improvement_pct)
-    complexity_scored = complexity_aware_best(
-        plans,
-        lb_bits=lb_bits,
-        penalty_pct_per_tier=args.complexity_penalty_pct,
-    )
+    knees: Dict[FamilyKey, PlanResult] = {
+        key: find_knee(fam, args.knee_min_improvement_pct)
+        for key, fam in families.items()
+    }
 
-    best_by_bits = min(plans, key=lambda p: p.total_bits)
-    best_by_complexity = complexity_scored[0][1]
+    n_distinct = len(bit_lens)
+    family_order: List[FamilyKey] = []
+    if ("unary", 0) in families:
+        family_order.append(("unary", 0))
+    family_order.extend(sorted(k for k in families if k[0] == "fixed"))
 
-    print_top_by_bits(plans, args.top_k)
-    print_knee_summary(plans, knees)
-    print_complexity_ranking(complexity_scored, args.top_k)
-
-    print("Recommended starting points:")
-    print(
-        f"  1) Pure-bit optimum      : {describe_mode(best_by_bits)} "
-        f"tiers={best_by_bits.n_tiers}, ratio={best_by_bits.ratio_vs_lb:.4f}"
-    )
-    print(
-        f"  2) Complexity-aware best : {describe_mode(best_by_complexity)} "
-        f"tiers={best_by_complexity.n_tiers}, ratio={best_by_complexity.ratio_vs_lb:.4f}"
-    )
-
-    unary_knee = knees.get(("unary", 0))
-    if unary_knee is not None:
-        print(
-            f"  3) Unary knee            : tiers={unary_knee.n_tiers}, "
-            f"ratio={unary_knee.ratio_vs_lb:.4f}"
+    for key in family_order:
+        tier_limit = family_tier_limit(key, n_distinct, args)
+        raise_flag = (
+            "--max-unary-tiers" if key[0] == "unary" else "--max-fixed-prefix-bits"
         )
+        print_family(key, families[key], tier_limit, knees[key], raise_flag)
 
-    fixed_knees = [knees[k] for k in sorted(knees) if k[0] == "fixed"]
-    if fixed_knees:
-        best_fixed_knee = min(fixed_knees, key=lambda p: p.total_bits)
-        print(
-            f"  4) Best fixed knee       : {describe_mode(best_fixed_knee)} "
-            f"tiers={best_fixed_knee.n_tiers}, ratio={best_fixed_knee.ratio_vs_lb:.4f}"
-        )
-    print()
+    all_plans = [p for fam in families.values() for p in fam]
+    best_by_bits = min(all_plans, key=lambda p: p.total_bits)
+    best_by_complexity = complexity_aware_best(
+        families, lb_bits, args.complexity_penalty_pct
+    )
+    best_unary_knee = knees.get(("unary", 0))
+    fixed_knees = [knees[k] for k in knees if k[0] == "fixed"]
+    best_fixed_knee = min(fixed_knees, key=lambda p: p.total_bits) if fixed_knees else None
+
+    print_recommendation(
+        best_by_bits,
+        best_by_complexity,
+        best_unary_knee,
+        best_fixed_knee,
+    )
+
+    include_term = args.unary_include_terminator
+    printed = set()
+
+    def show(plan: Optional[PlanResult]) -> None:
+        if plan is None:
+            return
+        key = (plan.mode, plan.prefix_bits, plan.n_tiers)
+        if key in printed:
+            return
+        printed.add(key)
+        print_plan_segments(plan, include_term)
 
     if args.show_segments_for in ("best", "all"):
-        print_plan_segments(best_by_bits)
+        show(best_by_bits)
     if args.show_segments_for in ("knee", "all"):
-        if unary_knee is not None:
-            print_plan_segments(unary_knee)
-        if fixed_knees:
-            best_fixed_knee = min(fixed_knees, key=lambda p: p.total_bits)
-            print_plan_segments(best_fixed_knee)
+        show(best_unary_knee)
+        show(best_fixed_knee)
 
 
 if __name__ == "__main__":

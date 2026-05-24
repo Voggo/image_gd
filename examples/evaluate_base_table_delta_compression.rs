@@ -258,7 +258,7 @@ fn evaluate_file(
         EntropyBatched {}
             .then(SelectBasesThreshold {
                 patience: 20,
-                base_bit_impl: BaseBitImpl::BatchGroups,
+                base_bit_impl: BaseBitImpl::Naive,
                 entropy_threshold: 0.70,
             })
             .then(BuildSortedBaseTable {})
@@ -267,7 +267,7 @@ fn evaluate_file(
         EntropyBatched {}
             .then(SelectBasesThreshold {
                 patience: 20,
-                base_bit_impl: BaseBitImpl::BatchGroups,
+                base_bit_impl: BaseBitImpl::Naive,
                 entropy_threshold: 0.70,
             })
             .then(BuildBaseTable {})
@@ -333,8 +333,8 @@ fn image_build_options() -> BuildImageBitDataSet {
     BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: PixelGrouping::new(8, 1),
-        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pixel_grouping: PixelGrouping::new(4, 4),
+        grouping_transform: ImageGroupingTransform::ForMin,
         pad_rows_to_word: false,
     }
 }
@@ -488,19 +488,28 @@ fn build_delta_distribution(
     let mut distribution: BTreeMap<usize, usize> = BTreeMap::new();
     let mut total_bits = bits_needed_unsigned(rows[0]);
 
+    // Pre-build a bitvec for 1, used to bias sorted deltas by 1.
+    let mut one = BitVec::<usize, Lsb0>::with_capacity(1);
+    one.push(true);
+
     for pair in rows.windows(2) {
         let prev = pair[0];
         let current = pair[1];
 
         let magnitude = abs_diff_unsigned(current, prev);
-        let magnitude_bits = bits_needed_unsigned(magnitude.as_bitslice());
 
+        // For sorted tables all entries are unique so delta >= 1. Bias by 1
+        // (encode magnitude - 1) so 1 bit covers deltas 1 and 2, etc.
         let delta_bits = if use_sorted {
-            magnitude_bits
-        } else if magnitude_bits == 0 {
-            0
+            let biased = subtract_unsigned(magnitude.as_bitslice(), one.as_bitslice());
+            bits_needed_unsigned(biased.as_bitslice()).max(1)
         } else {
-            1 + magnitude_bits
+            let magnitude_bits = bits_needed_unsigned(magnitude.as_bitslice());
+            if magnitude_bits == 0 {
+                0
+            } else {
+                1 + magnitude_bits
+            }
         };
 
         *distribution.entry(delta_bits).or_insert(0) += 1;
