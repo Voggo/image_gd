@@ -425,9 +425,7 @@ def print_recommendation(
     best_fixed_knee: Optional[PlanResult],
 ) -> None:
     print("Recommendation:")
-    rec_fmt = (
-        "  {:<22} {:<10} k={:>2}  bits={:>14,}  vs-lb={:>+7.2f}%  payload={}"
-    )
+    rec_fmt = "  {:<22} {:<10} k={:>2}  bits={:>14,}  vs-lb={:>+7.2f}%  payload={}"
 
     def row(label: str, p: PlanResult) -> str:
         return rec_fmt.format(
@@ -538,7 +536,9 @@ def main() -> None:
     )
     best_unary_knee = knees.get(("unary", 0))
     fixed_knees = [knees[k] for k in knees if k[0] == "fixed"]
-    best_fixed_knee = min(fixed_knees, key=lambda p: p.total_bits) if fixed_knees else None
+    best_fixed_knee = (
+        min(fixed_knees, key=lambda p: p.total_bits) if fixed_knees else None
+    )
 
     print_recommendation(
         best_by_bits,

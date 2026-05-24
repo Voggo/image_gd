@@ -89,7 +89,7 @@ impl SeedPreprocessing {
 
 // ── Seed preprocessing configs ────────────────────────────────────────────────
 // Add / remove / edit rows here to change which preprocessing configs seed the
-// downstream benchmark stages 
+// downstream benchmark stages
 
 macro_rules! seed_configs {
     ( $( ($cm:ident, $w:expr, $h:expr, $gt:ident) ),* $(,)? ) => {
@@ -222,7 +222,10 @@ impl SelectBasesVariant {
 
     fn process(self, ctx: EntropyScoredContext) -> Result<BaseSelectionContext, EntroGdError> {
         match self {
-            Self::Naive => SelectBases { patience: NORMAL_PATIENCE }.process(ctx),
+            Self::Naive => SelectBases {
+                patience: NORMAL_PATIENCE,
+            }
+            .process(ctx),
             Self::ThresholdNaive => SelectBasesThreshold {
                 patience: THRESHOLD_PATIENCE,
                 base_bit_impl: BaseBitImpl::Naive,
@@ -364,18 +367,16 @@ fn bench_encoding(paths: &[PathBuf]) {
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
             let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
-            let base_sel = SelectBases { patience: NORMAL_PATIENCE }
-                .process(entropy_ctx)
-                .unwrap();
+            let base_sel = SelectBases {
+                patience: NORMAL_PATIENCE,
+            }
+            .process(entropy_ctx)
+            .unwrap();
             let pre_encode_base = BuildBaseTable {}.process(base_sel).unwrap();
 
             for variant in ENCODING_VARIANTS {
                 done += 1;
-                eprintln!(
-                    "[{done}/{total}] encoding/{}/{}",
-                    variant.name(),
-                    file_name
-                );
+                eprintln!("[{done}/{total}] encoding/{}/{}", variant.name(), file_name);
 
                 let compressed = variant.process(pre_encode_base.clone()).unwrap();
                 let sizes = compute_sizes(&compressed).unwrap();
@@ -422,7 +423,10 @@ impl DeltaVariant {
     }
 
     fn process(self, entropy_ctx: EntropyScoredContext) -> Result<CompressedData, EntroGdError> {
-        let base_sel = SelectBases { patience: NORMAL_PATIENCE }.process(entropy_ctx)?;
+        let base_sel = SelectBases {
+            patience: NORMAL_PATIENCE,
+        }
+        .process(entropy_ctx)?;
         match self {
             Self::Raw => {
                 let pre = BuildBaseTable {}.process(base_sel)?;
@@ -469,7 +473,11 @@ fn bench_delta_encoding(paths: &[PathBuf]) {
                 let bt_delta_ratio = match variant {
                     DeltaVariant::Delta => {
                         let r = base_table_delta_ratio(&compressed);
-                        if r.is_empty() { "1.0000".to_string() } else { r }
+                        if r.is_empty() {
+                            "1.0000".to_string()
+                        } else {
+                            r
+                        }
                     }
                     DeltaVariant::Raw => String::new(),
                 };
@@ -504,10 +512,15 @@ fn write_bench_csv() {
     let _ = std::fs::create_dir_all("target/bench-results");
     let dataset = IMAGE_DIR.split('/').last().unwrap_or("results");
     let path = format!("target/bench-results/compression_ratio_{dataset}.csv");
-    let mut out = String::from("group,impl_name,file,color_model_seed,pixel_grouping_seed,group_transform_seed,grouped_pixels_seed,source_bytes,total_compressed_bytes,base_table_bytes,deviation_stream_bytes,parameters_bytes,compression_ratio,base_table_compression_ratio\n");
+    let mut out = String::from(
+        "group,impl_name,file,color_model_seed,pixel_grouping_seed,group_transform_seed,grouped_pixels_seed,source_bytes,total_compressed_bytes,base_table_bytes,deviation_stream_bytes,parameters_bytes,compression_ratio,base_table_compression_ratio\n",
+    );
     for r in records.iter() {
         let compression_ratio = if r.total_compressed_bytes > 0 {
-            format!("{:.4}", r.source_bytes as f64 / r.total_compressed_bytes as f64)
+            format!(
+                "{:.4}",
+                r.source_bytes as f64 / r.total_compressed_bytes as f64
+            )
         } else {
             String::from("0.0000")
         };
@@ -530,7 +543,10 @@ fn write_bench_csv() {
         ));
     }
     std::fs::write(&path, out).unwrap_or_else(|e| eprintln!("failed to write {path}: {e}"));
-    println!("compression ratio results written to {path} ({} rows)", records.len());
+    println!(
+        "compression ratio results written to {path} ({} rows)",
+        records.len()
+    );
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────

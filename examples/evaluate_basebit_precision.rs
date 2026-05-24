@@ -3,9 +3,9 @@ use entro_gd::compression::base_bits::BaseBitGroups;
 use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use entro_gd::data_loader::{CsvDataLoader, DataLoader};
 use entro_gd::{
-    FilterExt,
-    BitDataSet, BuildImageBitDataSet, OpenImage, EntroGdError, Filter, ImageColorModel, ImageColorSpace,
-    ImageGroupingTransform, PixelGrouping, calculate_entropy, init_logging,
+    BitDataSet, BuildImageBitDataSet, EntroGdError, Filter, FilterExt, ImageColorModel,
+    ImageColorSpace, ImageGroupingTransform, OpenImage, PixelGrouping, calculate_entropy,
+    init_logging,
 };
 use std::env;
 use std::fs::File;
@@ -160,14 +160,15 @@ fn load_bit_data(options: &CliOptions) -> Result<BitDataSet, EntroGdError> {
             let dataset = loader.load(&options.input)?.dataset;
             BitDataSet::from_dataset(&dataset)
         }
-        InputKind::Image => OpenImage.then(BuildImageBitDataSet {
-            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
-            color_model: ImageColorModel::YCoCgR,
-            pixel_grouping: PixelGrouping::new(2, 2),
-            grouping_transform: ImageGroupingTransform::ForFirstPixel,
-            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
-        })
-        .process(options.input.clone()),
+        InputKind::Image => OpenImage
+            .then(BuildImageBitDataSet {
+                colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+                color_model: ImageColorModel::YCoCgR,
+                pixel_grouping: PixelGrouping::new(2, 2),
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
+                pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
+            })
+            .process(options.input.clone()),
         InputKind::Auto => unreachable!("auto input kind should be resolved before load"),
     }
 }

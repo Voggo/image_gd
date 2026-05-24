@@ -91,7 +91,6 @@ fn main() -> Result<(), EntroGdError> {
     .then(BuildBaseTable {})
     .then(EncodeData {});
 
-
     let load_compressed_data = LoadIgdFile {};
 
     for (image_file, image) in files_to_process.into_iter().zip(images.into_iter()) {

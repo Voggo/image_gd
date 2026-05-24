@@ -197,10 +197,7 @@ impl GenCondensedImpl {
     }
 
     fn process(self, input: EntropyScoredContext) -> Result<EntropyScoredContext, EntroGdError> {
-        GenCondensedSamples {
-            m_max: M_MAX,
-        }
-        .process(input)
+        GenCondensedSamples { m_max: M_MAX }.process(input)
     }
 }
 
@@ -513,7 +510,9 @@ const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Batche
 const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
 
 const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
-    SelectBasesImpl::Naive { patience: NORMAL_PATIENCE },
+    SelectBasesImpl::Naive {
+        patience: NORMAL_PATIENCE,
+    },
     SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::Naive,
         patience: THRESHOLD_PATIENCE,
@@ -660,9 +659,7 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         BuildSortedBaseTable {}.process(sel).unwrap()
     };
 
-    let normal = EncodeData {}
-        .process(base_table_ctx_seed.clone())
-        .unwrap();
+    let normal = EncodeData {}.process(base_table_ctx_seed.clone()).unwrap();
     let rle = EncodeDataRLE {}
         .process(base_table_ctx_seed.clone())
         .unwrap();
@@ -770,7 +767,11 @@ fn discover_image_cases() -> Vec<ImageCase> {
         .map(|path| {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             let source_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            ImageCase { name, path, source_size }
+            ImageCase {
+                name,
+                path,
+                source_size,
+            }
         })
         .collect()
 }
@@ -889,7 +890,10 @@ fn benchmark_filter_steps() {
         for &pre in SEED_PREPROCESSING_CONFIGS {
             done += 1;
             let file_name = path.file_name().unwrap().to_string_lossy();
-            eprintln!("[{done}/{total_cases}] preparing {file_name} ({})", pre.artifact_label());
+            eprintln!(
+                "[{done}/{total_cases}] preparing {file_name} ({})",
+                pre.artifact_label()
+            );
             let case = prepare_case(path.clone(), pre);
             let cases = std::slice::from_ref(&case);
 

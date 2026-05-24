@@ -2,7 +2,10 @@ use std::hint::black_box;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use png::{BitDepth, ColorType as PngColorType, Compression as PngCompression, Encoder as PngEncoder, Filter as PngFilter};
+use png::{
+    BitDepth, ColorType as PngColorType, Compression as PngCompression, Encoder as PngEncoder,
+    Filter as PngFilter,
+};
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
@@ -150,8 +153,10 @@ impl CompressionPipeline {
     }
 }
 
-const PIPELINES: [CompressionPipeline; 2] =
-    [CompressionPipeline::ImageBestRatio, CompressionPipeline::ImageFast];
+const PIPELINES: [CompressionPipeline; 2] = [
+    CompressionPipeline::ImageBestRatio,
+    CompressionPipeline::ImageFast,
+];
 
 // ── External codecs ───────────────────────────────────────────────────────────
 
@@ -191,7 +196,9 @@ impl ExternalCodec {
                 let img = image::RgbaImage::from_raw(width, height, rgba.to_vec()).unwrap();
                 let dyn_img = image::DynamicImage::ImageRgba8(img);
                 let mut buf = Cursor::new(Vec::new());
-                dyn_img.write_to(&mut buf, image::ImageFormat::WebP).unwrap();
+                dyn_img
+                    .write_to(&mut buf, image::ImageFormat::WebP)
+                    .unwrap();
                 buf.into_inner()
             }
             Self::Qoi => qoi::encode_to_vec(rgba, width, height).unwrap(),
@@ -205,13 +212,13 @@ impl ExternalCodec {
     fn decompress(self, data: &[u8]) -> Vec<u8> {
         match self {
             Self::Png => {
-                let img = image::load_from_memory_with_format(data, image::ImageFormat::Png)
-                    .unwrap();
+                let img =
+                    image::load_from_memory_with_format(data, image::ImageFormat::Png).unwrap();
                 img.to_rgba8().into_raw()
             }
             Self::WebPLossless => {
-                let img = image::load_from_memory_with_format(data, image::ImageFormat::WebP)
-                    .unwrap();
+                let img =
+                    image::load_from_memory_with_format(data, image::ImageFormat::WebP).unwrap();
                 img.to_rgba8().into_raw()
             }
             Self::Qoi => {
@@ -344,7 +351,10 @@ fn bench_compression_core(paths: &[PathBuf]) {
 
         for &pipeline in &PIPELINES {
             done += 1;
-            eprintln!("[{done}/{total}] entrogd {stage}/{}/{file_name}", pipeline.label());
+            eprintln!(
+                "[{done}/{total}] entrogd {stage}/{}/{file_name}",
+                pipeline.label()
+            );
 
             let pre = pipeline.preprocessing();
 
@@ -409,7 +419,10 @@ fn bench_decompress_file(paths: &[PathBuf]) {
 
         for &pipeline in &PIPELINES {
             done += 1;
-            eprintln!("[{done}/{total}] entrogd {stage}/{}/{file_name}", pipeline.label());
+            eprintln!(
+                "[{done}/{total}] entrogd {stage}/{}/{file_name}",
+                pipeline.label()
+            );
 
             let pre = pipeline.preprocessing();
             let bit_data = pre.process(image.clone()).unwrap();
@@ -473,7 +486,10 @@ fn bench_random_access(paths: &[PathBuf]) {
 
         for &pipeline in &PIPELINES {
             done += 1;
-            eprintln!("[{done}/{total}] entrogd {stage}/{}/{file_name}", pipeline.label());
+            eprintln!(
+                "[{done}/{total}] entrogd {stage}/{}/{file_name}",
+                pipeline.label()
+            );
 
             let pre = pipeline.preprocessing();
             let bit_data = pre.process(image.clone()).unwrap();
@@ -498,8 +514,7 @@ fn bench_random_access(paths: &[PathBuf]) {
 
                     for _ in 0..N_RUNS {
                         let start = Instant::now();
-                        let handle =
-                            DecompressRandomAccessHandle::new(compressed.clone()).unwrap();
+                        let handle = DecompressRandomAccessHandle::new(compressed.clone()).unwrap();
                         let decompressed = handle.decompress_samples(indices).unwrap();
                         let elapsed = start.elapsed();
                         black_box(decompressed);
@@ -661,7 +676,10 @@ fn write_bench_csv() {
             0
         };
         let compression_ratio = if r.total_compressed_bytes > 0 {
-            format!("{:.4}", r.source_bytes as f64 / r.total_compressed_bytes as f64)
+            format!(
+                "{:.4}",
+                r.source_bytes as f64 / r.total_compressed_bytes as f64
+            )
         } else {
             String::new()
         };
@@ -688,7 +706,10 @@ fn write_bench_csv() {
     }
 
     std::fs::write(&path, out).unwrap_or_else(|e| eprintln!("failed to write {path}: {e}"));
-    println!("benchmark results written to {path} ({} rows)", records.len());
+    println!(
+        "benchmark results written to {path} ({} rows)",
+        records.len()
+    );
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────

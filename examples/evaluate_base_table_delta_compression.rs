@@ -463,7 +463,9 @@ fn write_delta_distribution_csv(
 
 fn load_bit_data(input_path: &Path) -> Result<BitDataSet, EntroGdError> {
     if classify(input_path) == Some(InputKind::Image) {
-        OpenImage.then(image_build_options()).process(input_path.to_path_buf())
+        OpenImage
+            .then(image_build_options())
+            .process(input_path.to_path_buf())
     } else {
         let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
         let loaded = loader.load(input_path)?;

@@ -432,7 +432,10 @@ pub const fn get_delta_codec() -> [(usize, u128); 5] {
 // Runs at compile time with zero runtime overhead
 pub const fn get_delta_codec_fixed() -> [(usize, u128); 32] {
     const CODE_NUM: usize = 32;
-    const BIT_WIDTHS: [usize; 32] = [2, 6, 9, 12, 15, 18, 21, 25, 29, 33, 37, 41, 45, 49, 53, 58, 63, 68, 74, 80, 86, 93, 101, 111, 120, 130, 142, 153, 171, 183, 202, 231];
+    const BIT_WIDTHS: [usize; 32] = [
+        2, 6, 9, 12, 15, 18, 21, 25, 29, 33, 37, 41, 45, 49, 53, 58, 63, 68, 74, 80, 86, 93, 101,
+        111, 120, 130, 142, 153, 171, 183, 202, 231,
+    ];
     let mut codec = [(0usize, 0u128); CODE_NUM];
     let mut starts = [0u128; CODE_NUM];
     let mut cumulative = 0u128;
@@ -476,12 +479,12 @@ fn encode_adjusted_delta_bits_generic(
 
         for tier in 0..codec.len() {
             let (width, start) = codec[tier];
-            
+
             // Skip tiers that overflow u128 bounds
             if width >= 128 || start == u128::MAX {
                 break;
             }
-            
+
             let max = start.saturating_add((1u128 << width) - 1);
             if d <= max {
                 // Write prefix (either unary or fixed)
