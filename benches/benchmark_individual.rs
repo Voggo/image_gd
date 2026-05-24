@@ -42,68 +42,6 @@ const M_MAX: usize = 0;
 const BASE_BIT_IMPL: BaseBitImpl = BaseBitImpl::Naive;
 const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
 
-// ── Implementation enums ──────────────────────────────────────────────────────
-
-#[derive(Clone, Copy)]
-enum BuildImageBitDataSetImpl {
-    Native,
-    YCoCgR,
-    Group2x2,
-    ForFirstPixel,
-    ForMin,
-}
-
-impl BuildImageBitDataSetImpl {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Native => "native",
-            Self::YCoCgR => "ycocgr",
-            Self::Group2x2 => "group_2x2",
-            Self::ForFirstPixel => "forfirstpixel_2x2",
-            Self::ForMin => "formin_2x2",
-        }
-    }
-
-    fn process(self, path: PathBuf) -> Result<BitDataSet, EntroGdError> {
-        let image = OpenImage.process(path)?;
-        let (color_model, pixel_grouping, grouping_transform) = match self {
-            Self::Native => (
-                ImageColorModel::Rgb,
-                PixelGrouping::new(1, 1),
-                ImageGroupingTransform::Raw,
-            ),
-            Self::YCoCgR => (
-                ImageColorModel::YCoCgR,
-                PixelGrouping::new(1, 1),
-                ImageGroupingTransform::Raw,
-            ),
-            Self::Group2x2 => (
-                ImageColorModel::YCoCgR,
-                PixelGrouping::new(2, 2),
-                ImageGroupingTransform::Raw,
-            ),
-            Self::ForFirstPixel => (
-                ImageColorModel::YCoCgR,
-                PixelGrouping::new(2, 2),
-                ImageGroupingTransform::ForFirstPixel,
-            ),
-            Self::ForMin => (
-                ImageColorModel::YCoCgR,
-                PixelGrouping::new(2, 2),
-                ImageGroupingTransform::ForMin,
-            ),
-        };
-        BuildImageBitDataSet {
-            colorspace: ImageColorSpace::SrgbWithLinearAlpha,
-            color_model,
-            pixel_grouping,
-            grouping_transform,
-            pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
-        }
-        .process(image)
-    }
-}
-
 // ── Seed preprocessing config ─────────────────────────────────────────────────
 // Edit SEED_PREPROCESSING_CONFIGS to change which preprocessing configs are used
 // as seeds for all downstream benchmark stages.
@@ -367,22 +305,37 @@ impl EncodeImpl {
 }
 
 #[derive(Clone, Copy)]
+enum DecodeDeltaImpl {
+    Unary,
+    Fixed,
+}
+
+impl DecodeDeltaImpl {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unary => "unary",
+            Self::Fixed => "fixed",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 enum DeltaEncodeImpl {
-    Current,
+    Unary,
     Fixed,
 }
 
 impl DeltaEncodeImpl {
     fn label(self) -> &'static str {
         match self {
-            Self::Current => "current",
+            Self::Unary => "unary",
             Self::Fixed => "fixed",
         }
     }
 
     fn process(self, input: CompressedData) -> Result<CompressedData, EntroGdError> {
         match self {
-            Self::Current => DeltaEncodeBaseTable {}.process(input),
+            Self::Unary => DeltaEncodeBaseTable {}.process(input),
             Self::Fixed => DeltaEncodeBaseTableFixed {}.process(input),
         }
     }
@@ -522,15 +475,32 @@ const SEED_PREPROCESSING_CONFIGS: &[SeedPreprocessing] = seed_configs![
     (YCoCgR, 3, 3, ForFirstPixel),
 ];
 
-// ── Standard arrays ───────────────────────────────────────────────────────────
-
-const BUILD_IMAGE_IMPLS: [BuildImageBitDataSetImpl; 5] = [
-    BuildImageBitDataSetImpl::Native,
-    BuildImageBitDataSetImpl::YCoCgR,
-    BuildImageBitDataSetImpl::Group2x2,
-    BuildImageBitDataSetImpl::ForFirstPixel,
-    BuildImageBitDataSetImpl::ForMin,
+// Rgb vs YCoCgR at 1x1/Raw to isolate color model conversion cost.
+const BUILD_IMAGE_COLOR_MODEL_CONFIGS: &[SeedPreprocessing] = seed_configs![
+    (Rgb, 1, 1, Raw),
+    (YCoCgR, 1, 1, Raw),
 ];
+
+// YCoCgR with various groupings × all 3 transforms to isolate grouping cost.
+const BUILD_IMAGE_GROUPING_CONFIGS: &[SeedPreprocessing] = seed_configs![
+    (YCoCgR, 2, 1, Raw),
+    (YCoCgR, 2, 1, ForFirstPixel),
+    (YCoCgR, 2, 1, ForMin),
+    (YCoCgR, 3, 1, Raw),
+    (YCoCgR, 3, 1, ForFirstPixel),
+    (YCoCgR, 3, 1, ForMin),
+    (YCoCgR, 2, 2, Raw),
+    (YCoCgR, 2, 2, ForFirstPixel),
+    (YCoCgR, 2, 2, ForMin),
+    (YCoCgR, 2, 3, Raw),
+    (YCoCgR, 2, 3, ForFirstPixel),
+    (YCoCgR, 2, 3, ForMin),
+    (YCoCgR, 3, 3, Raw),
+    (YCoCgR, 3, 3, ForFirstPixel),
+    (YCoCgR, 3, 3, ForMin),
+];
+
+// ── Standard arrays ───────────────────────────────────────────────────────────
 
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Batched];
 
@@ -589,7 +559,8 @@ const ENCODE_IMPLS: [EncodeImpl; 5] = [
     EncodeImpl::Fused,
 ];
 
-const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 2] = [DeltaEncodeImpl::Current, DeltaEncodeImpl::Fixed];
+const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 2] = [DeltaEncodeImpl::Unary, DeltaEncodeImpl::Fixed];
+const DECODE_DELTA_IMPLS: [DecodeDeltaImpl; 2] = [DecodeDeltaImpl::Unary, DecodeDeltaImpl::Fixed];
 const SAVE_IGD_IMPLS: [SaveIgdImpl; 4] = [
     SaveIgdImpl::Normal,
     SaveIgdImpl::Rle,
@@ -646,6 +617,8 @@ struct PreparedCase {
     entropy_seed: EntropyScoredContext,
     base_table_ctx_seed: PreEncodeContext,
     pre_delta_compressed_seed: CompressedData,
+    delta_unary_seed: CompressedData,
+    delta_fixed_seed: CompressedData,
     compressed_seeds: CompressedDataSeeds,
     loaded_compressed_seeds: CompressedDataSeeds,
     igd_paths: IgdPaths,
@@ -699,6 +672,12 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         .unwrap();
     let huffman = EncodeDataHuffman {}.process(sorted_ctx).unwrap();
     let pre_delta_compressed_seed = normal.clone();
+    let delta_unary_seed = DeltaEncodeBaseTable {}
+        .process(pre_delta_compressed_seed.clone())
+        .unwrap();
+    let delta_fixed_seed = DeltaEncodeBaseTableFixed {}
+        .process(pre_delta_compressed_seed.clone())
+        .unwrap();
 
     let pre_label = preprocessing.artifact_label();
     let igd_paths = IgdPaths {
@@ -751,6 +730,8 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         entropy_seed,
         base_table_ctx_seed,
         pre_delta_compressed_seed,
+        delta_unary_seed,
+        delta_fixed_seed,
         compressed_seeds: CompressedDataSeeds {
             normal: normal.clone(),
             rle: rle.clone(),
@@ -807,28 +788,63 @@ fn discover_image_cases() -> Vec<ImageCase> {
         .collect()
 }
 
-fn bench_build_image_step(image_cases: &[ImageCase]) {
-    let stage_name = "BuildImageBitDataSet";
+fn bench_build_image_color_model_step(image_cases: &[ImageCase]) {
+    let stage_name = "BuildImageColorModel";
     let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
     if !filter.is_empty() && !stage_name.contains(filter.as_str()) {
         return;
     }
-    let total = image_cases.len() * BUILD_IMAGE_IMPLS.len();
+    let total = image_cases.len() * BUILD_IMAGE_COLOR_MODEL_CONFIGS.len();
     let mut done = 0;
     for case in image_cases {
-        for &implementation in &BUILD_IMAGE_IMPLS {
-            let label = implementation.label();
+        for &pre in BUILD_IMAGE_COLOR_MODEL_CONFIGS {
+            let label = pre.color_model_label();
             done += 1;
             eprintln!("[{done}/{total}] {stage_name}/{label}/{}", case.name);
-            let _ = black_box(implementation.process(case.path.clone()));
+            let _ = black_box(pre.process(case.path.clone()));
             for _ in 0..N_RUNS {
                 let start = Instant::now();
-                let output = implementation.process(case.path.clone()).unwrap();
+                let output = pre.process(case.path.clone()).unwrap();
                 let elapsed = start.elapsed();
                 black_box(output);
                 BENCH_RECORDS.lock().unwrap().push(BenchRecord {
                     stage: stage_name,
                     impl_name: label.to_string(),
+                    file: case.name.clone(),
+                    sample_time_ns: elapsed.as_nanos(),
+                    source_bytes: case.source_size,
+                    color_model_seed: String::new(),
+                    pixel_grouping_seed: String::new(),
+                    group_transform_seed: String::new(),
+                    grouped_pixels_seed: String::new(),
+                });
+            }
+        }
+    }
+}
+
+fn bench_build_image_grouping_step(image_cases: &[ImageCase]) {
+    let stage_name = "BuildImageGrouping";
+    let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
+    if !filter.is_empty() && !stage_name.contains(filter.as_str()) {
+        return;
+    }
+    let total = image_cases.len() * BUILD_IMAGE_GROUPING_CONFIGS.len();
+    let mut done = 0;
+    for case in image_cases {
+        for &pre in BUILD_IMAGE_GROUPING_CONFIGS {
+            let label = format!("{}_{}", pre.pixel_grouping_label(), pre.group_transform_label());
+            done += 1;
+            eprintln!("[{done}/{total}] {stage_name}/{label}/{}", case.name);
+            let _ = black_box(pre.process(case.path.clone()));
+            for _ in 0..N_RUNS {
+                let start = Instant::now();
+                let output = pre.process(case.path.clone()).unwrap();
+                let elapsed = start.elapsed();
+                black_box(output);
+                BENCH_RECORDS.lock().unwrap().push(BenchRecord {
+                    stage: stage_name,
+                    impl_name: label.clone(),
                     file: case.name.clone(),
                     sample_time_ns: elapsed.as_nanos(),
                     source_bytes: case.source_size,
@@ -900,7 +916,9 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn
 // ── All benchmark groups ──────────────────────────────────────────────────────
 
 fn benchmark_filter_steps() {
-    bench_build_image_step(&discover_image_cases());
+    let image_cases = discover_image_cases();
+    bench_build_image_color_model_step(&image_cases);
+    bench_build_image_grouping_step(&image_cases);
 
     let _ = std::fs::create_dir_all("target/bench-artifacts");
     let paths = sorted_image_paths();
@@ -978,6 +996,19 @@ fn benchmark_filter_steps() {
                 DeltaEncodeImpl::label,
                 |_, case| case.pre_delta_compressed_seed.clone(),
                 |implementation, input| implementation.process(input),
+                seed_meta,
+            );
+
+            bench_step_group(
+                "DecodeDeltaBaseTable",
+                cases,
+                &DECODE_DELTA_IMPLS,
+                DecodeDeltaImpl::label,
+                |impl_, case| match impl_ {
+                    DecodeDeltaImpl::Unary => case.delta_unary_seed.clone(),
+                    DecodeDeltaImpl::Fixed => case.delta_fixed_seed.clone(),
+                },
+                |_, input| DecodeDeltaBaseTable {}.process(input),
                 seed_meta,
             );
 

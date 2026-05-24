@@ -78,18 +78,17 @@ fn main() -> Result<(), EntroGdError> {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::Rgb,
-        pixel_grouping: PixelGrouping::new(1, 1),
-        grouping_transform: ImageGroupingTransform::Raw,
+        pixel_grouping: PixelGrouping::new(2, 2),
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
     .then(SelectBasesThreshold {
-        patience: 10,
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        entropy_threshold: 0.60,
+        patience: 5,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+        entropy_threshold: 0.75,
     })
-    .then(BuildBaseTable {})
-    .then(EncodeData {});
+    .then(EncodeDataFusedDictionary {});
 
     let load_compressed_data = LoadIgdFile {};
 

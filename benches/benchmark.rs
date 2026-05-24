@@ -1,6 +1,6 @@
 use std::hint::black_box;
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use png::{
     BitDepth, ColorType as PngColorType, Compression as PngCompression, Encoder as PngEncoder,
@@ -43,7 +43,7 @@ static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex
 // ── Harness config ────────────────────────────────────────────────────────────
 
 const N_RUNS: usize = 3;
-const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
+const DEFAULT_DATA_ROOT: &str = "data/bench_datasets/kodak_dataset";
 
 // ── Pipeline constants ────────────────────────────────────────────────────────
 
@@ -276,9 +276,12 @@ fn compute_sizes(compressed: &CompressedData) -> Result<CompressionSizes, EntroG
 
 // ── Image discovery ───────────────────────────────────────────────────────────
 
-fn sorted_image_paths() -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(IMAGE_DIR)
-        .unwrap_or_else(|e| panic!("cannot read {IMAGE_DIR}: {e}"))
+fn collect_images(dir: &Path) -> Vec<PathBuf> {
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut paths: Vec<PathBuf> = read_dir
         .filter_map(|entry| {
             let path = entry.ok()?.path();
             let ext = path.extension()?.to_string_lossy().to_lowercase();
@@ -287,6 +290,42 @@ fn sorted_image_paths() -> Vec<PathBuf> {
         .collect();
     paths.sort();
     paths
+}
+
+fn dir_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("results")
+        .to_string()
+}
+
+/// Returns one entry per dataset. If `root` contains images directly, that's the
+/// only dataset; otherwise each immediate subdirectory containing images is a
+/// dataset.
+fn discover_datasets(root: &Path) -> Vec<(String, Vec<PathBuf>)> {
+    let direct = collect_images(root);
+    if !direct.is_empty() {
+        return vec![(dir_name(root), direct)];
+    }
+
+    let read_dir = std::fs::read_dir(root)
+        .unwrap_or_else(|e| panic!("cannot read {}: {}", root.display(), e));
+    let mut subdirs: Vec<PathBuf> = read_dir
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            path.is_dir().then_some(path)
+        })
+        .collect();
+    subdirs.sort();
+
+    let mut datasets = Vec::new();
+    for sub in subdirs {
+        let imgs = collect_images(&sub);
+        if !imgs.is_empty() {
+            datasets.push((dir_name(&sub), imgs));
+        }
+    }
+    datasets
 }
 
 // ── Random index generation ───────────────────────────────────────────────────
@@ -647,13 +686,12 @@ fn bench_external(paths: &[PathBuf]) {
 
 // ── CSV output ────────────────────────────────────────────────────────────────
 
-fn write_bench_csv() {
+fn write_bench_csv(dataset: &str) {
     let records = BENCH_RECORDS.lock().unwrap();
     if records.is_empty() {
         return;
     }
     let _ = std::fs::create_dir_all("target/bench-results");
-    let dataset = IMAGE_DIR.split('/').last().unwrap_or("results");
     let path = format!("target/bench-results/benchmark_{dataset}.csv");
 
     let mut out = String::from(
@@ -715,10 +753,28 @@ fn write_bench_csv() {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
-    let paths = sorted_image_paths();
-    bench_compression_core(&paths);
-    bench_decompress_file(&paths);
-    bench_random_access(&paths);
-    bench_external(&paths);
-    write_bench_csv();
+    let root = std::env::var("BENCH_DATA_DIR")
+        .unwrap_or_else(|_| DEFAULT_DATA_ROOT.to_string());
+    let root = PathBuf::from(root);
+    let datasets = discover_datasets(&root);
+    if datasets.is_empty() {
+        eprintln!("no images found in {}", root.display());
+        return;
+    }
+
+    for (i, (name, paths)) in datasets.iter().enumerate() {
+        eprintln!(
+            "=== dataset [{}/{}]: {} ({} images) ===",
+            i + 1,
+            datasets.len(),
+            name,
+            paths.len()
+        );
+        bench_compression_core(paths);
+        bench_decompress_file(paths);
+        bench_random_access(paths);
+        bench_external(paths);
+        write_bench_csv(name);
+        BENCH_RECORDS.lock().unwrap().clear();
+    }
 }

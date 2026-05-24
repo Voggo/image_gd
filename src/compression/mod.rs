@@ -37,9 +37,10 @@ pub use entropy::{
     EntropyStrideSampledBatched, calculate_entropy, calculate_entropy_stride_sampled,
 };
 pub use file_format::{
-    EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadEgdFile,
-    LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile, decompress_egd_to_csv,
-    decompress_igd_to_image, load_and_decompress_egd, load_and_decompress_igd,
+    DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES,
+    IgdFile, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile,
+    decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
+    load_and_decompress_igd,
 };
 pub use image_preprocessor::{
     BuildImageBitDataSet, ImageColorModel, ImageColorSpace, ImageGroupingTransform, OpenImage,

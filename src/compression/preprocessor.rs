@@ -10,7 +10,7 @@ use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
 const MAX_DECIMAL_SCALE: u8 = 9;
-pub const DEFAULT_ALIGN_ROWS_TO_WORD: bool = true;
+pub const DEFAULT_ALIGN_ROWS_TO_WORD: bool = false;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PixelGrouping(pub u32, pub u32);

@@ -1226,6 +1226,41 @@ impl Filter for LoadEgdFile {
     }
 }
 
+/// Decode the delta-encoded base table inside a `CompressedData`, producing a `CompressedData`
+/// with a `BaseTable::Raw`. This is the inverse of `DeltaEncodeBaseTable` /
+/// `DeltaEncodeBaseTableFixed` and benchmarks only the delta-stream decode work.
+pub struct DecodeDeltaBaseTable {}
+
+impl Filter for DecodeDeltaBaseTable {
+    type Input = CompressedData;
+    type Output = CompressedData;
+
+    fn process(&self, mut input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let BaseTable::Delta(ref delta) = input.base_table else {
+            return Ok(input);
+        };
+
+        let lb = delta.raw_rows.first().map(|(bv, _)| bv.len()).unwrap_or(0);
+        if lb == 0 {
+            input.base_table = BaseTable::Raw(Vec::new());
+            return Ok(input);
+        }
+
+        let rows = decode_delta_base_rows(
+            delta.raw_rows.len(),
+            lb,
+            &delta.sort_column_order,
+            &delta.first_sort_key,
+            delta.delta_count,
+            &delta.delta_bit_stream,
+            delta.codec_id,
+        )?;
+
+        input.base_table = BaseTable::Raw(rows);
+        Ok(input)
+    }
+}
+
 /// Load an `.egd` file from disk and parse it into `CompressedData`.
 pub fn load_compressed_from_egd<P: AsRef<Path>>(
     input_path: P,

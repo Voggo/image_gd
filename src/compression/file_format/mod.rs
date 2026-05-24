@@ -5,8 +5,9 @@ mod path_utils;
 mod tags;
 
 pub use egd::{
-    EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile, decompress_egd_to_csv,
-    load_and_decompress_egd, load_compressed_from_egd, save_compressed_as_egd,
+    DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile,
+    decompress_egd_to_csv, load_and_decompress_egd, load_compressed_from_egd,
+    save_compressed_as_egd,
 };
 pub use igd::{
     IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadIgdFile, SaveIgdFile,
