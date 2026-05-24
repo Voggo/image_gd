@@ -412,6 +412,7 @@ fn bench_encoding(paths: &[PathBuf]) {
 enum DeltaVariant {
     Raw,
     Delta,
+    DeltaFixed,
 }
 
 impl DeltaVariant {
@@ -419,6 +420,7 @@ impl DeltaVariant {
         match self {
             Self::Raw => "raw",
             Self::Delta => "delta",
+            Self::DeltaFixed => "delta_fixed",
         }
     }
 
@@ -437,11 +439,20 @@ impl DeltaVariant {
                 let compressed = EncodeData {}.process(pre)?;
                 DeltaEncodeBaseTable {}.process(compressed)
             }
+            Self::DeltaFixed => {
+                let pre = BuildSortedBaseTable {}.process(base_sel)?;
+                let compressed = EncodeData {}.process(pre)?;
+                DeltaEncodeBaseTableFixed {}.process(compressed)
+            }
         }
     }
 }
 
-const DELTA_VARIANTS: [DeltaVariant; 2] = [DeltaVariant::Raw, DeltaVariant::Delta];
+const DELTA_VARIANTS: [DeltaVariant; 3] = [
+    DeltaVariant::Raw,
+    DeltaVariant::Delta,
+    DeltaVariant::DeltaFixed,
+];
 
 fn bench_delta_encoding(paths: &[PathBuf]) {
     let total = paths.len() * SEED_PREPROCESSING_CONFIGS.len() * DELTA_VARIANTS.len();
@@ -471,7 +482,7 @@ fn bench_delta_encoding(paths: &[PathBuf]) {
                 let compressed = variant.process(entropy_ctx.clone()).unwrap();
                 let sizes = compute_sizes(&compressed).unwrap();
                 let bt_delta_ratio = match variant {
-                    DeltaVariant::Delta => {
+                    DeltaVariant::Delta | DeltaVariant::DeltaFixed => {
                         let r = base_table_delta_ratio(&compressed);
                         if r.is_empty() {
                             "1.0000".to_string()

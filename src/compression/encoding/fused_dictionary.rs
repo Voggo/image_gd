@@ -213,9 +213,8 @@ pub(super) fn encode_data_fused_dictionary<B: BaseBit + ?Sized>(
 
     let symbol_width = num_deviation_bits + l_id;
     // Process rows in parallel chunks to build symbol segments
-    let chunk_size = (num_rows / (rayon::current_num_threads() * 4))
-        .max(256)
-        .min(4096);
+    let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).clamp(256, 4096);
+
     let chunk_results: Vec<BitVec<usize, Lsb0>> = (0..num_rows)
         .into_par_iter()
         .chunks(chunk_size)

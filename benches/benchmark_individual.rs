@@ -290,22 +290,42 @@ impl SelectBasesImpl {
 
 #[derive(Clone, Copy)]
 enum BuildBaseTableImpl {
-    Unsorted,
-    Sorted,
+    Unsorted { base_bit_impl: BaseBitImpl },
+    Sorted { base_bit_impl: BaseBitImpl },
 }
 
 impl BuildBaseTableImpl {
     fn label(self) -> &'static str {
         match self {
-            Self::Unsorted => "build_base_table",
-            Self::Sorted => "build_sorted_base_table",
+            Self::Unsorted { base_bit_impl: BaseBitImpl::Naive } => "build_base_table_naive",
+            Self::Unsorted { base_bit_impl: BaseBitImpl::IncSignatureGroups } => {
+                "build_base_table_inc_sig"
+            }
+            Self::Sorted { base_bit_impl: BaseBitImpl::Naive } => "build_sorted_base_table_naive",
+            Self::Sorted { base_bit_impl: BaseBitImpl::IncSignatureGroups } => {
+                "build_sorted_base_table_inc_sig"
+            }
+            _ => unreachable!(),
         }
+    }
+
+    fn select_bases(self, entropy_ctx: EntropyScoredContext) -> BaseSelectionContext {
+        let base_bit_impl = match self {
+            Self::Unsorted { base_bit_impl } | Self::Sorted { base_bit_impl } => base_bit_impl,
+        };
+        SelectBasesThreshold {
+            patience: THRESHOLD_PATIENCE,
+            base_bit_impl,
+            entropy_threshold: ENTROPY_THRESHOLD,
+        }
+        .process(entropy_ctx)
+        .unwrap()
     }
 
     fn process(self, input: BaseSelectionContext) -> Result<PreEncodeContext, EntroGdError> {
         match self {
-            Self::Unsorted => BuildBaseTable {}.process(input),
-            Self::Sorted => BuildSortedBaseTable {}.process(input),
+            Self::Unsorted { .. } => BuildBaseTable {}.process(input),
+            Self::Sorted { .. } => BuildSortedBaseTable {}.process(input),
         }
     }
 }
@@ -349,15 +369,22 @@ impl EncodeImpl {
 #[derive(Clone, Copy)]
 enum DeltaEncodeImpl {
     Current,
+    Fixed,
 }
 
 impl DeltaEncodeImpl {
     fn label(self) -> &'static str {
-        "current"
+        match self {
+            Self::Current => "current",
+            Self::Fixed => "fixed",
+        }
     }
 
     fn process(self, input: CompressedData) -> Result<CompressedData, EntroGdError> {
-        DeltaEncodeBaseTable {}.process(input)
+        match self {
+            Self::Current => DeltaEncodeBaseTable {}.process(input),
+            Self::Fixed => DeltaEncodeBaseTableFixed {}.process(input),
+        }
     }
 }
 
@@ -547,8 +574,12 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
     },
 ];
 
-const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 2] =
-    [BuildBaseTableImpl::Unsorted, BuildBaseTableImpl::Sorted];
+const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 4] = [
+    BuildBaseTableImpl::Unsorted { base_bit_impl: BaseBitImpl::Naive },
+    BuildBaseTableImpl::Unsorted { base_bit_impl: BaseBitImpl::IncSignatureGroups },
+    BuildBaseTableImpl::Sorted { base_bit_impl: BaseBitImpl::Naive },
+    BuildBaseTableImpl::Sorted { base_bit_impl: BaseBitImpl::IncSignatureGroups },
+];
 
 const ENCODE_IMPLS: [EncodeImpl; 5] = [
     EncodeImpl::Normal,
@@ -558,7 +589,7 @@ const ENCODE_IMPLS: [EncodeImpl; 5] = [
     EncodeImpl::Fused,
 ];
 
-const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 1] = [DeltaEncodeImpl::Current];
+const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 2] = [DeltaEncodeImpl::Current, DeltaEncodeImpl::Fixed];
 const SAVE_IGD_IMPLS: [SaveIgdImpl; 4] = [
     SaveIgdImpl::Normal,
     SaveIgdImpl::Rle,
@@ -922,7 +953,7 @@ fn benchmark_filter_steps() {
                 cases,
                 &BUILD_BASE_TABLE_IMPLS,
                 BuildBaseTableImpl::label,
-                |_, case| canonical_select_bases(case.entropy_seed.clone()),
+                |impl_, case| impl_.select_bases(case.entropy_seed.clone()),
                 |implementation, input| implementation.process(input),
                 seed_meta,
             );
