@@ -181,7 +181,7 @@ fn decode_adjusted_delta_unary(
     bit_pos: &mut usize,
     lb: usize,
 ) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
-    const CODEC: [(usize, u64); 5] = get_delta_codec();
+    const CODEC: [(usize, u128); 5] = get_delta_codec();
     let overflow_tier = CODEC.len();
 
     let mut tier = 0usize;
@@ -202,7 +202,7 @@ fn decode_adjusted_delta_unary(
         *bit_pos += 1;
     }
 
-    let (payload_width, start): (usize, u64) = if tier < CODEC.len() {
+    let (payload_width, start): (usize, u128) = if tier < CODEC.len() {
         CODEC[tier]
     } else if tier == overflow_tier {
         (lb, 0)
@@ -225,10 +225,10 @@ fn decode_adjusted_delta_unary(
         return Ok(payload.to_bitvec());
     }
 
-    let mut payload_value = 0u64;
+    let mut payload_value = 0u128;
     for idx in 0..payload_width {
         if payload[idx] {
-            payload_value |= 1u64 << idx;
+            payload_value |= 1u128 << idx;
         }
     }
     let value = start + payload_value;
@@ -247,8 +247,8 @@ fn decode_adjusted_delta_fixed(
     bit_pos: &mut usize,
     lb: usize,
 ) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
-    const CODEC: [(usize, u64); 16] = get_delta_codec_fixed();
-    const PREFIX_BITS: usize = 4; // log2(16) = 4 bits for tier ID
+    const CODEC: [(usize, u128); 32] = get_delta_codec_fixed();
+    const PREFIX_BITS: usize = 5; // log2(32) = 5 bits for tier ID
     const OVERFLOW_TIER: usize = CODEC.len() - 1;
 
     // Read fixed-width tier ID
@@ -272,7 +272,7 @@ fn decode_adjusted_delta_fixed(
         });
     }
 
-    let (payload_width, start): (usize, u64) = if tier < CODEC.len() - 1 {
+    let (payload_width, start): (usize, u128) = if tier < CODEC.len() - 1 {
         CODEC[tier]
     } else {
         // Overflow tier uses lb bits
@@ -292,10 +292,10 @@ fn decode_adjusted_delta_fixed(
         return Ok(payload.to_bitvec());
     }
 
-    let mut payload_value = 0u64;
+    let mut payload_value = 0u128;
     for idx in 0..payload_width {
         if payload[idx] {
-            payload_value |= 1u64 << idx;
+            payload_value |= 1u128 << idx;
         }
     }
     let value = start + payload_value;

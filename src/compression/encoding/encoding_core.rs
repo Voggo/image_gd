@@ -580,19 +580,6 @@ impl Filter for EncodeData {
     }
 }
 
-pub struct EncodeDataOptimized {}
-
-impl Filter for EncodeDataOptimized {
-    type Input = PreEncodeContext;
-    type Output = CompressedData;
-
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info("Encoding data into compressed format (optimized)");
-        let encoded = EncodedData::Normal(encode_data(&input));
-        Ok(build_compressed_data(input, encoded))
-    }
-}
-
 pub struct EncodeDataRLE {}
 
 impl Filter for EncodeDataRLE {

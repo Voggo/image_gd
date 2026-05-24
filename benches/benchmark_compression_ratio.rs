@@ -333,7 +333,7 @@ impl EncodingVariant {
 
     fn process(self, pre_encode: PreEncodeContext) -> Result<CompressedData, EntroGdError> {
         match self {
-            Self::Normal => EncodeDataOptimized {}.process(pre_encode),
+            Self::Normal => EncodeData {}.process(pre_encode),
             Self::Rle => EncodeDataRLE {}.process(pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(pre_encode),
@@ -403,7 +403,7 @@ fn bench_encoding(paths: &[PathBuf]) {
 // ── Group 3: delta_encoding ───────────────────────────────────────────────────
 //
 // Isolates the effect of base-table delta encoding.
-// Fixed: naive SelectBases, EncodeDataOptimized.
+// Fixed: naive SelectBases, EncodeData.
 // Delta encoding requires a sorted base table (BuildSortedBaseTable); without it
 // DeltaEncodeBaseTable is a no-op, so only Raw vs. Delta are meaningful variants.
 
@@ -426,11 +426,11 @@ impl DeltaVariant {
         match self {
             Self::Raw => {
                 let pre = BuildBaseTable {}.process(base_sel)?;
-                EncodeDataOptimized {}.process(pre)
+                EncodeData {}.process(pre)
             }
             Self::Delta => {
                 let pre = BuildSortedBaseTable {}.process(base_sel)?;
-                let compressed = EncodeDataOptimized {}.process(pre)?;
+                let compressed = EncodeData {}.process(pre)?;
                 DeltaEncodeBaseTable {}.process(compressed)
             }
         }

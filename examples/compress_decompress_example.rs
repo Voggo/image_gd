@@ -84,7 +84,7 @@ fn main() -> Result<(), EntroGdError> {
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
-        .then(EncodeDataOptimized {})
+        .then(EncodeData {})
         .then(DeltaEncodeBaseTable {});
     let compressed = compression_pipeline.process(bit_data)?;
 

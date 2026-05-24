@@ -72,7 +72,7 @@ fn test_csv_roundtrip_compression() {
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
-        .then(EncodeDataOptimized {});
+        .then(EncodeData {});
 
     let compressed = compression_pipeline
         .process(bit_data.clone())

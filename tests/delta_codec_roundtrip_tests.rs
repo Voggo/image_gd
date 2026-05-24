@@ -50,7 +50,7 @@ fn test_delta_codec_roundtrip_unary_prefix() {
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
-        .then(EncodeDataOptimized {})
+        .then(EncodeData {})
         .then(DeltaEncodeBaseTable {}); // Unary prefix codec
 
     let compressed = compression_pipeline
@@ -123,7 +123,7 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
-        .then(EncodeDataOptimized {})
+        .then(EncodeData {})
         .then(DeltaEncodeBaseTableFixed {}); // Fixed 4-bit prefix codec
 
     let compressed = compression_pipeline
@@ -197,7 +197,7 @@ fn test_delta_codec_tag_serialization() {
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
-        .then(EncodeDataOptimized {})
+        .then(EncodeData {})
         .then(DeltaEncodeBaseTable {});
 
     let compressed_unary = compression_pipeline_unary
@@ -225,7 +225,7 @@ fn test_delta_codec_tag_serialization() {
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
-        .then(EncodeDataOptimized {})
+        .then(EncodeData {})
         .then(DeltaEncodeBaseTableFixed {});
 
     let compressed_fixed = compression_pipeline_fixed

@@ -395,31 +395,32 @@ fn subtract_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
     out
 }
 
-fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
+fn bits_to_u128(bits: &BitSlice<usize, Lsb0>) -> u128 {
     if bits.is_empty() {
         0
     } else {
-        bits.load_le::<u64>()
+        bits.load_le::<u128>()
     }
 }
 
-fn write_u64_bits<O: BitOrder>(value: u64, width: usize, out: &mut BitVec<usize, O>) {
-    let bits = value.view_bits::<O>();
+fn write_u128_bits<O: BitOrder>(value: u128, width: usize, out: &mut BitVec<usize, O>) {
+    let bytes = value.to_le_bytes();
+    let bits = bytes.view_bits::<O>();
     out.extend_from_bitslice(&bits[..width]);
 }
 
 // Runs at compile time
 // Used to quickly change the unary prefix lengths and payload bit widths for delta encoding
-pub const fn get_delta_codec() -> [(usize, u64); 5] {
+pub const fn get_delta_codec() -> [(usize, u128); 5] {
     const CODE_NUM: usize = 5;
     const BIT_WIDTHS: [usize; 5] = [2, 5, 16, 32, 48];
-    let mut codec = [(0usize, 0u64); CODE_NUM];
-    let mut starts = [0u64; CODE_NUM];
-    let mut cumulative = 0u64;
+    let mut codec = [(0usize, 0u128); CODE_NUM];
+    let mut starts = [0u128; CODE_NUM];
+    let mut cumulative = 0u128;
     let mut i = 0;
     while i < CODE_NUM {
         starts[i] = cumulative;
-        cumulative += 1 << BIT_WIDTHS[i];
+        cumulative += 1u128 << BIT_WIDTHS[i];
         codec[i] = (BIT_WIDTHS[i], starts[i]);
         i += 1;
     }
@@ -427,19 +428,23 @@ pub const fn get_delta_codec() -> [(usize, u64); 5] {
     codec
 }
 
-// Fixed 4-bit prefix code for delta encoding (16 tiers)
+// Fixed 5-bit prefix code for delta encoding (32 tiers)
 // Runs at compile time with zero runtime overhead
-pub const fn get_delta_codec_fixed() -> [(usize, u64); 16] {
-    const CODE_NUM: usize = 16;
-    const BIT_WIDTHS: [usize; 16] = [1, 3, 6, 8, 14, 16, 18, 20, 22, 24, 26, 28, 31, 35, 42, 48];
-    let mut codec = [(0usize, 0u64); CODE_NUM];
-    let mut starts = [0u64; CODE_NUM];
-    let mut cumulative = 0u64;
+pub const fn get_delta_codec_fixed() -> [(usize, u128); 32] {
+    const CODE_NUM: usize = 32;
+    const BIT_WIDTHS: [usize; 32] = [2, 6, 9, 12, 15, 18, 21, 25, 29, 33, 37, 41, 45, 49, 53, 58, 63, 68, 74, 80, 86, 93, 101, 111, 120, 130, 142, 153, 171, 183, 202, 231];
+    let mut codec = [(0usize, 0u128); CODE_NUM];
+    let mut starts = [0u128; CODE_NUM];
+    let mut cumulative = 0u128;
     let mut i = 0;
     while i < CODE_NUM - 1 {
         // Don't overflow on the last tier
         starts[i] = cumulative;
-        cumulative += 1 << BIT_WIDTHS[i];
+        if BIT_WIDTHS[i] >= 128 {
+            cumulative = u128::MAX;
+        } else {
+            cumulative = cumulative.saturating_add(1u128 << BIT_WIDTHS[i]);
+        }
         codec[i] = (BIT_WIDTHS[i], starts[i]);
         i += 1;
     }
@@ -454,7 +459,7 @@ fn encode_adjusted_delta_bits_generic(
     d_bits: &BitSlice<usize, Lsb0>,
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
-    codec: &[(usize, u64)],
+    codec: &[(usize, u128)],
     prefix_bits: usize,
     use_unary_prefix: bool,
 ) -> DeltaBitStats {
@@ -466,12 +471,18 @@ fn encode_adjusted_delta_bits_generic(
     let d_len = d_bits.len();
     let overflow_tier = codec.len();
 
-    if d_len <= 38 {
-        let d = bits_to_u64(d_bits);
+    if d_len <= 127 {
+        let d = bits_to_u128(d_bits);
 
         for tier in 0..codec.len() {
             let (width, start) = codec[tier];
-            let max = start + ((1u128 << width) as u64) - 1;
+            
+            // Skip tiers that overflow u128 bounds
+            if width >= 128 || start == u128::MAX {
+                break;
+            }
+            
+            let max = start.saturating_add((1u128 << width) - 1);
             if d <= max {
                 // Write prefix (either unary or fixed)
                 if use_unary_prefix {
@@ -488,7 +499,7 @@ fn encode_adjusted_delta_bits_generic(
                     }
                     stats.prefix_bits = prefix_bits;
                 }
-                write_u64_bits(d - start, width, out);
+                write_u128_bits(d - start, width, out);
                 stats.payload_bits = width;
                 stats.total_written_bits = stats.prefix_bits + stats.payload_bits;
                 return stats;
@@ -524,7 +535,7 @@ fn encode_adjusted_delta_bits_with_stats(
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {
-    const CODEC: [(usize, u64); 5] = get_delta_codec();
+    const CODEC: [(usize, u128); 5] = get_delta_codec();
     encode_adjusted_delta_bits_generic(
         d_bits, lb, out, &CODEC,
         5,    // prefix_bits (not used for unary, but kept for signature)
@@ -537,8 +548,8 @@ fn encode_adjusted_delta_bits_with_stats_fixed(
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {
-    const CODEC: [(usize, u64); 16] = get_delta_codec_fixed();
-    const PREFIX_BITS: usize = 4; // log2(16 tiers) = 4 bits
+    const CODEC: [(usize, u128); 32] = get_delta_codec_fixed();
+    const PREFIX_BITS: usize = 5; // log2(32 tiers) = 5 bits
     encode_adjusted_delta_bits_generic(
         d_bits,
         lb,

@@ -9,7 +9,7 @@ pub use self::delta_base_table::{
 };
 pub use self::encoding_core::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
-    DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataOptimized, EncodeDataRLE,
+    DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataRLE,
     EncodedData, HuffmanDeviationData, RleDeviationData, RleDeviationOffsetData,
 };
 pub use self::fused_dictionary::{EncodeDataFusedDictionary, EncodeDataFusedDictionarySinglePass};

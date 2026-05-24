@@ -27,7 +27,6 @@ pub enum BaseBitImpl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeImpl {
     Naive,
-    Optimized,
     FusedDictionary,
     FusedDictionarySinglePass,
     Rle,
@@ -80,7 +79,6 @@ pub enum ConfigBaseBitImpl {
 #[serde(rename_all = "snake_case")]
 pub enum ConfigEncodeImpl {
     Naive,
-    Optimized,
     FusedDictionary,
     FusedDictionarySinglePass,
     Rle,
@@ -390,7 +388,7 @@ impl PipelineProfileSet {
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
                     delta_codec_impl: DeltaCodecImpl::None,
-                    encode_impl: EncodeImpl::Optimized,
+                    encode_impl: EncodeImpl::Naive,
                 },
                 CsvPipelineProfile {
                     name: "csv_balanced".to_string(),
@@ -448,7 +446,7 @@ impl PipelineProfileSet {
                     use_condensed_samples: true,
                     base_table_impl: BaseTableImpl::Raw,
                     delta_codec_impl: DeltaCodecImpl::None,
-                    encode_impl: EncodeImpl::Optimized,
+                    encode_impl: EncodeImpl::Naive,
                 },
                 ImagePipelineProfile {
                     name: "img_balanced".to_string(),
@@ -595,7 +593,7 @@ fn expand_csv_group(
     let encode_impl = group
         .encode_impl
         .clone()
-        .unwrap_or_else(|| vec![ConfigEncodeImpl::Optimized]);
+        .unwrap_or_else(|| vec![ConfigEncodeImpl::Naive]);
     let entropy_impl = group
         .entropy_impl
         .clone()
@@ -782,7 +780,7 @@ fn expand_image_group(
     let encode_impl = group
         .encode_impl
         .clone()
-        .unwrap_or_else(|| vec![ConfigEncodeImpl::Optimized]);
+        .unwrap_or_else(|| vec![ConfigEncodeImpl::Naive]);
     let entropy_impl = group
         .entropy_impl
         .clone()
@@ -1226,7 +1224,6 @@ impl TryFrom<ImagePipelineProfileConfig> for ImagePipelineProfile {
 fn convert_encode_impl(value: ConfigEncodeImpl) -> Result<EncodeImpl, EntroGdError> {
     match value {
         ConfigEncodeImpl::Naive => Ok(EncodeImpl::Naive),
-        ConfigEncodeImpl::Optimized => Ok(EncodeImpl::Optimized),
         ConfigEncodeImpl::FusedDictionary => Ok(EncodeImpl::FusedDictionary),
         ConfigEncodeImpl::FusedDictionarySinglePass => Ok(EncodeImpl::FusedDictionarySinglePass),
         ConfigEncodeImpl::Rle => Ok(EncodeImpl::Rle),

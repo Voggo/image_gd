@@ -340,7 +340,7 @@ impl EncodeImpl {
 
     fn process(self, input: EncodeSeed) -> Result<CompressedData, EntroGdError> {
         match self {
-            Self::Normal => EncodeDataOptimized {}.process(input.pre_encode),
+            Self::Normal => EncodeData {}.process(input.pre_encode),
             Self::Rle => EncodeDataRLE {}.process(input.pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(input.pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(input.pre_encode),
@@ -660,7 +660,7 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         BuildSortedBaseTable {}.process(sel).unwrap()
     };
 
-    let normal = EncodeDataOptimized {}
+    let normal = EncodeData {}
         .process(base_table_ctx_seed.clone())
         .unwrap();
     let rle = EncodeDataRLE {}

@@ -828,7 +828,6 @@ fn encode_data(
 
             let compressed = match implementation {
                 EncodeImpl::Naive => EncodeData {}.process(base_table_ctx),
-                EncodeImpl::Optimized => EncodeDataOptimized {}.process(base_table_ctx),
                 EncodeImpl::Rle => EncodeDataRLE {}.process(base_table_ctx),
                 EncodeImpl::OffsetRle => EncodeDataOffsetRLE {}.process(base_table_ctx),
                 EncodeImpl::HuffmanBaseIdOnly => EncodeDataHuffman {}.process(base_table_ctx),
