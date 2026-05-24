@@ -236,7 +236,7 @@ fn calculate_entropy_with_stride(bit_data: &BitDataSet, stride: usize) -> Vec<En
             *count += *bit as usize;
         }
     }
-    let sampled_rows = (num_rows + stride - 1) / stride;
+    let sampled_rows = num_rows.div_ceil(stride);
     let inv_rows = 1.0 / sampled_rows as f64;
     ones_count
         .into_iter()
