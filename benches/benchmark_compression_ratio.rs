@@ -513,6 +513,90 @@ fn bench_delta_encoding(paths: &[PathBuf]) {
     }
 }
 
+// ── Group 4: color_model ──────────────────────────────────────────────────────
+//
+// Isolates the effect of color model on compression ratio.
+// Fixed: 1x1 pixel grouping, Raw transform, naive SelectBases, EncodeData.
+
+#[derive(Clone, Copy)]
+enum ColorModelVariant {
+    Rgb,
+    YCoCgR,
+}
+
+impl ColorModelVariant {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Rgb => "rgb",
+            Self::YCoCgR => "ycocgr",
+        }
+    }
+
+    fn color_model(self) -> ImageColorModel {
+        match self {
+            Self::Rgb => ImageColorModel::Rgb,
+            Self::YCoCgR => ImageColorModel::YCoCgR,
+        }
+    }
+}
+
+const COLOR_MODEL_VARIANTS: [ColorModelVariant; 2] =
+    [ColorModelVariant::Rgb, ColorModelVariant::YCoCgR];
+
+fn bench_color_model(paths: &[PathBuf]) {
+    let total = paths.len() * COLOR_MODEL_VARIANTS.len();
+    let mut done = 0;
+
+    for path in paths {
+        let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+        for variant in COLOR_MODEL_VARIANTS {
+            done += 1;
+            eprintln!("[{done}/{total}] color_model/{}/{}", variant.name(), file_name);
+
+            let pre = SeedPreprocessing {
+                color_model: variant.color_model(),
+                group_w: 1,
+                group_h: 1,
+                grouping_transform: ImageGroupingTransform::Raw,
+            };
+            let bit_data = match pre.process(path.clone()) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("skip {file_name}: {e}");
+                    continue;
+                }
+            };
+            let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
+            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let base_sel = SelectBases {
+                patience: NORMAL_PATIENCE,
+            }
+            .process(entropy_ctx)
+            .unwrap();
+            let pre_encode = BuildBaseTable {}.process(base_sel).unwrap();
+            let compressed = EncodeData {}.process(pre_encode).unwrap();
+            let sizes = compute_sizes(&compressed).unwrap();
+
+            BENCH_RECORDS.lock().unwrap().push(BenchRecord {
+                group: "color_model",
+                impl_name: variant.name().to_string(),
+                file: file_name.clone(),
+                color_model_seed: variant.name().to_string(),
+                pixel_grouping_seed: "1x1".to_string(),
+                group_transform_seed: "raw".to_string(),
+                grouped_pixels_seed: "1".to_string(),
+                source_bytes,
+                total_compressed_bytes: sizes.total_compressed_bytes,
+                base_table_bytes: sizes.base_table_bytes,
+                deviation_stream_bytes: sizes.deviation_stream_bytes,
+                parameters_bytes: sizes.parameters_bytes,
+                base_table_compression_ratio: String::new(),
+            });
+        }
+    }
+}
+
 // ── CSV output ────────────────────────────────────────────────────────────────
 
 fn write_bench_csv() {
@@ -567,5 +651,6 @@ fn main() {
     bench_select_bases(&paths);
     bench_encoding(&paths);
     bench_delta_encoding(&paths);
+    bench_color_model(&paths);
     write_bench_csv();
 }
