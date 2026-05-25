@@ -35,7 +35,7 @@ static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex
 const NORMAL_PATIENCE: usize = 10;
 const THRESHOLD_PATIENCE: usize = 5;
 const ADAPTIVE_PATIENCE: usize = 5;
-const ENTROPY_THRESHOLD: f64 = 0.70;
+const ENTROPY_THRESHOLD: f64 = 0.75;
 const WEIGHT_DECAY: f64 = 0.5;
 const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
 
@@ -544,55 +544,58 @@ const COLOR_MODEL_VARIANTS: [ColorModelVariant; 2] =
     [ColorModelVariant::Rgb, ColorModelVariant::YCoCgR];
 
 fn bench_color_model(paths: &[PathBuf]) {
-    let total = paths.len() * COLOR_MODEL_VARIANTS.len();
+    let total = paths.len() * SEED_PREPROCESSING_CONFIGS.len() * COLOR_MODEL_VARIANTS.len();
     let mut done = 0;
 
     for path in paths {
         let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+        for seed in SEED_PREPROCESSING_CONFIGS {
+            for variant in COLOR_MODEL_VARIANTS {
+                done += 1;
+                eprintln!("[{done}/{total}] color_model/{}/{}", variant.name(), file_name);
 
-        for variant in COLOR_MODEL_VARIANTS {
-            done += 1;
-            eprintln!("[{done}/{total}] color_model/{}/{}", variant.name(), file_name);
-
-            let pre = SeedPreprocessing {
-                color_model: variant.color_model(),
-                group_w: 1,
-                group_h: 1,
-                grouping_transform: ImageGroupingTransform::Raw,
-            };
-            let bit_data = match pre.process(path.clone()) {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("skip {file_name}: {e}");
-                    continue;
+                // Override the seed's color_model with the variant's so each color
+                // model is measured against the full grouping/transform grid.
+                let pre = SeedPreprocessing {
+                    color_model: variant.color_model(),
+                    group_w: seed.group_w,
+                    group_h: seed.group_h,
+                    grouping_transform: seed.grouping_transform,
+                };
+                let bit_data = match pre.process(path.clone()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("skip {file_name}: {e}");
+                        continue;
+                    }
+                };
+                let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
+                let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+                let base_sel = SelectBases {
+                    patience: NORMAL_PATIENCE,
                 }
-            };
-            let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
-            let base_sel = SelectBases {
-                patience: NORMAL_PATIENCE,
-            }
-            .process(entropy_ctx)
-            .unwrap();
-            let pre_encode = BuildBaseTable {}.process(base_sel).unwrap();
-            let compressed = EncodeData {}.process(pre_encode).unwrap();
-            let sizes = compute_sizes(&compressed).unwrap();
+                .process(entropy_ctx)
+                .unwrap();
+                let pre_encode = BuildBaseTable {}.process(base_sel).unwrap();
+                let compressed = EncodeData {}.process(pre_encode).unwrap();
+                let sizes = compute_sizes(&compressed).unwrap();
 
-            BENCH_RECORDS.lock().unwrap().push(BenchRecord {
-                group: "color_model",
-                impl_name: variant.name().to_string(),
-                file: file_name.clone(),
-                color_model_seed: variant.name().to_string(),
-                pixel_grouping_seed: "1x1".to_string(),
-                group_transform_seed: "raw".to_string(),
-                grouped_pixels_seed: "1".to_string(),
-                source_bytes,
-                total_compressed_bytes: sizes.total_compressed_bytes,
-                base_table_bytes: sizes.base_table_bytes,
-                deviation_stream_bytes: sizes.deviation_stream_bytes,
-                parameters_bytes: sizes.parameters_bytes,
-                base_table_compression_ratio: String::new(),
-            });
+                BENCH_RECORDS.lock().unwrap().push(BenchRecord {
+                    group: "color_model",
+                    impl_name: variant.name().to_string(),
+                    file: file_name.clone(),
+                    color_model_seed: pre.color_model_label().to_string(),
+                    pixel_grouping_seed: pre.pixel_grouping_label(),
+                    group_transform_seed: pre.group_transform_label().to_string(),
+                    grouped_pixels_seed: pre.grouped_pixels().to_string(),
+                    source_bytes,
+                    total_compressed_bytes: sizes.total_compressed_bytes,
+                    base_table_bytes: sizes.base_table_bytes,
+                    deviation_stream_bytes: sizes.deviation_stream_bytes,
+                    parameters_bytes: sizes.parameters_bytes,
+                    base_table_compression_ratio: String::new(),
+                });
+            }
         }
     }
 }

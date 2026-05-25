@@ -43,13 +43,13 @@ static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex
 // ── Harness config ────────────────────────────────────────────────────────────
 
 const N_RUNS: usize = 3;
-const DEFAULT_DATA_ROOT: &str = "data/bench_datasets/kodak_dataset";
+const DEFAULT_DATA_ROOT: &str = "data/bench_datasets";
 
 // ── Pipeline constants ────────────────────────────────────────────────────────
 
 const PATIENCE_BEST: usize = 10;
 const PATIENCE_FAST: usize = 5;
-const ENTROPY_THRESHOLD: f64 = 0.80;
+const ENTROPY_THRESHOLD: f64 = 0.75;
 
 // ── Preprocessing spec ────────────────────────────────────────────────────────
 
@@ -120,7 +120,7 @@ impl CompressionPipeline {
                 color_model: ImageColorModel::YCoCgR,
                 group_w: 2,
                 group_h: 2,
-                grouping_transform: ImageGroupingTransform::ForMin,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
             },
             Self::ImageFast => PreprocessingSpec {
                 color_model: ImageColorModel::YCoCgR,
@@ -139,7 +139,7 @@ impl CompressionPipeline {
                 })
                 .then(BuildSortedBaseTable {})
                 .then(EncodeDataHuffman {})
-                .then(DeltaEncodeBaseTable {})
+                .then(DeltaEncodeBaseTableFixed {})
                 .process(bit_data),
             Self::ImageFast => EntropyNaive {}
                 .then(SelectBasesThreshold {
@@ -262,8 +262,8 @@ fn compute_sizes(compressed: &CompressedData) -> Result<CompressionSizes, EntroG
     };
 
     let stream_bits = compressed.encoded_data.get_encoded_size();
-    let base_table_bytes = ((base_table_bits + 7) / 8) as u64;
-    let stream_bytes = ((stream_bits + 7) / 8) as u64;
+    let base_table_bytes = base_table_bits.div_ceil(8) as u64;
+    let stream_bytes = stream_bits.div_ceil(8) as u64;
     let parameters_bytes = total.saturating_sub(base_table_bytes + stream_bytes);
 
     Ok(CompressionSizes {
@@ -357,12 +357,11 @@ fn sequential_indices(n: usize, num_rows: usize) -> Vec<usize> {
     (0..n.min(num_rows)).collect()
 }
 
-fn batch_sizes(num_rows: usize) -> [(usize, &'static str); 4] {
+fn batch_sizes(num_rows: usize) -> [(usize, &'static str); 3] {
     [
         (1, "single_row"),
         (1_usize.max(num_rows / 100), "1pct"),
         (1_usize.max(num_rows / 10), "10pct"),
-        (num_rows, "full"),
     ]
 }
 
@@ -552,8 +551,17 @@ fn bench_random_access(paths: &[PathBuf]) {
                     );
 
                     for _ in 0..N_RUNS {
+                        // Per-iteration setup outside the timer: produce a fresh handle so each
+                        // run starts from the same (Delta-still-present) state.
+                        let mut handle =
+                            DecompressRandomAccessHandle::new(compressed.clone()).unwrap();
+                        let delta_decoder = DecodeDeltaBaseTable {};
                         let start = Instant::now();
-                        let handle = DecompressRandomAccessHandle::new(compressed.clone()).unwrap();
+                        // First thing a real user does after opening the IGD file:
+                        // decode the delta base table back to raw for subsequent random access.
+                        if matches!(handle.compressed.base_table, BaseTable::Delta(_)) {
+                            handle.compressed = delta_decoder.process(handle.compressed).unwrap();
+                        }
                         let decompressed = handle.decompress_samples(indices).unwrap();
                         let elapsed = start.elapsed();
                         black_box(decompressed);
