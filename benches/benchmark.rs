@@ -43,13 +43,14 @@ static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex
 // ── Harness config ────────────────────────────────────────────────────────────
 
 const N_RUNS: usize = 3;
-const DEFAULT_DATA_ROOT: &str = "data/bench_datasets";
+const DEFAULT_DATA_ROOT: &str = "data/bench_datasets/icons-50_apple_subset";
 
 // ── Pipeline constants ────────────────────────────────────────────────────────
 
 const PATIENCE_BEST: usize = 10;
 const PATIENCE_FAST: usize = 5;
 const ENTROPY_THRESHOLD: f64 = 0.75;
+const WIDTH_DECAY_DEFAULT: f64 = 0.5;
 
 // ── Preprocessing spec ────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ impl CompressionPipeline {
             },
             Self::ImageFast => PreprocessingSpec {
                 color_model: ImageColorModel::YCoCgR,
-                group_w: 2,
+                group_w: 3,
                 group_h: 2,
                 grouping_transform: ImageGroupingTransform::ForFirstPixel,
             },
@@ -138,14 +139,14 @@ impl CompressionPipeline {
                     patience: PATIENCE_BEST,
                 })
                 .then(BuildSortedBaseTable {})
-                .then(EncodeDataHuffman {})
+                .then(EncodeDataOffsetRLE {})
                 .then(DeltaEncodeBaseTableFixed {})
                 .process(bit_data),
             Self::ImageFast => EntropyNaive {}
                 .then(SelectBasesThreshold {
                     patience: PATIENCE_FAST,
-                    base_bit_impl: BaseBitImpl::HyperLogLogCount,
                     entropy_threshold: ENTROPY_THRESHOLD,
+                    base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 })
                 .then(EncodeDataFusedDictionary {})
                 .process(bit_data),

@@ -85,10 +85,11 @@ fn main() -> Result<(), EntroGdError> {
     .then(EntropyNaive {})
     .then(SelectBasesThreshold {
         patience: 5,
-        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+        base_bit_impl: BaseBitImpl::Naive,
         entropy_threshold: 0.75,
     })
-    .then(EncodeDataFusedDictionary {});
+    .then(BuildBaseTable {})
+    .then(EncodeDataRLE {});
 
     let load_compressed_data = LoadIgdFile {};
 

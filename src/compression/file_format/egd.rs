@@ -978,7 +978,7 @@ impl EgdFile {
                     num_deviation_bits,
                     num_id_bits,
                 );
-                EncodedData::Normal(rle.to_deviation_data()?)
+                EncodedData::Rle(rle)
             }
             ENCODING_TAG_RLE_OFFSET => {
                 let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {

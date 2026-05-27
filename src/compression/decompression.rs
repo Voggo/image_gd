@@ -70,17 +70,28 @@ impl DecompressRandomAccessHandle {
             return Err(EntroGdError::DecompressionSampleMissing { sample_idx });
         }
 
-        // Allocate reconstructed bits once for all rows
-        let mut reconstructed_bits = bitvec![usize, Lsb0; 0 ; self.stride * indices.len()];
-
         // Sort indices so the streaming decoder can do a single forward pass.
         let mut sorted_indices = indices.to_vec();
         sorted_indices.sort_unstable();
 
+        if sorted_indices.len() >= PARALLEL_MIN_ROWS {
+            self.decompress_samples_parallel(&sorted_indices)
+        } else {
+            self.decompress_samples_sequential(&sorted_indices)
+        }
+    }
+
+    fn decompress_samples_sequential(
+        &self,
+        sorted_indices: &[usize],
+    ) -> Result<BitDataSet, EntroGdError> {
+        let _timer = ScopedTimer::trace("Random-access decompression (sequential)");
+        let mut reconstructed_bits = bitvec![usize, Lsb0; 0; self.stride * sorted_indices.len()];
         let mut out_cursor = 0usize;
+
         self.compressed
             .encoded_data
-            .for_each_sample_at_sorted_indices(&sorted_indices, |sample| {
+            .for_each_sample_at_sorted_indices(sorted_indices, |sample| {
                 append_reconstructed_chunk(
                     &mut reconstructed_bits,
                     out_cursor,
@@ -99,12 +110,72 @@ impl DecompressRandomAccessHandle {
             data: reconstructed_bits,
             chunk_size: self.chunk_size,
             stride: self.stride,
-            num_rows: indices.len(),
+            num_rows: sorted_indices.len(),
         };
         let info = self
             .compressed
             .metadata
-            .with_original_size_bits_and_row_stride(self.chunk_size * indices.len(), self.stride);
+            .with_original_size_bits_and_row_stride(self.chunk_size * sorted_indices.len(), self.stride);
+        Ok(BitDataSet { data, info })
+    }
+
+    fn decompress_samples_parallel(
+        &self,
+        sorted_indices: &[usize],
+    ) -> Result<BitDataSet, EntroGdError> {
+        let _timer = ScopedTimer::trace("Random-access decompression (parallel)");
+        let num_threads = rayon::current_num_threads();
+        let indices_per_thread = sorted_indices.len().div_ceil(num_threads);
+
+        let deviation_positions = &self.deviation_positions;
+        let variable_base_positions = &self.variable_base_positions;
+        let constant_one_positions = &self.constant_one_positions;
+        let base_table = self.compressed.base_table.as_raw();
+        let stride = self.stride;
+        let chunk_size = self.chunk_size;
+
+        let chunks: Result<Vec<BitVec<usize, Lsb0>>, EntroGdError> = sorted_indices
+            .par_chunks(indices_per_thread)
+            .map(|chunk| {
+                let mut chunk_bits = bitvec![usize, Lsb0; 0; stride * chunk.len()];
+                let mut local_cursor = 0usize;
+
+                self.compressed
+                    .encoded_data
+                    .for_each_sample_at_sorted_indices(chunk, |sample| {
+                        append_reconstructed_chunk(
+                            &mut chunk_bits,
+                            local_cursor,
+                            deviation_positions,
+                            variable_base_positions,
+                            constant_one_positions,
+                            base_table,
+                            sample.deviation,
+                            sample.id,
+                        )?;
+                        local_cursor += stride;
+                        Ok(())
+                    })?;
+
+                Ok(chunk_bits)
+            })
+            .collect();
+
+        let mut reconstructed_bits = BitVec::with_capacity(stride * sorted_indices.len());
+        for chunk in chunks? {
+            reconstructed_bits.extend_from_bitslice(&chunk);
+        }
+
+        let data = BitData {
+            data: reconstructed_bits,
+            chunk_size,
+            stride,
+            num_rows: sorted_indices.len(),
+        };
+        let info = self
+            .compressed
+            .metadata
+            .with_original_size_bits_and_row_stride(chunk_size * sorted_indices.len(), stride);
         Ok(BitDataSet { data, info })
     }
 }
@@ -127,18 +198,22 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let stride = data_info.row_stride();
 
-    let use_parallel = !matches!(compressed.encoded_data, EncodedData::Rle(_))
-        && original_num_rows >= PARALLEL_MIN_ROWS;
-
-    if use_parallel {
-        decompress_file_parallel(compressed, data_info, chunk_size, stride, original_num_rows)
-    } else {
-        decompress_file_sequential(compressed, data_info, chunk_size, stride, original_num_rows)
+    match &compressed.encoded_data {
+        EncodedData::Rle(rle_data) if original_num_rows >= PARALLEL_MIN_ROWS => {
+            let deviation_data = rle_data.to_deviation_data()?;
+            let converted = EncodedData::Normal(deviation_data);
+            decompress_file_parallel(compressed, &converted, data_info, chunk_size, stride, original_num_rows)
+        }
+        _ if original_num_rows >= PARALLEL_MIN_ROWS => {
+            decompress_file_parallel(compressed, &compressed.encoded_data, data_info, chunk_size, stride, original_num_rows)
+        }
+        _ => decompress_file_sequential(compressed, data_info, chunk_size, stride, original_num_rows),
     }
 }
 
 fn decompress_file_parallel(
     compressed: &CompressedData,
+    encoded_data: &EncodedData,
     data_info: &crate::compression::preprocessor::BitDataInfo,
     chunk_size: usize,
     stride: usize,
@@ -166,8 +241,7 @@ fn decompress_file_parallel(
             let mut chunk_bits = bitvec![usize, Lsb0; 0; stride * count];
             let mut local_cursor = 0usize;
 
-            compressed
-                .encoded_data
+            encoded_data
                 .for_each_sample_range(start, count, |sample| {
                     append_reconstructed_chunk(
                         &mut chunk_bits,
