@@ -43,7 +43,7 @@ static BENCH_RECORDS: LazyLock<Mutex<Vec<BenchRecord>>> = LazyLock::new(|| Mutex
 // ── Harness config ────────────────────────────────────────────────────────────
 
 const N_RUNS: usize = 3;
-const DEFAULT_DATA_ROOT: &str = "data/bench_datasets/icons-50_apple_subset";
+const DEFAULT_DATA_ROOT: &str = "data/bench_datasets";
 
 // ── Pipeline constants ────────────────────────────────────────────────────────
 
@@ -104,6 +104,7 @@ impl PreprocessingSpec {
 #[derive(Clone, Copy)]
 enum CompressionPipeline {
     ImageBestRatio,
+    ImageBestRatioRle,
     ImageFast,
 }
 
@@ -111,6 +112,7 @@ impl CompressionPipeline {
     fn label(self) -> &'static str {
         match self {
             Self::ImageBestRatio => "image_best_ratio",
+            Self::ImageBestRatioRle => "image_best_ratio_rle",
             Self::ImageFast => "image_fast",
         }
     }
@@ -118,6 +120,12 @@ impl CompressionPipeline {
     fn preprocessing(self) -> PreprocessingSpec {
         match self {
             Self::ImageBestRatio => PreprocessingSpec {
+                color_model: ImageColorModel::YCoCgR,
+                group_w: 2,
+                group_h: 2,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
+            },
+            Self::ImageBestRatioRle => PreprocessingSpec {
                 color_model: ImageColorModel::YCoCgR,
                 group_w: 2,
                 group_h: 2,
@@ -139,6 +147,14 @@ impl CompressionPipeline {
                     patience: PATIENCE_BEST,
                 })
                 .then(BuildSortedBaseTable {})
+                .then(EncodeDataHuffman {})
+                .then(DeltaEncodeBaseTableFixed {})
+                .process(bit_data),
+            Self::ImageBestRatioRle => EntropyNaive {}
+                .then(SelectBases {
+                    patience: PATIENCE_BEST,
+                })
+                .then(BuildSortedBaseTable {})
                 .then(EncodeDataOffsetRLE {})
                 .then(DeltaEncodeBaseTableFixed {})
                 .process(bit_data),
@@ -154,8 +170,9 @@ impl CompressionPipeline {
     }
 }
 
-const PIPELINES: [CompressionPipeline; 2] = [
+const PIPELINES: [CompressionPipeline; 3] = [
     CompressionPipeline::ImageBestRatio,
+    CompressionPipeline::ImageBestRatioRle,
     CompressionPipeline::ImageFast,
 ];
 
@@ -403,8 +420,9 @@ fn bench_compression_core(paths: &[PathBuf]) {
             let _ = black_box(pipeline.run(warmup_bd));
 
             for _ in 0..N_RUNS {
+                let image_clone = image.clone();
                 let start = Instant::now();
-                let bit_data = pre.process(image.clone()).unwrap();
+                let bit_data = pre.process(image_clone).unwrap();
                 let compressed = pipeline.run(bit_data).unwrap();
                 let elapsed = start.elapsed();
                 black_box(&compressed);
@@ -473,8 +491,9 @@ fn bench_decompress_file(paths: &[PathBuf]) {
             let _ = black_box(DecompressFileData {}.process(compressed.clone()));
 
             for _ in 0..N_RUNS {
+                let compressed_clone = compressed.clone();
                 let start = Instant::now();
-                let decompressed = DecompressFileData {}.process(compressed.clone()).unwrap();
+                let decompressed = DecompressFileData {}.process(compressed_clone).unwrap();
                 let elapsed = start.elapsed();
                 black_box(decompressed);
 

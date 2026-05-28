@@ -1,4 +1,4 @@
-use crate::compression::encoding::{CompressedData, CondensedSamples, EncodedData};
+use crate::compression::encoding::{CompressedData, CondensedSamples, EncodedData, BaseTable};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     decode_value_from_bits,
@@ -33,7 +33,10 @@ pub struct DecompressRandomAccessHandle {
 impl DecompressRandomAccessHandle {
     /// Create a decompression context from compressed data.
     /// This validates metadata and pre-computes layout positions once.
-    pub fn new(compressed: CompressedData) -> Result<Self, EntroGdError> {
+    pub fn new(mut compressed: CompressedData) -> Result<Self, EntroGdError> {
+        if let BaseTable::Delta(delta) = compressed.base_table {
+            compressed.base_table = BaseTable::Raw(delta.decode_rows()?);
+        }
         let data_info = &compressed.metadata;
         let num_features = data_info.num_features();
         let chunk_size = data_info.chunk_size();
@@ -188,11 +191,14 @@ impl Filter for DecompressFileData {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Decompressing entire file data");
-        decompress_file(&input)
+        decompress_file(input)
     }
 }
 
-pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroGdError> {
+pub fn decompress_file(mut compressed: CompressedData) -> Result<BitDataSet, EntroGdError> {
+    if let BaseTable::Delta(delta) = compressed.base_table {
+        compressed.base_table = BaseTable::Raw(delta.decode_rows()?);
+    }
     let data_info = &compressed.metadata;
     let chunk_size = data_info.chunk_size();
     let original_num_rows = data_info.original_size_bits() / chunk_size;
@@ -202,12 +208,12 @@ pub fn decompress_file(compressed: &CompressedData) -> Result<BitDataSet, EntroG
         EncodedData::Rle(rle_data) if original_num_rows >= PARALLEL_MIN_ROWS => {
             let deviation_data = rle_data.to_deviation_data()?;
             let converted = EncodedData::Normal(deviation_data);
-            decompress_file_parallel(compressed, &converted, data_info, chunk_size, stride, original_num_rows)
+            decompress_file_parallel(&compressed, &converted, data_info, chunk_size, stride, original_num_rows)
         }
         _ if original_num_rows >= PARALLEL_MIN_ROWS => {
-            decompress_file_parallel(compressed, &compressed.encoded_data, data_info, chunk_size, stride, original_num_rows)
+            decompress_file_parallel(&compressed, &compressed.encoded_data, data_info, chunk_size, stride, original_num_rows)
         }
-        _ => decompress_file_sequential(compressed, data_info, chunk_size, stride, original_num_rows),
+        _ => decompress_file_sequential(&compressed, data_info, chunk_size, stride, original_num_rows),
     }
 }
 
@@ -224,6 +230,7 @@ fn decompress_file_parallel(
     let deviation_positions = compressed.layout.deviation_bit_positions();
     let variable_base_positions = compressed.layout.variable_base_bit_positions();
     let constant_one_positions = compressed.layout.constant_one_bit_positions();
+    
     let base_table = compressed.base_table.as_raw();
 
     let num_threads = rayon::current_num_threads();
@@ -971,7 +978,7 @@ mod tests {
         let num_rows = 5;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 2, 4);
 
-        let result = decompress_file(&compressed).unwrap();
+        let result = decompress_file(compressed).unwrap();
 
         assert_eq!(result.data.num_rows, num_rows);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -984,7 +991,7 @@ mod tests {
         let num_rows = 1;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 4, 8);
 
-        let result = decompress_file(&compressed).unwrap();
+        let result = decompress_file(compressed).unwrap();
 
         assert_eq!(result.data.num_rows, 1);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -997,7 +1004,7 @@ mod tests {
         let num_rows = 100;
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 8, 16);
 
-        let result = decompress_file(&compressed).unwrap();
+        let result = decompress_file(compressed).unwrap();
 
         assert_eq!(result.data.num_rows, num_rows);
         assert_eq!(result.data.chunk_size, chunk_size);
@@ -1062,7 +1069,7 @@ mod tests {
         let compressed = create_minimal_compressed_data(chunk_size, num_rows, 4, 8);
 
         // Decompress all rows
-        let all_rows = decompress_file(&compressed).unwrap();
+        let all_rows = decompress_file(compressed.clone()).unwrap();
 
         // Decompress specific rows in same order
         let context = DecompressRandomAccessHandle::new(compressed).unwrap();

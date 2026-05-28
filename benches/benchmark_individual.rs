@@ -860,7 +860,7 @@ fn bench_build_image_grouping_step(image_cases: &[ImageCase]) {
 
 // ── Generic benchmark harness ─────────────────────────────────────────────────
 
-fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn>(
+fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn, SourceBytesFn>(
     stage_name: &'static str,
     prepared_cases: &[PreparedCase],
     implementations: &[ImplType],
@@ -868,12 +868,14 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn
     make_input: InputFn,
     run_impl: RunFn,
     seed_meta: SeedMetaFn,
+    source_bytes_fn: SourceBytesFn,
 ) where
     ImplType: Copy,
     LabelFn: Fn(ImplType) -> &'static str + Copy,
     InputFn: Fn(ImplType, &PreparedCase) -> Input + Copy,
     RunFn: Fn(ImplType, Input) -> Result<Output, EntroGdError> + Copy,
     SeedMetaFn: Fn(&PreparedCase) -> (String, String, String, String) + Copy,
+    SourceBytesFn: Fn(&PreparedCase) -> u64 + Copy,
 {
     let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
     if !filter.is_empty() && !stage_name.contains(filter.as_str()) {
@@ -902,7 +904,7 @@ fn bench_step_group<ImplType, Input, Output, LabelFn, InputFn, RunFn, SeedMetaFn
                     impl_name: label.to_string(),
                     file: case.name.clone(),
                     sample_time_ns: elapsed.as_nanos(),
-                    source_bytes: case.source_size,
+                    source_bytes: source_bytes_fn(case),
                     color_model_seed: cm,
                     pixel_grouping_seed: pg,
                     group_transform_seed: gt,
@@ -954,6 +956,7 @@ fn benchmark_filter_steps() {
                 |_, case| case.bit_data_seed.clone(),
                 |implementation, input| implementation.process(input),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -964,6 +967,7 @@ fn benchmark_filter_steps() {
                 |_, case| case.entropy_seed.clone(),
                 |implementation, input| implementation.process(input),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -974,6 +978,7 @@ fn benchmark_filter_steps() {
                 |impl_, case| impl_.select_bases(case.entropy_seed.clone()),
                 |implementation, input| implementation.process(input),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -987,6 +992,7 @@ fn benchmark_filter_steps() {
                 },
                 |implementation, input| implementation.process(input),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -997,6 +1003,11 @@ fn benchmark_filter_steps() {
                 |_, case| case.pre_delta_compressed_seed.clone(),
                 |implementation, input| implementation.process(input),
                 seed_meta,
+                |case| {
+                    let raw = case.pre_delta_compressed_seed.base_table.as_raw();
+                    let bits_per_row = raw.first().map(|(bv, _)| bv.len()).unwrap_or(0);
+                    (raw.len() * bits_per_row).div_ceil(8) as u64
+                },
             );
 
             bench_step_group(
@@ -1010,6 +1021,11 @@ fn benchmark_filter_steps() {
                 },
                 |_, input| DecodeDeltaBaseTable {}.process(input),
                 seed_meta,
+                |case| {
+                    let raw = case.pre_delta_compressed_seed.base_table.as_raw();
+                    let bits_per_row = raw.first().map(|(bv, _)| bv.len()).unwrap_or(0);
+                    (raw.len() * bits_per_row).div_ceil(8) as u64
+                },
             );
 
             bench_step_group(
@@ -1037,6 +1053,7 @@ fn benchmark_filter_steps() {
                 },
                 |implementation, (compressed, path)| implementation.process(compressed, path),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -1052,6 +1069,7 @@ fn benchmark_filter_steps() {
                 },
                 |implementation, path| implementation.process(path),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -1069,6 +1087,7 @@ fn benchmark_filter_steps() {
                 },
                 |implementation, input| implementation.process(input),
                 seed_meta,
+                |case| case.source_size,
             );
 
             bench_step_group(
@@ -1096,6 +1115,7 @@ fn benchmark_filter_steps() {
                 },
                 |implementation, (handle, indices)| implementation.process(handle, indices),
                 seed_meta,
+                |case| case.source_size,
             );
         }
     }

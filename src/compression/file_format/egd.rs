@@ -11,13 +11,11 @@ use super::tags::{
     ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
-use crate::ScopedTimer;
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
     HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationData, RleDeviationOffsetData,
-    get_delta_codec, get_delta_codec_fixed,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -91,273 +89,6 @@ fn rle_symbol_count(rm_values: &[(u8, u8)]) -> Result<usize, EntroGdError> {
         .ok_or_else(|| EntroGdError::InvalidMetadata {
             message: "rm symbol count overflow".to_string(),
         })
-}
-
-fn decode_delta_base_rows(
-    num_bases: usize,
-    lb: usize,
-    order: &[usize],
-    first_sort_key: &BitSlice<usize, Lsb0>,
-    delta_count: usize,
-    delta_bit_stream: &BitSlice<usize, Lsb0>,
-    codec_tag: u8,
-) -> Result<Vec<(BitVec<usize, Lsb0>, usize)>, EntroGdError> {
-    let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
-    if num_bases == 0 {
-        return Ok(Vec::new());
-    }
-
-    if delta_count != num_bases.saturating_sub(1) {
-        return Err(EntroGdError::InvalidMetadata {
-            message: format!(
-                "delta_count mismatch: expected {}, got {}",
-                num_bases.saturating_sub(1),
-                delta_count
-            ),
-        });
-    }
-
-    if order.iter().any(|&idx| idx >= lb) {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "delta sort column order contains out-of-range index".to_string(),
-        });
-    }
-
-    let mut rows = Vec::with_capacity(num_bases);
-    let mut prev_key = first_sort_key.to_bitvec();
-    rows.push((sort_key_to_row(&prev_key, order, lb), 0usize));
-
-    let mut bit_pos = 0usize;
-    for _ in 0..delta_count {
-        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb, codec_tag)?;
-        let delta = add_one(d.as_bitslice());
-        let next_key = subtract_unsigned(prev_key.as_bitslice(), delta.as_bitslice());
-        rows.push((sort_key_to_row(&next_key, order, lb), 0usize));
-        prev_key = next_key;
-    }
-
-    if bit_pos != delta_bit_stream.len() {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "delta bitstream has trailing/unused bits".to_string(),
-        });
-    }
-
-    Ok(rows)
-}
-
-fn sort_key_to_row(
-    sort_key: &BitVec<usize, Lsb0>,
-    order: &[usize],
-    lb: usize,
-) -> BitVec<usize, Lsb0> {
-    let mut row = BitVec::repeat(false, lb);
-    for (rank, &col_idx) in order.iter().enumerate() {
-        let key_idx = lb.saturating_sub(1 + rank);
-        let bit = sort_key.get(key_idx).map(|b| *b).unwrap_or(false);
-        if col_idx < lb {
-            row.set(col_idx, bit);
-        }
-    }
-    row
-}
-
-fn decode_adjusted_delta(
-    bits: &BitSlice<usize, Lsb0>,
-    bit_pos: &mut usize,
-    lb: usize,
-    codec_tag: u8,
-) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
-    match codec_tag {
-        BASE_TABLE_TAG_DELTA_UNARY => decode_adjusted_delta_unary(bits, bit_pos, lb),
-        BASE_TABLE_TAG_DELTA_FIXED => decode_adjusted_delta_fixed(bits, bit_pos, lb),
-        other => Err(EntroGdError::InvalidMetadata {
-            message: format!("unsupported delta codec tag {}", other),
-        }),
-    }
-}
-
-fn decode_adjusted_delta_unary(
-    bits: &BitSlice<usize, Lsb0>,
-    bit_pos: &mut usize,
-    lb: usize,
-) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
-    const CODEC: [(usize, u128); 5] = get_delta_codec();
-    let overflow_tier = CODEC.len();
-
-    let mut tier = 0usize;
-    while *bit_pos < bits.len() && bits[*bit_pos] {
-        tier += 1;
-        *bit_pos += 1;
-        if tier == overflow_tier {
-            break;
-        }
-    }
-
-    if tier < overflow_tier {
-        if *bit_pos >= bits.len() || bits[*bit_pos] {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "invalid delta prefix terminator".to_string(),
-            });
-        }
-        *bit_pos += 1;
-    }
-
-    let (payload_width, start): (usize, u128) = if tier < CODEC.len() {
-        CODEC[tier]
-    } else if tier == overflow_tier {
-        (lb, 0)
-    } else {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "invalid delta tier".to_string(),
-        });
-    };
-
-    if *bit_pos + payload_width > bits.len() {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "delta payload exceeds bitstream".to_string(),
-        });
-    }
-
-    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
-    *bit_pos += payload_width;
-
-    if tier == overflow_tier {
-        return Ok(payload.to_bitvec());
-    }
-
-    let mut payload_value = 0u128;
-    for idx in 0..payload_width {
-        if payload[idx] {
-            payload_value |= 1u128 << idx;
-        }
-    }
-    let value = start + payload_value;
-
-    let mut out = BitVec::new();
-    let mut v = value;
-    while v > 0 {
-        out.push((v & 1) == 1);
-        v >>= 1;
-    }
-    Ok(out)
-}
-
-fn decode_adjusted_delta_fixed(
-    bits: &BitSlice<usize, Lsb0>,
-    bit_pos: &mut usize,
-    lb: usize,
-) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
-    const CODEC: [(usize, u128); 32] = get_delta_codec_fixed();
-    const PREFIX_BITS: usize = 5; // log2(32) = 5 bits for tier ID
-    const OVERFLOW_TIER: usize = CODEC.len() - 1;
-
-    // Read fixed-width tier ID
-    if *bit_pos + PREFIX_BITS > bits.len() {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "insufficient bits for delta tier ID".to_string(),
-        });
-    }
-
-    let mut tier = 0usize;
-    for i in 0..PREFIX_BITS {
-        if bits[*bit_pos + i] {
-            tier |= 1usize << i;
-        }
-    }
-    *bit_pos += PREFIX_BITS;
-
-    if tier >= CODEC.len() {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "delta tier ID out of range".to_string(),
-        });
-    }
-
-    let (payload_width, start): (usize, u128) = if tier < CODEC.len() - 1 {
-        CODEC[tier]
-    } else {
-        // Overflow tier uses lb bits
-        (lb, 0)
-    };
-
-    if *bit_pos + payload_width > bits.len() {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "delta payload exceeds bitstream".to_string(),
-        });
-    }
-
-    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
-    *bit_pos += payload_width;
-
-    if tier == OVERFLOW_TIER {
-        return Ok(payload.to_bitvec());
-    }
-
-    let mut payload_value = 0u128;
-    for idx in 0..payload_width {
-        if payload[idx] {
-            payload_value |= 1u128 << idx;
-        }
-    }
-    let value = start + payload_value;
-
-    let mut out = BitVec::new();
-    let mut v = value;
-    while v > 0 {
-        out.push((v & 1) == 1);
-        v >>= 1;
-    }
-    Ok(out)
-}
-
-fn add_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
-    let mut out = bits.to_bitvec();
-    let mut carry = true;
-    let mut idx = 0usize;
-    while carry {
-        if idx >= out.len() {
-            out.push(true);
-            break;
-        }
-        let bit = out[idx];
-        out.set(idx, !bit);
-        carry = bit;
-        idx += 1;
-    }
-    out
-}
-
-fn subtract_unsigned(
-    minuend: &BitSlice<usize, Lsb0>,
-    subtrahend: &BitSlice<usize, Lsb0>,
-) -> BitVec<usize, Lsb0> {
-    let max_len = minuend.len().max(subtrahend.len());
-    let mut out = BitVec::with_capacity(max_len);
-
-    let mut borrow: i8 = 0;
-    for idx in 0..max_len {
-        let a = if minuend.get(idx).map(|b| *b).unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-        let b = if subtrahend.get(idx).map(|b| *b).unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-        let mut diff = a - b - borrow;
-        if diff < 0 {
-            diff += 2;
-            borrow = 1;
-        } else {
-            borrow = 0;
-        }
-        out.push(diff == 1);
-    }
-    while out.last().map(|b| *b) == Some(false) {
-        out.pop();
-    }
-    out
 }
 
 /// In-memory EGD file contents that can be saved to disk.
@@ -537,8 +268,8 @@ impl EgdFile {
                 }
             }
             BaseTable::Delta(delta) => {
-                writer.write_u8(delta.codec_id); // 1 for UNARY, 2 for FIXED
-                let num_bases = u64::try_from(delta.raw_rows.len()).map_err(|_| {
+                writer.write_u8(delta.codec_id);
+                let num_bases = u64::try_from(delta.num_bases).map_err(|_| {
                     EntroGdError::InvalidMetadata {
                         message: "num_bases does not fit into u64".to_string(),
                     }
@@ -582,7 +313,7 @@ impl EgdFile {
                 }
 
                 let lb = variable_positions.len();
-                if !delta.raw_rows.is_empty() {
+                if delta.num_bases > 0 {
                     for idx in 0..lb {
                         writer
                             .write_bit(delta.first_sort_key.get(idx).map(|b| *b).unwrap_or(false));
@@ -904,23 +635,14 @@ impl EgdFile {
                 })?;
                 let delta_bit_stream = reader.read_bits(delta_bit_len)?;
 
-                let rows = decode_delta_base_rows(
-                    num_bases,
-                    lb,
-                    &order,
-                    first_sort_key.as_bitslice(),
-                    delta_count,
-                    delta_bit_stream.as_bitslice(),
-                    base_table_tag,
-                )?;
                 entropy_sorted_column_order = Some(order.clone());
                 BaseTable::Delta(DeltaBaseTableData {
-                    raw_rows: rows,
+                    num_bases,
                     first_sort_key,
                     delta_bit_stream,
                     delta_count,
                     sort_column_order: order,
-                    codec_id: base_table_tag, // 1 for UNARY, 2 for FIXED
+                    codec_id: base_table_tag,
                 })
             }
             other => {
@@ -1132,33 +854,36 @@ impl EgdFile {
             }
         }
 
-        // Reconstruct base frequencies from encoded IDs.
+        // Reconstruct base frequencies from encoded IDs (only for Raw tables;
+        // Delta tables decode lazily and counts are not needed for decompression).
         if num_bases > 0 {
-            let mut counts = vec![0usize; num_bases];
-            for sample_idx in 0..num_samples {
-                let sample = encoded_data.get_sample(sample_idx).ok_or_else(|| {
-                    EntroGdError::InvalidMetadata {
-                        message: format!(
-                            "failed to decode sample {} from encoded stream",
-                            sample_idx
-                        ),
+            if let BaseTable::Raw(rows) = &mut base_table {
+                let mut counts = vec![0usize; num_bases];
+                for sample_idx in 0..num_samples {
+                    let sample = encoded_data.get_sample(sample_idx).ok_or_else(|| {
+                        EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "failed to decode sample {} from encoded stream",
+                                sample_idx
+                            ),
+                        }
+                    })?;
+
+                    let base_id = sample.id.load_le::<usize>();
+
+                    if base_id >= num_bases {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "encoded base id {} out of range for {} bases",
+                                base_id, num_bases
+                            ),
+                        });
                     }
-                })?;
-
-                let base_id = sample.id.load_le::<usize>();
-
-                if base_id >= num_bases {
-                    return Err(EntroGdError::InvalidMetadata {
-                        message: format!(
-                            "encoded base id {} out of range for {} bases",
-                            base_id, num_bases
-                        ),
-                    });
+                    counts[base_id] += 1;
                 }
-                counts[base_id] += 1;
-            }
-            for (idx, count) in counts.into_iter().enumerate() {
-                base_table.as_raw_mut()[idx].1 = count;
+                for (idx, count) in counts.into_iter().enumerate() {
+                    rows[idx].1 = count;
+                }
             }
         }
 
@@ -1236,27 +961,9 @@ impl Filter for DecodeDeltaBaseTable {
     type Output = CompressedData;
 
     fn process(&self, mut input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let BaseTable::Delta(ref delta) = input.base_table else {
-            return Ok(input);
-        };
-
-        let lb = delta.raw_rows.first().map(|(bv, _)| bv.len()).unwrap_or(0);
-        if lb == 0 {
-            input.base_table = BaseTable::Raw(Vec::new());
-            return Ok(input);
+        if let BaseTable::Delta(delta) = input.base_table {
+            input.base_table = BaseTable::Raw(delta.decode_rows()?);
         }
-
-        let rows = decode_delta_base_rows(
-            delta.raw_rows.len(),
-            lb,
-            &delta.sort_column_order,
-            &delta.first_sort_key,
-            delta.delta_count,
-            &delta.delta_bit_stream,
-            delta.codec_id,
-        )?;
-
-        input.base_table = BaseTable::Raw(rows);
         Ok(input)
     }
 }
@@ -1271,7 +978,7 @@ pub fn load_compressed_from_egd<P: AsRef<Path>>(
 /// Load an `.egd` file and fully decompress its payload into bit data.
 pub fn load_and_decompress_egd<P: AsRef<Path>>(input_path: P) -> Result<BitDataSet, EntroGdError> {
     let compressed = load_compressed_from_egd(input_path)?;
-    decompress_file(&compressed)
+    decompress_file(compressed)
 }
 
 /// Load an `.egd` file, decompress it, and write a CSV file.

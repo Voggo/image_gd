@@ -11,7 +11,7 @@ use std::path::Path;
 fn main() -> Result<(), EntroGdError> {
     unsafe {
         env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
-        env::set_var("RUST_LOG", "info");
+        env::set_var("RUST_LOG", "debug");
     }
     let _log_handle = init_logging();
     let _timer =
@@ -83,13 +83,13 @@ fn main() -> Result<(), EntroGdError> {
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBasesThreshold {
+    .then(SelectBasesAdaptive {
         patience: 5,
         base_bit_impl: BaseBitImpl::Naive,
-        entropy_threshold: 0.75,
+        width_decay: 0.4,
     })
     .then(BuildBaseTable {})
-    .then(EncodeDataRLE {});
+    .then(EncodeDataHuffman {});
 
     let load_compressed_data = LoadIgdFile {};
 

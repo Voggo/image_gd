@@ -2,7 +2,7 @@ mod bit_io;
 mod egd;
 mod igd;
 mod path_utils;
-mod tags;
+pub(crate) mod tags;
 
 pub use egd::{
     DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile,
@@ -300,7 +300,7 @@ mod tests {
 
         assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
         assert_eq!(loaded.metadata, compressed.metadata);
-        let decompressed_data = decompress_file(&loaded).unwrap().data;
+        let decompressed_data = decompress_file(loaded).unwrap().data;
         assert_eq!(decompressed_data.num_rows, bit_data.data.num_rows);
         assert_eq!(decompressed_data.chunk_size, bit_data.data.chunk_size);
         for row in 0..bit_data.data.num_rows {
@@ -361,7 +361,7 @@ mod tests {
                 colorspace: 0
             })
         ));
-        let decompressed_data = decompress_file(&loaded).unwrap().data;
+        let decompressed_data = decompress_file(loaded).unwrap().data;
         assert_eq!(decompressed_data.num_rows, bit_data.data.num_rows);
         assert_eq!(decompressed_data.chunk_size, bit_data.data.chunk_size);
         for row in 0..bit_data.data.num_rows {

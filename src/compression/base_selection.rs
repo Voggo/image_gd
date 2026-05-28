@@ -847,8 +847,8 @@ fn select_base_bits_adaptive<B: BaseBit + Clone + 'static>(
     // Phase B — naive single-bit fallback on the remainder.
     let mut fails = 0usize;
     let mut phase_b_bits_committed = 0usize;
+    let mut trial = best.clone();
     for (bit_pos, _) in non_const[cursor..].iter() {
-        let mut trial = best.clone();
         trial.add_bit_position(bit_data, *bit_pos);
         let trial_size = calculate_compressed_size(bit_data, &trial);
 
@@ -860,7 +860,7 @@ fn select_base_bits_adaptive<B: BaseBit + Clone + 'static>(
         );
 
         if trial_size < best_size {
-            best = trial;
+            best = trial.clone();
             best_size = trial_size;
             fails = 0;
             phase_b_bits_committed += 1;

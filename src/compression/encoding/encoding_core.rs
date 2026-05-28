@@ -115,7 +115,7 @@ pub enum BaseTable {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeltaBaseTableData {
-    pub raw_rows: Vec<(BitVec<usize, Lsb0>, usize)>,
+    pub num_bases: usize,
     pub first_sort_key: BitVec<usize, Lsb0>,
     pub delta_bit_stream: BitVec<usize, Lsb0>,
     pub delta_count: usize,
@@ -128,23 +128,33 @@ impl BaseTable {
     pub fn as_raw(&self) -> &[(BitVec<usize, Lsb0>, usize)] {
         match self {
             BaseTable::Raw(table) => table.as_slice(),
-            BaseTable::Delta(delta) => delta.raw_rows.as_slice(),
+            BaseTable::Delta(_) => {
+                panic!("DecodeDeltaBaseTable must be applied before calling as_raw()")
+            }
         }
     }
 
     pub fn as_raw_mut(&mut self) -> &mut Vec<(BitVec<usize, Lsb0>, usize)> {
         match self {
             BaseTable::Raw(table) => table,
-            BaseTable::Delta(delta) => &mut delta.raw_rows,
+            BaseTable::Delta(_) => {
+                panic!("DecodeDeltaBaseTable must be applied before calling as_raw_mut()")
+            }
         }
     }
 
     pub fn len(&self) -> usize {
-        self.as_raw().len()
+        match self {
+            BaseTable::Raw(table) => table.len(),
+            BaseTable::Delta(delta) => delta.num_bases,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.as_raw().is_empty()
+        match self {
+            BaseTable::Raw(table) => table.is_empty(),
+            BaseTable::Delta(delta) => delta.num_bases == 0,
+        }
     }
 }
 

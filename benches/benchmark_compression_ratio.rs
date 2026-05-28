@@ -139,16 +139,14 @@ struct CompressionSizes {
 fn base_table_delta_ratio(compressed: &CompressedData) -> String {
     match &compressed.base_table {
         BaseTable::Delta(delta) => {
-            let Some((first_row, _)) = delta.raw_rows.first() else {
-                return String::new();
-            };
-            let raw_bits = delta.raw_rows.len() * first_row.len();
             let delta_bits = delta.first_sort_key.len() + delta.delta_bit_stream.len();
             if delta_bits == 0 {
                 return String::new();
             }
-            let raw_bytes = (raw_bits + 7) / 8;
-            let delta_bytes = (delta_bits + 7) / 8;
+            let raw_base_table = delta.decode_rows().unwrap_or_default();
+            let raw_bits = raw_base_table.iter().map(|(bv, _)| bv.len()).sum::<usize>();
+            let raw_bytes = raw_bits.div_ceil(8);
+            let delta_bytes = delta_bits.div_ceil(8);
             format!("{:.4}", raw_bytes as f64 / delta_bytes as f64)
         }
         BaseTable::Raw(_) => String::new(),

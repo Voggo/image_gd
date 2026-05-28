@@ -224,7 +224,7 @@ pub fn load_compressed_from_igd<P: AsRef<Path>>(
 /// Load an `.igd` file and fully decompress its payload into bit data.
 pub fn load_and_decompress_igd<P: AsRef<Path>>(input_path: P) -> Result<BitDataSet, EntroGdError> {
     let compressed = load_compressed_from_igd(input_path)?;
-    decompress_file(&compressed)
+    decompress_file(compressed)
 }
 
 /// Load an `.igd` file, decompress it, and regenerate the image file.

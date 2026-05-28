@@ -2,6 +2,7 @@ use bitvec::prelude::*;
 
 use super::encoding_core::{BaseTable, CompressedData, DeltaBaseTableData};
 
+use crate::compression::file_format::tags::{BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_DELTA_UNARY};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -34,14 +35,15 @@ impl Filter for DeltaEncodeBaseTable {
         };
 
         let raw_rows = input.base_table.as_raw().to_vec();
+        let num_bases = raw_rows.len();
         if raw_rows.is_empty() {
             input.base_table = BaseTable::Delta(DeltaBaseTableData {
-                raw_rows,
+                num_bases: 0,
                 first_sort_key: BitVec::new(),
                 delta_bit_stream: BitVec::new(),
                 delta_count: 0,
                 sort_column_order: order,
-                codec_id: 1, // BASE_TABLE_TAG_DELTA_UNARY
+                codec_id: BASE_TABLE_TAG_DELTA_UNARY,
             });
             return Ok(input);
         }
@@ -97,7 +99,7 @@ impl Filter for DeltaEncodeBaseTable {
             delta_stats.minimally_necessary_bits += stats.minimally_necessary_bits;
         }
 
-        let raw_base_table_bits = raw_rows.len() * row_width;
+        let raw_base_table_bits = num_bases * row_width;
         let delta_base_table_bits = first_sort_key.len() + delta_bit_stream.len();
         let delta_count = key_rows.len().saturating_sub(1);
 
@@ -153,12 +155,12 @@ impl Filter for DeltaEncodeBaseTable {
         );
 
         input.base_table = BaseTable::Delta(DeltaBaseTableData {
-            raw_rows,
+            num_bases,
             first_sort_key,
             delta_bit_stream,
             delta_count,
             sort_column_order: order,
-            codec_id: 1, // BASE_TABLE_TAG_DELTA_UNARY
+            codec_id: BASE_TABLE_TAG_DELTA_UNARY,
         });
         Ok(input)
     }
@@ -185,14 +187,15 @@ impl Filter for DeltaEncodeBaseTableFixed {
         };
 
         let raw_rows = input.base_table.as_raw().to_vec();
+        let num_bases = raw_rows.len();
         if raw_rows.is_empty() {
             input.base_table = BaseTable::Delta(DeltaBaseTableData {
-                raw_rows,
+                num_bases: 0,
                 first_sort_key: BitVec::new(),
                 delta_bit_stream: BitVec::new(),
                 delta_count: 0,
                 sort_column_order: order,
-                codec_id: 2, // BASE_TABLE_TAG_DELTA_FIXED
+                codec_id: BASE_TABLE_TAG_DELTA_FIXED,
             });
             return Ok(input);
         }
@@ -248,7 +251,7 @@ impl Filter for DeltaEncodeBaseTableFixed {
             delta_stats.minimally_necessary_bits += stats.minimally_necessary_bits;
         }
 
-        let raw_base_table_bits = raw_rows.len() * row_width;
+        let raw_base_table_bits = num_bases * row_width;
         let delta_base_table_bits = first_sort_key.len() + delta_bit_stream.len();
         let delta_count = key_rows.len().saturating_sub(1);
 
@@ -304,12 +307,12 @@ impl Filter for DeltaEncodeBaseTableFixed {
         );
 
         input.base_table = BaseTable::Delta(DeltaBaseTableData {
-            raw_rows,
+            num_bases,
             first_sort_key,
             delta_bit_stream,
             delta_count,
             sort_column_order: order,
-            codec_id: 2, // BASE_TABLE_TAG_DELTA_FIXED
+            codec_id: BASE_TABLE_TAG_DELTA_FIXED,
         });
         Ok(input)
     }
@@ -561,4 +564,253 @@ fn encode_adjusted_delta_bits_with_stats_fixed(
         PREFIX_BITS,
         false, // use_unary_prefix
     )
+}
+
+// ── Delta decode ─────────────────────────────────────────────────────────────
+
+impl DeltaBaseTableData {
+    pub fn decode_rows(&self) -> Result<Vec<(BitVec<usize, Lsb0>, usize)>, EntroGdError> {
+        decode_delta_base_rows(
+            self.num_bases,
+            self.first_sort_key.len(),
+            &self.sort_column_order,
+            &self.first_sort_key,
+            self.delta_count,
+            &self.delta_bit_stream,
+            self.codec_id,
+        )
+    }
+}
+
+fn decode_delta_base_rows(
+    num_bases: usize,
+    lb: usize,
+    order: &[usize],
+    first_sort_key: &BitSlice<usize, Lsb0>,
+    delta_count: usize,
+    delta_bit_stream: &BitSlice<usize, Lsb0>,
+    codec_tag: u8,
+) -> Result<Vec<(BitVec<usize, Lsb0>, usize)>, EntroGdError> {
+    let _timer = ScopedTimer::debug("Decoding delta-encoded base table rows");
+    if num_bases == 0 {
+        return Ok(Vec::new());
+    }
+
+    if delta_count != num_bases.saturating_sub(1) {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "delta_count mismatch: expected {}, got {}",
+                num_bases.saturating_sub(1),
+                delta_count
+            ),
+        });
+    }
+
+    if order.iter().any(|&idx| idx >= lb) {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta sort column order contains out-of-range index".to_string(),
+        });
+    }
+
+    let mut rows = Vec::with_capacity(num_bases);
+    let mut prev_key = first_sort_key.to_bitvec();
+    rows.push((sort_key_to_row(&prev_key, order, lb), 0usize));
+
+    let mut bit_pos = 0usize;
+    for _ in 0..delta_count {
+        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb, codec_tag)?;
+        let delta = add_one(d.as_bitslice());
+        let next_key = subtract_unsigned(prev_key.as_bitslice(), delta.as_bitslice());
+        rows.push((sort_key_to_row(&next_key, order, lb), 0usize));
+        prev_key = next_key;
+    }
+
+    if bit_pos != delta_bit_stream.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta bitstream has trailing/unused bits".to_string(),
+        });
+    }
+
+    Ok(rows)
+}
+
+fn sort_key_to_row(
+    sort_key: &BitVec<usize, Lsb0>,
+    order: &[usize],
+    lb: usize,
+) -> BitVec<usize, Lsb0> {
+    let mut row = BitVec::repeat(false, lb);
+    for (rank, &col_idx) in order.iter().enumerate() {
+        let key_idx = lb.saturating_sub(1 + rank);
+        let bit = sort_key.get(key_idx).map(|b| *b).unwrap_or(false);
+        if col_idx < lb {
+            row.set(col_idx, bit);
+        }
+    }
+    row
+}
+
+fn decode_adjusted_delta(
+    bits: &BitSlice<usize, Lsb0>,
+    bit_pos: &mut usize,
+    lb: usize,
+    codec_tag: u8,
+) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
+    if codec_tag == BASE_TABLE_TAG_DELTA_UNARY {
+        decode_adjusted_delta_unary(bits, bit_pos, lb)
+    } else if codec_tag == BASE_TABLE_TAG_DELTA_FIXED {
+        decode_adjusted_delta_fixed(bits, bit_pos, lb)
+    } else {
+        Err(EntroGdError::InvalidMetadata {
+            message: format!("unsupported delta codec tag {}", codec_tag),
+        })
+    }
+}
+
+fn decode_adjusted_delta_unary(
+    bits: &BitSlice<usize, Lsb0>,
+    bit_pos: &mut usize,
+    lb: usize,
+) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
+    const CODEC: [(usize, u128); 5] = get_delta_codec();
+    let overflow_tier = CODEC.len();
+
+    let mut tier = 0usize;
+    while *bit_pos < bits.len() && bits[*bit_pos] {
+        tier += 1;
+        *bit_pos += 1;
+        if tier == overflow_tier {
+            break;
+        }
+    }
+
+    if tier < overflow_tier {
+        if *bit_pos >= bits.len() || bits[*bit_pos] {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "invalid delta prefix terminator".to_string(),
+            });
+        }
+        *bit_pos += 1;
+    }
+
+    let (payload_width, start): (usize, u128) = if tier < CODEC.len() {
+        CODEC[tier]
+    } else if tier == overflow_tier {
+        (lb, 0)
+    } else {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "invalid delta tier".to_string(),
+        });
+    };
+
+    if *bit_pos + payload_width > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta payload exceeds bitstream".to_string(),
+        });
+    }
+
+    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
+    *bit_pos += payload_width;
+
+    if tier == overflow_tier {
+        return Ok(payload.to_bitvec());
+    }
+
+    let mut payload_value = 0u128;
+    for idx in 0..payload_width {
+        if payload[idx] {
+            payload_value |= 1u128 << idx;
+        }
+    }
+    let value = start + payload_value;
+
+    let mut out = BitVec::new();
+    let mut v = value;
+    while v > 0 {
+        out.push((v & 1) == 1);
+        v >>= 1;
+    }
+    Ok(out)
+}
+
+fn decode_adjusted_delta_fixed(
+    bits: &BitSlice<usize, Lsb0>,
+    bit_pos: &mut usize,
+    lb: usize,
+) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
+    const CODEC: [(usize, u128); 32] = get_delta_codec_fixed();
+    const PREFIX_BITS: usize = 5;
+    const OVERFLOW_TIER: usize = CODEC.len() - 1;
+
+    if *bit_pos + PREFIX_BITS > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "insufficient bits for delta tier ID".to_string(),
+        });
+    }
+
+    let mut tier = 0usize;
+    for i in 0..PREFIX_BITS {
+        if bits[*bit_pos + i] {
+            tier |= 1usize << i;
+        }
+    }
+    *bit_pos += PREFIX_BITS;
+
+    if tier >= CODEC.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta tier ID out of range".to_string(),
+        });
+    }
+
+    let (payload_width, start): (usize, u128) = if tier < CODEC.len() - 1 {
+        CODEC[tier]
+    } else {
+        (lb, 0)
+    };
+
+    if *bit_pos + payload_width > bits.len() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: "delta payload exceeds bitstream".to_string(),
+        });
+    }
+
+    let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
+    *bit_pos += payload_width;
+
+    if tier == OVERFLOW_TIER {
+        return Ok(payload.to_bitvec());
+    }
+
+    let mut payload_value = 0u128;
+    for idx in 0..payload_width {
+        if payload[idx] {
+            payload_value |= 1u128 << idx;
+        }
+    }
+    let value = start + payload_value;
+
+    let mut out = BitVec::new();
+    let mut v = value;
+    while v > 0 {
+        out.push((v & 1) == 1);
+        v >>= 1;
+    }
+    Ok(out)
+}
+
+fn add_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
+    let mut out = bits.to_bitvec();
+    let mut carry = true;
+    let mut idx = 0usize;
+    while carry {
+        if idx >= out.len() {
+            out.push(true);
+            break;
+        }
+        let bit = out[idx];
+        out.set(idx, !bit);
+        carry = bit;
+        idx += 1;
+    }
+    out
 }
