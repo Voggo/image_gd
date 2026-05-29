@@ -6,6 +6,7 @@ use entro_gd::prelude::*;
 use entro_gd::{EntroGdError, init_logging, write_bitdata_as_image};
 use std::env;
 use std::fs;
+use std::hint::black_box;
 use std::path::Path;
 
 fn main() -> Result<(), EntroGdError> {
@@ -88,8 +89,9 @@ fn main() -> Result<(), EntroGdError> {
         base_bit_impl: BaseBitImpl::Naive,
         width_decay: 0.4,
     })
-    .then(BuildBaseTable {})
-    .then(EncodeDataHuffman {});
+    .then(BuildSortedBaseTable {})
+    .then(EncodeDataHuffman {})
+    .then(DeltaEncodeBaseTable {});
 
     let load_compressed_data = LoadIgdFile {};
 
@@ -116,10 +118,13 @@ fn main() -> Result<(), EntroGdError> {
             .process(compressed_data.clone())
             .unwrap();
         write_bitdata_as_image(&bit_data, &decompressed_path)?;
-
-        // let decompress_handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;
+        let cloned_compressed_data = compressed_data.clone();
+        let _timer = ScopedTimer::info("Decompression time for random access handle");
+        let decompress_handle = DecompressRandomAccessHandle::new(cloned_compressed_data)?;
+        let _decompressed_data = decompress_handle.decompress_samples(&vec![compressed_data.encoded_data.get_num_samples() / 2 as usize])?;
+        black_box(decompress_handle);
+        drop(_timer);
         // let indices: Vec<usize> = (0..compressed_data.encoded_data.get_num_samples()).collect();
-        // let _decompressed_data = decompress_handle.decompress_samples(&indices)?;
 
         tracing::info!(
             "Compression done: original={} bits, encoded={} bits",

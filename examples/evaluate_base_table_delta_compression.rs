@@ -256,20 +256,12 @@ fn evaluate_file(
 
     let context = if use_sorted {
         EntropyBatched {}
-            .then(SelectBasesThreshold {
-                patience: 20,
-                base_bit_impl: BaseBitImpl::Naive,
-                entropy_threshold: 0.70,
-            })
+            .then(SelectBases { patience: 10 })
             .then(BuildSortedBaseTable {})
             .process(bit_data)?
     } else {
         EntropyBatched {}
-            .then(SelectBasesThreshold {
-                patience: 20,
-                base_bit_impl: BaseBitImpl::Naive,
-                entropy_threshold: 0.70,
-            })
+            .then(SelectBases { patience: 10 })
             .then(BuildBaseTable {})
             .process(bit_data)?
     };
@@ -334,7 +326,7 @@ fn image_build_options() -> BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping: PixelGrouping::new(4, 4),
-        grouping_transform: ImageGroupingTransform::ForMin,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: false,
     }
 }

@@ -202,7 +202,7 @@ fn load_bit_data(
                 colorspace: ImageColorSpace::SrgbWithLinearAlpha,
                 color_model: ImageColorModel::YCoCgR,
                 pixel_grouping: PixelGrouping::new(2, 2),
-                grouping_transform: ImageGroupingTransform::ForMin,
+                grouping_transform: ImageGroupingTransform::ForFirstPixel,
                 pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
             })
             .process(path.to_path_buf()),

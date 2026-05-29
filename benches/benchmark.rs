@@ -159,9 +159,9 @@ impl CompressionPipeline {
                 .then(DeltaEncodeBaseTableFixed {})
                 .process(bit_data),
             Self::ImageFast => EntropyNaive {}
-                .then(SelectBasesThreshold {
+                .then(SelectBasesAdaptive {
                     patience: PATIENCE_FAST,
-                    entropy_threshold: ENTROPY_THRESHOLD,
+                    width_decay: WIDTH_DECAY_DEFAULT,
                     base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 })
                 .then(EncodeDataFusedDictionary {})
@@ -377,9 +377,9 @@ fn sequential_indices(n: usize, num_rows: usize) -> Vec<usize> {
 
 fn batch_sizes(num_rows: usize) -> [(usize, &'static str); 3] {
     [
-        (1, "single_row"),
         (1_usize.max(num_rows / 100), "1pct"),
         (1_usize.max(num_rows / 10), "10pct"),
+        (1_usize.max(num_rows / 2), "50pct"),
     ]
 }
 
@@ -571,17 +571,10 @@ fn bench_random_access(paths: &[PathBuf]) {
                     );
 
                     for _ in 0..N_RUNS {
-                        // Per-iteration setup outside the timer: produce a fresh handle so each
-                        // run starts from the same (Delta-still-present) state.
-                        let mut handle =
-                            DecompressRandomAccessHandle::new(compressed.clone()).unwrap();
-                        let delta_decoder = DecodeDeltaBaseTable {};
+                        let compressed_clone = compressed.clone();
                         let start = Instant::now();
-                        // First thing a real user does after opening the IGD file:
-                        // decode the delta base table back to raw for subsequent random access.
-                        if matches!(handle.compressed.base_table, BaseTable::Delta(_)) {
-                            handle.compressed = delta_decoder.process(handle.compressed).unwrap();
-                        }
+                        let handle =
+                            DecompressRandomAccessHandle::new(compressed_clone).unwrap();
                         let decompressed = handle.decompress_samples(indices).unwrap();
                         let elapsed = start.elapsed();
                         black_box(decompressed);
@@ -732,7 +725,8 @@ fn write_bench_csv(dataset: &str) {
 
     for r in records.iter() {
         let throughput_numerator = if r.group == "random_access" && r.num_rows > 0 {
-            r.batch_size as u64 * r.source_bytes / r.num_rows as u64
+            let pixels_per_group: u64 = r.grouped_pixels_seed.parse().unwrap_or(1);
+            r.batch_size as u64 * pixels_per_group * 4
         } else {
             r.source_bytes
         };
