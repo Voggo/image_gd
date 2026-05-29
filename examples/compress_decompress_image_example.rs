@@ -91,7 +91,7 @@ fn main() -> Result<(), EntroGdError> {
     })
     .then(BuildSortedBaseTable {})
     .then(EncodeDataHuffman {})
-    .then(DeltaEncodeBaseTableFixed {});
+    .then(DeltaEncodeBaseTable {});
 
     let load_compressed_data = LoadIgdFile {};
 

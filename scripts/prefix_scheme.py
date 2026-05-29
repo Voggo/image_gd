@@ -73,13 +73,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-unary-tiers",
         type=int,
-        default=16,
+        default=32,
         help="Maximum unary tier count to evaluate.",
     )
     parser.add_argument(
         "--max-fixed-prefix-bits",
         type=int,
-        default=6,
+        default=8,
         help="Evaluate fixed prefixes from 1..this value.",
     )
     parser.add_argument(
@@ -107,6 +107,16 @@ def parse_args() -> argparse.Namespace:
             "Use the old unary model where the last tier also carries a "
             "terminator bit. Default is truncated unary (last tier saves "
             "one bit)."
+        ),
+    )
+    parser.add_argument(
+        "--max-payload-bits",
+        type=int,
+        default=None,
+        help=(
+            "Cap the maximum tier payload width at this many bits. "
+            "Deltas needing more bits are folded into this width and handled "
+            "by the overflow tier. Default: no cap (use full histogram range)."
         ),
     )
     parser.add_argument(
@@ -313,7 +323,7 @@ def complexity_aware_best(
     for family in families.values():
         for p in family:
             score = p.total_bits + penalty_bits_per_tier * p.n_tiers
-            if best is None or score < best[0]:
+            if best is None or score < best[0]:  # type: ignore[index]
                 best = (score, p)
     assert best is not None
     return best[1]
@@ -494,6 +504,7 @@ def main() -> None:
     input_path = Path(args.input_csv)
 
     histogram = load_histogram(input_path)
+
     total_count, lb_bits = print_header(input_path, histogram)
 
     bit_lens = sorted(histogram)
