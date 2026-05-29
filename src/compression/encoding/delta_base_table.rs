@@ -538,7 +538,8 @@ fn encode_adjusted_delta_bits_with_stats_fixed(
     out: &mut BitVec<usize, Lsb0>,
 ) -> DeltaBitStats {
     const TIER_WIDTHS: [usize; 64] = get_delta_codec_fixed();
-    encode_adjusted_delta_bits_generic(d_bits, lb, out, &TIER_WIDTHS, 5, false)
+    // 6-bit prefix supports tiers 0..62 as normal; tier 63 (= 0b111111 = all-ones) is overflow.
+    encode_adjusted_delta_bits_generic(d_bits, lb, out, &TIER_WIDTHS[..63], 6, false)
 }
 
 // ── Delta decode ─────────────────────────────────────────────────────────────
@@ -701,8 +702,9 @@ fn decode_adjusted_delta_fixed(
     lb: usize,
 ) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
     const TIER_WIDTHS: [usize; 64] = get_delta_codec_fixed();
-    const PREFIX_BITS: usize = 5;
-    const N_ACTIVE: usize = TIER_WIDTHS.len();
+    const PREFIX_BITS: usize = 6;
+    // 63 normal tiers (0..62); tier 63 = 0b111111 = all-ones in 6 bits = overflow sentinel.
+    const N_ACTIVE: usize = TIER_WIDTHS.len() - 1;
 
     if *bit_pos + PREFIX_BITS > bits.len() {
         return Err(EntroGdError::InvalidMetadata {
