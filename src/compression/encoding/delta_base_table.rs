@@ -419,48 +419,8 @@ pub const fn get_delta_codec_fixed() -> [usize; 64] {
     ]
 }
 
-// Subtract 2^n from a BitVec (no u128; bitvec borrow propagation).
-// Precondition: bits >= 2^n.
-fn subtract_pow2(mut bits: BitVec<usize, Lsb0>, n: usize) -> BitVec<usize, Lsb0> {
-    let mut k = n;
-    while k < bits.len() && !bits[k] {
-        k += 1;
-    }
-    bits.set(k, false);
-    for j in n..k {
-        bits.set(j, true);
-    }
-    while bits.last().map(|b| *b) == Some(false) {
-        bits.pop();
-    }
-    bits
-}
-
-// Add 2^n to a BitVec (no u128; bitvec carry propagation).
-fn add_pow2(mut bits: BitVec<usize, Lsb0>, n: usize) -> BitVec<usize, Lsb0> {
-    if n >= bits.len() {
-        bits.resize(n, false);
-        bits.push(true);
-        return bits;
-    }
-    let mut idx = n;
-    loop {
-        if idx >= bits.len() {
-            bits.push(true);
-            break;
-        }
-        let bit = bits[idx];
-        bits.set(idx, !bit);
-        if !bit {
-            break;
-        }
-        idx += 1;
-    }
-    bits
-}
-
-// Incremental encoding: check remainder.len() <= width at each tier, subtracting
-// 2^width when it doesn't fit. No u128 needed; works for any lb.
+// Assign d to the first tier whose width >= bit_length(d); write prefix + d zero-padded.
+// No biasing: the optimizer's bit-length model is exact.
 fn encode_adjusted_delta_bits_generic(
     d_bits: &BitSlice<usize, Lsb0>,
     lb: usize,
@@ -471,10 +431,9 @@ fn encode_adjusted_delta_bits_generic(
 ) -> DeltaBitStats {
     let d_len = d_bits.len();
     let n_active = tier_widths.len();
-    let mut remainder = d_bits.to_bitvec();
 
     for (tier, &width) in tier_widths.iter().enumerate() {
-        if remainder.len() <= width {
+        if d_len <= width {
             let p_bits = if use_unary_prefix {
                 for _ in 0..tier {
                     out.push(true);
@@ -488,7 +447,7 @@ fn encode_adjusted_delta_bits_generic(
                 prefix_bits
             };
             for idx in 0..width {
-                out.push(remainder.get(idx).map(|b| *b).unwrap_or(false));
+                out.push(d_bits.get(idx).map(|b| *b).unwrap_or(false));
             }
             return DeltaBitStats {
                 minimally_necessary_bits: d_len,
@@ -497,7 +456,6 @@ fn encode_adjusted_delta_bits_generic(
                 total_written_bits: p_bits + width,
             };
         }
-        remainder = subtract_pow2(remainder, width);
     }
 
     // Overflow: write the original d in lb raw bits (not the modified remainder).
@@ -684,16 +642,7 @@ fn decode_adjusted_delta_unary(
     let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
     *bit_pos += payload_width;
 
-    if tier == n_active {
-        return Ok(payload.to_bitvec()); // overflow: payload is d directly
-    }
-
-    // d = payload + start_t  where  start_t = sum_{i < tier} 2^TIER_WIDTHS[i]
-    let mut d = payload.to_bitvec();
-    for i in 0..tier {
-        d = add_pow2(d, TIER_WIDTHS[i]);
-    }
-    Ok(d)
+    Ok(payload.to_bitvec())
 }
 
 fn decode_adjusted_delta_fixed(
@@ -741,16 +690,7 @@ fn decode_adjusted_delta_fixed(
     let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
     *bit_pos += payload_width;
 
-    if tier == N_ACTIVE {
-        return Ok(payload.to_bitvec()); // overflow: payload is d directly
-    }
-
-    // d = payload + start_t  where  start_t = sum_{i < tier} 2^TIER_WIDTHS[i]
-    let mut d = payload.to_bitvec();
-    for i in 0..tier {
-        d = add_pow2(d, TIER_WIDTHS[i]);
-    }
-    Ok(d)
+    Ok(payload.to_bitvec())
 }
 
 fn add_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
