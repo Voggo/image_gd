@@ -260,13 +260,14 @@ mod tests {
         let loaded = egd.to_compressed_data().unwrap();
 
         match (&compressed.encoded_data, &loaded.encoded_data) {
-            (EncodedData::Rle(src), EncodedData::Normal(dst)) => {
+            (EncodedData::Rle(src), EncodedData::Rle(dst)) => {
                 let src_as_raw = src.to_deviation_data().unwrap();
-                assert_eq!(src_as_raw.encoded_bit_stream(), dst.encoded_bit_stream());
-                assert_eq!(src_as_raw.get_num_samples(), dst.get_num_samples());
+                let dst_as_raw = dst.to_deviation_data().unwrap();
+                assert_eq!(src_as_raw.encoded_bit_stream(), dst_as_raw.encoded_bit_stream());
+                assert_eq!(src_as_raw.get_num_samples(), dst_as_raw.get_num_samples());
                 assert_eq!(
                     src_as_raw.get_num_deviation_bits(),
-                    dst.get_num_deviation_bits()
+                    dst_as_raw.get_num_deviation_bits()
                 );
                 assert_eq!(src_as_raw.get_num_id_bits(), dst.get_num_id_bits());
             }

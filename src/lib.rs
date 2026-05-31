@@ -2,10 +2,6 @@ pub mod compression;
 pub mod data_loader;
 pub mod error;
 pub mod filter_pipeline;
-#[cfg(feature = "experiment-runner")]
-pub mod pipeline_profiles;
-#[cfg(feature = "experiment-runner")]
-pub mod pipeline_runner;
 pub mod timing;
 mod utils;
 
@@ -35,22 +31,6 @@ pub use data_loader::{
 };
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
-#[cfg(feature = "experiment-runner")]
-pub use pipeline_profiles::{
-    BaseTableImpl, ConfigBaseBitImpl, ConfigBaseTableImpl, ConfigEncodeImpl, ConfigEntropyImpl,
-    ConfigImageColorModel, ConfigImageColorSpace, ConfigImageGroupingTransform,
-    ConfigMissingValuePolicy, ConfigSelectBasesImpl, CsvPipelineProfile, CsvPipelineProfileConfig,
-    CsvProfileGroupConfig, EncodeImpl, EntropyImpl, ExperimentRunnerConfigFile, ImageBuildConfig,
-    ImageBuildSweepConfig, ImagePipelineProfile, ImagePipelineProfileConfig,
-    ImageProfileGroupConfig, IntegerRangeU8, IntegerRangeU32, IntegerRangeUsize, IntegerSweepU8,
-    IntegerSweepU32, IntegerSweepUsize, PipelineProfileSet, SelectBasesImpl,
-};
-#[cfg(feature = "experiment-runner")]
-pub use pipeline_runner::{
-    CompressedSizeBreakdownBits, CompressionStageDurationsMs, ExperimentRecord, ExperimentReport,
-    ExperimentRunOptions, InputKind, collect_input_files, detect_input_kind,
-    run_experiments_on_path, write_report_csv,
-};
 pub use timing::ScopedTimer;
 
 pub mod prelude {

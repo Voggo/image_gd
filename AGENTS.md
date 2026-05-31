@@ -6,7 +6,6 @@ Guidance for coding agents working in `entro_gd`.
 
 - **Language:** Rust (`edition = "2024"`)
 - **Crate type:** Library crate with examples, tests, and criterion benches.
-- **Key optional feature:** `experiment-runner` (must be enabled for experiment scripts).
 
 ## Commands and Verification
 
@@ -23,10 +22,6 @@ Many examples require specific file paths.
 - **CSV Demo:** `cargo run --example load_csv`
 - **CSV Compress:** `cargo run --example compress_decompress_example -- data/data-10000-8-int.csv`
 - **Image Compress:** `cargo run --example compress_decompress_image_example -- data/images/rustacean.png`
-
-**Experiment Runner (Feature-Gated):**
-- Single config: `cargo run --release --example run_folder_experiments --features experiment-runner -- --config configs/experiment_profiles.json --output target/experiment-dashboard.csv`
-- Folder recursive: `cargo run --release --example run_folder_experiments --features experiment-runner -- --path data/images --recursive --output target/experiment-dashboard.csv`
 
 **Benchmarks:**
 - Main: `cargo bench --bench benchmark`
