@@ -84,14 +84,11 @@ fn main() -> Result<(), EntroGdError> {
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBasesAdaptive {
-        patience: 5,
-        base_bit_impl: BaseBitImpl::Naive,
-        width_decay: 0.4,
+    .then(SelectBasesProfileAllBits {
+        split_into_batches: 1,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
     })
-    .then(BuildSortedBaseTable {})
-    .then(EncodeDataHuffman {})
-    .then(DeltaEncodeBaseTable {});
+    .then(EncodeDataFusedDictionary {});
 
     let load_compressed_data = LoadIgdFile {};
 
