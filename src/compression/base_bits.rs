@@ -614,7 +614,6 @@ impl BaseBit for BaseBitBatchGroups {
         BaseBitBatchGroups::get_base_bit_positions(self)
     }
 }
-
 #[derive(Clone)]
 pub struct BaseBitIncSignatureGroups {
     /// Per-row signature class id over selected (non-constant) base bits.
@@ -622,10 +621,10 @@ pub struct BaseBitIncSignatureGroups {
     /// `row_signatures[row]` is not a packed bit pattern; it is a stable class id.
     /// When new positions are added, classes are refined incrementally from
     /// `(old_class_id, new_bits_batch)` to `new_class_id` without rebuilding groups.
+    /// One transition per old class retains the old id (the "keeper"), so no id is
+    /// ever retired and the number of live classes is exactly `next_signature_id`.
     row_signatures: Vec<u64>,
-    /// Frequency table for signatures. Maintained incrementally during updates.
-    signature_counts: FxHashMap<u64, usize>,
-    /// Monotonic id generator for new signature classes.
+    /// Monotonic id generator. Under the keeper invariant this also equals `n_b`.
     next_signature_id: u64,
     /// Lazily materialized groups cache, invalidated when signatures change.
     ///
@@ -639,13 +638,12 @@ pub struct BaseBitIncSignatureGroups {
 
 impl std::fmt::Debug for BaseBitIncSignatureGroups {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("BaseBitBatchGroups")
+        f.debug_struct("BaseBitIncSignatureGroups")
             .field("row_signatures", &self.row_signatures)
-            .field("signature_counts", &self.signature_counts)
             .field("next_signature_id", &self.next_signature_id)
             .field("base_bit_mask", &self.base_bit_mask)
             .field("base_bit_positions", &self.base_bit_positions)
-            .field("num_bases", &self.signature_counts.len())
+            .field("num_bases", &self.next_signature_id)
             .field("num_bits_per_base", &self.num_bits_per_base)
             .finish()
     }
@@ -655,18 +653,16 @@ impl BaseBitIncSignatureGroups {
     pub fn new(num_rows: usize, chunk_size: usize) -> Self {
         let base_bit_mask = bitvec![usize, Lsb0; 0; chunk_size];
         let base_bit_positions = Vec::new();
+        // All rows start in a single class (id 0); next id to hand out is 1,
+        // so `next_signature_id == n_b == 1` initially.
         let row_signatures = vec![0u64; num_rows];
-        let mut signature_counts = FxHashMap::with_capacity_and_hasher(1, Default::default());
-        signature_counts.insert(0u64, num_rows);
-        let num_bits_per_base = 0;
         BaseBitIncSignatureGroups {
             row_signatures,
-            signature_counts,
             next_signature_id: 1,
             groups_cache: OnceCell::new(),
             base_bit_mask,
             base_bit_positions,
-            num_bits_per_base,
+            num_bits_per_base: 0,
         }
     }
 
@@ -674,21 +670,22 @@ impl BaseBitIncSignatureGroups {
     fn refine_signatures_batch(&mut self, bit_data: &BitDataSet, bit_positions_batch: &[usize]) {
         debug_assert!(bit_positions_batch.len() <= 64);
 
-        // Key packs `(old_signature, mini_signature)` to reduce tuple-hash overhead.
-        let mut transitions = FxHashMap::<u128, (u64, usize)>::with_capacity_and_hasher(
-            self.signature_counts.len(),
+        // Tracks which old classes have already handed out their keeper id this batch.
+        let mut keeper_taken = FxHashSet::default();
+
+        // Maps a packed `(old_signature, mini_signature)` key to its new label.
+        let mut transitions = FxHashMap::<u128, u64>::with_capacity_and_hasher(
+            self.next_signature_id as usize,
             Default::default(),
         );
 
         let mut mini_signatures = vec![0u64; self.row_signatures.len()];
-
         for row in 0..self.row_signatures.len() {
             let mut mini_signature = 0u64;
             for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
                 let bit = unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u64;
                 mini_signature |= bit << i;
             }
-
             mini_signatures[row] = mini_signature;
         }
 
@@ -698,39 +695,26 @@ impl BaseBitIncSignatureGroups {
             .zip(mini_signatures.into_iter())
         {
             let old_signature = *row_signature;
-
             let transition_key = ((old_signature as u128) << 64) | (mini_signature as u128);
-            let transition_entry = transitions.entry(transition_key).or_insert_with(|| {
-                let new_id = self.next_signature_id;
-                self.next_signature_id = self
-                    .next_signature_id
-                    .checked_add(1)
-                    .expect("BaseBitBatchGroups signature id overflow");
-                (new_id, 0)
+
+            let new_id = *transitions.entry(transition_key).or_insert_with(|| {
+                if keeper_taken.insert(old_signature) {
+                    // First transition for this class keeps the old id, so the
+                    // class is never emptied — only genuine splits mint new ids.
+                    old_signature
+                } else {
+                    let id = self.next_signature_id;
+                    self.next_signature_id = self
+                        .next_signature_id
+                        .checked_add(1)
+                        .expect("BaseBitIncSignatureGroups signature id overflow");
+                    id
+                }
             });
-            transition_entry.1 += 1;
 
-            *row_signature = transition_entry.0;
+            *row_signature = new_id;
         }
-
-        // Apply count deltas in aggregate to avoid per-row hash-map churn.
-        for (transition_key, (new_signature, transitioned_count)) in transitions {
-            let old_signature = (transition_key >> 64) as u64;
-
-            let remove_old = {
-                let count = self
-                    .signature_counts
-                    .get_mut(&old_signature)
-                    .expect("old signature must exist in signature_counts");
-                *count -= transitioned_count;
-                *count == 0
-            };
-            if remove_old {
-                self.signature_counts.remove(&old_signature);
-            }
-
-            *self.signature_counts.entry(new_signature).or_insert(0) += transitioned_count;
-        }
+        // No frequency-table update: `n_b` is `next_signature_id` by construction.
     }
 
     pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
@@ -779,26 +763,30 @@ impl BaseBitIncSignatureGroups {
     pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
         let _timer = ScopedTimer::debug("Getting bases");
 
-        // Preserve stable ordering by first row occurrence for consistency with
-        // `get_groups()` and downstream row->base-id mappings.
-        let mut signature_order = Vec::with_capacity(self.signature_counts.len());
-        let mut seen = FxHashMap::<u64, usize>::with_capacity_and_hasher(
-            self.signature_counts.len(),
+        let num_classes = self.next_signature_id as usize;
+
+        // Single pass over the labels: recover a representative row per class,
+        // count class sizes, and preserve first-occurrence ordering.
+        let mut signature_order = Vec::with_capacity(num_classes);
+        let mut representative = FxHashMap::<u64, usize>::with_capacity_and_hasher(
+            num_classes,
             Default::default(),
         );
+        let mut counts =
+            FxHashMap::<u64, usize>::with_capacity_and_hasher(num_classes, Default::default());
+
         for (row, &signature) in self.row_signatures.iter().enumerate() {
-            seen.entry(signature).or_insert_with(|| {
-                signature_order.push((signature, row));
+            *counts.entry(signature).or_insert(0) += 1;
+            representative.entry(signature).or_insert_with(|| {
+                signature_order.push(signature);
                 row
             });
         }
 
         let mut bases = Vec::with_capacity(signature_order.len());
-        for (signature, representative_row) in signature_order {
-            let count = *self
-                .signature_counts
-                .get(&signature)
-                .expect("signature must exist in signature_counts");
+        for signature in signature_order {
+            let representative_row = representative[&signature];
+            let count = counts[&signature];
             let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
             let mut packed_base = BitVec::with_capacity(self.base_bit_positions.len());
             for &bit_pos in &self.base_bit_positions {
@@ -812,12 +800,13 @@ impl BaseBitIncSignatureGroups {
     pub fn get_groups(&self) -> &[Vec<usize>] {
         self.groups_cache
             .get_or_init(|| {
+                let num_classes = self.next_signature_id as usize;
                 let mut group_index_by_signature =
                     FxHashMap::<u64, usize>::with_capacity_and_hasher(
-                        self.signature_counts.len(),
+                        num_classes,
                         Default::default(),
                     );
-                let mut groups: Vec<Vec<usize>> = Vec::with_capacity(self.signature_counts.len());
+                let mut groups: Vec<Vec<usize>> = Vec::with_capacity(num_classes);
 
                 for (row, &signature) in self.row_signatures.iter().enumerate() {
                     let group_idx = if let Some(&idx) = group_index_by_signature.get(&signature) {
@@ -836,7 +825,7 @@ impl BaseBitIncSignatureGroups {
     }
 
     pub fn get_num_bases(&self) -> usize {
-        self.signature_counts.len()
+        self.next_signature_id as usize
     }
 
     pub fn get_num_bits_per_base(&self) -> usize {
