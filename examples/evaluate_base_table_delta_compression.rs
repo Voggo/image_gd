@@ -6,9 +6,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use csv::Writer;
-use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
-use entro_gd::prelude::*;
-use entro_gd::{
+use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::prelude::*;
+use image_gd::{
     BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet,
     BuildSortedBaseTable, EntroGdError, InferFeatureSpecs, PreprocessOptions,
 };
@@ -551,7 +551,7 @@ fn rows_from_distribution(distribution: &BTreeMap<usize, usize>) -> Vec<DeltaDis
     rows_out
 }
 
-fn build_sort_key_local_order(context: &entro_gd::PreEncodeContext) -> Vec<usize> {
+fn build_sort_key_local_order(context: &image_gd::PreEncodeContext) -> Vec<usize> {
     let row_width = context
         .variable_base_table
         .first()

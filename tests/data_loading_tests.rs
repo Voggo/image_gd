@@ -1,4 +1,4 @@
-use entro_gd::data_loader::{
+use image_gd::data_loader::{
     ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata,
 };
 

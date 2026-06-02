@@ -580,29 +580,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "entro_gd"
-version = "0.1.0"
-dependencies = [
- "bitvec",
- "chrono",
- "criterion",
- "csv",
- "dicom-toolkit-codec",
- "fxhash",
- "image",
- "once_cell",
- "png",
- "pretty_assertions",
- "qoi",
- "rayon",
- "serde",
- "serde_json",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -857,6 +834,29 @@ checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
 dependencies = [
  "byteorder-lite",
  "quick-error",
+]
+
+[[package]]
+name = "image_gd"
+version = "0.1.0"
+dependencies = [
+ "bitvec",
+ "chrono",
+ "criterion",
+ "csv",
+ "dicom-toolkit-codec",
+ "fxhash",
+ "image",
+ "once_cell",
+ "png",
+ "pretty_assertions",
+ "qoi",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

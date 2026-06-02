@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(&egd.as_bytes()[0..3], &MAGIC_BYTES);
         assert_eq!(egd.as_bytes()[3], FORMAT_VERSION);
 
-        let output = std::env::temp_dir().join("entro_gd_test_output");
+        let output = std::env::temp_dir().join("image_gd_test_output");
         let saved = egd.save(&output).unwrap();
         assert_eq!(saved.extension().and_then(|s| s.to_str()), Some("egd"));
         assert!(saved.exists());

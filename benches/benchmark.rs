@@ -9,10 +9,10 @@ use png::{
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
-use entro_gd::compression::encoding::BaseTable;
-use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
-use entro_gd::prelude::*;
-use entro_gd::{BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError, IgdFile};
+use image_gd::compression::encoding::BaseTable;
+use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::prelude::*;
+use image_gd::{BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError, IgdFile};
 
 // ── CSV collection ────────────────────────────────────────────────────────────
 
@@ -49,7 +49,6 @@ const DEFAULT_DATA_ROOT: &str = "data/bench_datasets";
 
 const PATIENCE_BEST: usize = 10;
 const PATIENCE_FAST: usize = 5;
-const ENTROPY_THRESHOLD: f64 = 0.75;
 const WIDTH_DECAY_DEFAULT: f64 = 0.5;
 
 // ── Preprocessing spec ────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
-use entro_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FloatStorage};
-use entro_gd::prelude::*;
-use entro_gd::{
+use image_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FloatStorage};
+use image_gd::prelude::*;
+use image_gd::{
     BitDataSet, DecompressAnalytics, DecompressFileData, EntroGdError, LoadEgdFile, SaveEgdFile,
     ScopedTimer, decode_value_from_bits, init_logging, write_bitdata_as_csv,
 };

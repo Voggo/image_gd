@@ -1,9 +1,9 @@
-use entro_gd::ImageColorModel;
-use entro_gd::ScopedTimer;
+use image_gd::ImageColorModel;
+use image_gd::ScopedTimer;
 
-use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
-use entro_gd::prelude::*;
-use entro_gd::{EntroGdError, init_logging, write_bitdata_as_image};
+use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::prelude::*;
+use image_gd::{EntroGdError, init_logging, write_bitdata_as_image};
 use std::env;
 use std::fs;
 use std::hint::black_box;
@@ -84,11 +84,14 @@ fn main() -> Result<(), EntroGdError> {
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
     .then(EntropyNaive {})
-    .then(SelectBasesProfileAllBits {
-        split_into_batches: 1,
-        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+    .then(SelectBasesAdaptive {
+        width_decay: 0.45,
+        patience: 5,
+        base_bit_impl: BaseBitImpl::Naive,
     })
-    .then(EncodeDataFusedDictionary {});
+    .then(BuildSortedBaseTable {})
+    .then(EncodeDataHuffman {})
+    .then(DeltaEncodeBaseTableFixed {});
 
     let load_compressed_data = LoadIgdFile {};
 
@@ -121,7 +124,6 @@ fn main() -> Result<(), EntroGdError> {
         let _decompressed_data = decompress_handle.decompress_samples(&vec![compressed_data.encoded_data.get_num_samples() / 2 as usize])?;
         black_box(decompress_handle);
         drop(_timer);
-        // let indices: Vec<usize> = (0..compressed_data.encoded_data.get_num_samples()).collect();
 
         tracing::info!(
             "Compression done: original={} bits, encoded={} bits",

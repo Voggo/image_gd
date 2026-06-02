@@ -1,7 +1,7 @@
-use entro_gd::compression::BaseTable;
-use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
-use entro_gd::prelude::*;
-use entro_gd::{BitDataSet, DecompressFileData, LoadEgdFile, SaveEgdFile};
+use image_gd::compression::BaseTable;
+use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::prelude::*;
+use image_gd::{BitDataSet, DecompressFileData, LoadEgdFile, SaveEgdFile};
 use std::env;
 
 fn assert_bitstream_eq(

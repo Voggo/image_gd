@@ -4,9 +4,9 @@ use std::rc::Rc;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
-use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
-use entro_gd::prelude::*;
-use entro_gd::{
+use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::prelude::*;
+use image_gd::{
     BaseSelectionContext, BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError,
     EntropyScoredContext, PreEncodeContext,
 };
@@ -38,7 +38,6 @@ const THRESHOLD_PATIENCE: usize = 5;
 const ADAPTIVE_PATIENCE: usize = 5;
 const ENTROPY_THRESHOLD: f64 = 0.75;
 const WEIGHT_DECAY: f64 = 0.5;
-const M_MAX: usize = 0;
 const BASE_BIT_IMPL: BaseBitImpl = BaseBitImpl::Naive;
 const IMAGE_DIR: &str = "data/bench_datasets/kodak_dataset";
 
@@ -121,21 +120,6 @@ impl EntropyImpl {
             Self::Naive => EntropyNaive {}.process(input),
             Self::Batched => EntropyBatched {}.process(input),
         }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum GenCondensedImpl {
-    Current,
-}
-
-impl GenCondensedImpl {
-    fn label(self) -> &'static str {
-        "current"
-    }
-
-    fn process(self, input: EntropyScoredContext) -> Result<EntropyScoredContext, EntroGdError> {
-        GenCondensedSamples { m_max: M_MAX }.process(input)
     }
 }
 
@@ -503,8 +487,6 @@ const BUILD_IMAGE_GROUPING_CONFIGS: &[SeedPreprocessing] = seed_configs![
 // ── Standard arrays ───────────────────────────────────────────────────────────
 
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Batched];
-
-const GEN_CONDENSED_IMPLS: [GenCondensedImpl; 1] = [GenCondensedImpl::Current];
 
 const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
     SelectBasesImpl::Naive {

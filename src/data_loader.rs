@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_missing_value_policy_zero() {
-        let path = std::env::temp_dir().join("entro_gd_missing_zero.csv");
+        let path = std::env::temp_dir().join("image_gd_missing_zero.csv");
         std::fs::write(&path, "a,b\n1,\n2,3\n").unwrap();
 
         let loaded = CsvDataLoader::new(true)
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_missing_value_policy_error() {
-        let path = std::env::temp_dir().join("entro_gd_missing_error.csv");
+        let path = std::env::temp_dir().join("image_gd_missing_error.csv");
         std::fs::write(&path, "a,b\n1,\n").unwrap();
 
         let err = CsvDataLoader::new(true).load(&path).unwrap_err();

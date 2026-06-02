@@ -1,6 +1,6 @@
-use entro_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
-use entro_gd::prelude::*;
-use entro_gd::{
+use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::prelude::*;
+use image_gd::{
     BitDataSet, DecompressFileData, EncodedData, ImageColorModel, LoadEgdFile, SaveEgdFile,
     SaveIgdFile, decompress_igd_to_image,
 };

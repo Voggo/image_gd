@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use bitvec::prelude::*;
 use csv::Writer;
-use entro_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
-use entro_gd::prelude::*;
-use entro_gd::{EntroGdError, ImageColorModel, init_logging};
+use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::prelude::*;
+use image_gd::{EntroGdError, ImageColorModel, init_logging};
 
 fn main() -> Result<(), EntroGdError> {
     unsafe {

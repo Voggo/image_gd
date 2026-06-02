@@ -71,7 +71,7 @@ pub struct LogHandle {
 /// - `ENTRO_GD_LOG_DIR` (default: `logs`)
 /// - `ENTRO_GD_LOG_TO_STDERR` (`1`/`true` to mirror `warn+` to stderr)
 ///
-/// Log filename: `entro_gd_YYYYMMDD_HHMMSS.log`.
+/// Log filename: `image_gd_YYYYMMDD_HHMMSS.log`.
 ///
 /// Safe to call multiple times. Only the first successful call initializes
 /// the global subscriber and returns a [`LogHandle`].
@@ -92,7 +92,7 @@ pub fn init_logging() -> Option<LogHandle> {
         }
 
         let file_name = format!(
-            "entro_gd_{}.log",
+            "image_gd_{}.log",
             chrono::Local::now().format("%Y%m%d_%H%M%S")
         );
         let file_appender = tracing_appender::rolling::never(&log_dir, file_name);
