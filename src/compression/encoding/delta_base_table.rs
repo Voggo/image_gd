@@ -60,50 +60,32 @@ impl Filter for DeltaEncodeBaseTable {
             return Ok(input);
         }
 
-        let mut key_rows = Vec::with_capacity(raw_rows.len());
-        for (row_bits, _) in &raw_rows {
-            key_rows.push(build_sort_key_bits(row_bits.as_bitslice(), &order));
-        }
-
-        let first_sort_key = key_rows[0].clone();
-        let mut delta_bit_stream = BitVec::new();
-        let mut delta_stats = DeltaBitStats::default();
-        for pair in key_rows.windows(2) {
-            let prev = pair[0].as_bitslice();
-            let curr = pair[1].as_bitslice();
-
-            if compare_unsigned(prev, curr) == std::cmp::Ordering::Less {
-                tracing::warn!(
-                    "DeltaEncodeBaseTable skipped: base rows are not monotonic for descending key deltas; keeping raw base table"
-                );
-                input.base_table = BaseTable::Raw(raw_rows);
-                return Ok(input);
-            }
-
-            let delta = subtract_unsigned(prev, curr);
-            if is_zero_bits(delta.as_bitslice()) {
-                tracing::warn!(
-                    "DeltaEncodeBaseTable skipped: encountered zero delta (expected unique sorted rows); keeping raw base table"
-                );
-                input.base_table = BaseTable::Raw(raw_rows);
-                return Ok(input);
-            }
-
-            let d = subtract_one(delta.as_bitslice());
-            let stats = encode_adjusted_delta_bits_with_stats(
-                d.as_bitslice(),
-                row_width,
-                &mut delta_bit_stream,
-            );
-            delta_stats.total_written_bits += stats.total_written_bits;
-            delta_stats.prefix_bits += stats.prefix_bits;
-            delta_stats.payload_bits += stats.payload_bits;
-            delta_stats.minimally_necessary_bits += stats.minimally_necessary_bits;
-        }
+        let (first_sort_key, delta_bit_stream, delta_count, delta_stats) =
+            match delta_encode_base_rows(&raw_rows, &order, row_width, &get_delta_codec(), 5, true) {
+                DeltaEncodeResult::Encoded {
+                    first_sort_key,
+                    delta_bit_stream,
+                    delta_count,
+                    stats,
+                } => (first_sort_key, delta_bit_stream, delta_count, stats),
+                DeltaEncodeResult::NotMonotonic => {
+                    tracing::warn!(
+                        "DeltaEncodeBaseTable skipped: base rows are not monotonic for descending key deltas; keeping raw base table"
+                    );
+                    input.base_table = BaseTable::Raw(raw_rows);
+                    return Ok(input);
+                }
+                DeltaEncodeResult::ZeroDelta => {
+                    tracing::warn!(
+                        "DeltaEncodeBaseTable skipped: encountered zero delta (expected unique sorted rows); keeping raw base table"
+                    );
+                    input.base_table = BaseTable::Raw(raw_rows);
+                    return Ok(input);
+                }
+            };
 
         let raw_base_table_bits = num_bases * row_width;
         let delta_base_table_bits = first_sort_key.len() + delta_bit_stream.len();
-        let delta_count = key_rows.len().saturating_sub(1);
 
         let quantization_overhead_bits = delta_stats
             .payload_bits
@@ -212,50 +194,39 @@ impl Filter for DeltaEncodeBaseTableFixed {
             return Ok(input);
         }
 
-        let mut key_rows = Vec::with_capacity(raw_rows.len());
-        for (row_bits, _) in &raw_rows {
-            key_rows.push(build_sort_key_bits(row_bits.as_bitslice(), &order));
-        }
-
-        let first_sort_key = key_rows[0].clone();
-        let mut delta_bit_stream = BitVec::new();
-        let mut delta_stats = DeltaBitStats::default();
-        for pair in key_rows.windows(2) {
-            let prev = pair[0].as_bitslice();
-            let curr = pair[1].as_bitslice();
-
-            if compare_unsigned(prev, curr) == std::cmp::Ordering::Less {
+        const TIER_WIDTHS_FIXED: [usize; 64] = get_delta_codec_fixed();
+        let (first_sort_key, delta_bit_stream, delta_count, delta_stats) = match delta_encode_base_rows(
+            &raw_rows,
+            &order,
+            row_width,
+            &TIER_WIDTHS_FIXED[..63],
+            6,
+            false,
+        ) {
+            DeltaEncodeResult::Encoded {
+                first_sort_key,
+                delta_bit_stream,
+                delta_count,
+                stats,
+            } => (first_sort_key, delta_bit_stream, delta_count, stats),
+            DeltaEncodeResult::NotMonotonic => {
                 tracing::warn!(
                     "DeltaEncodeBaseTableFixed skipped: base rows are not monotonic for descending key deltas; keeping raw base table"
                 );
                 input.base_table = BaseTable::Raw(raw_rows);
                 return Ok(input);
             }
-
-            let delta = subtract_unsigned(prev, curr);
-            if is_zero_bits(delta.as_bitslice()) {
+            DeltaEncodeResult::ZeroDelta => {
                 tracing::warn!(
                     "DeltaEncodeBaseTableFixed skipped: encountered zero delta (expected unique sorted rows); keeping raw base table"
                 );
                 input.base_table = BaseTable::Raw(raw_rows);
                 return Ok(input);
             }
-
-            let d = subtract_one(delta.as_bitslice());
-            let stats = encode_adjusted_delta_bits_with_stats_fixed(
-                d.as_bitslice(),
-                row_width,
-                &mut delta_bit_stream,
-            );
-            delta_stats.total_written_bits += stats.total_written_bits;
-            delta_stats.prefix_bits += stats.prefix_bits;
-            delta_stats.payload_bits += stats.payload_bits;
-            delta_stats.minimally_necessary_bits += stats.minimally_necessary_bits;
-        }
+        };
 
         let raw_base_table_bits = num_bases * row_width;
         let delta_base_table_bits = first_sort_key.len() + delta_bit_stream.len();
-        let delta_count = key_rows.len().saturating_sub(1);
 
         let quantization_overhead_bits = delta_stats
             .payload_bits
@@ -320,86 +291,157 @@ impl Filter for DeltaEncodeBaseTableFixed {
     }
 }
 
-fn build_sort_key_bits(row: &BitSlice<usize, Lsb0>, order: &[usize]) -> BitVec<usize, Lsb0> {
-    let mut out = BitVec::with_capacity(order.len());
-    for &col_idx in order.iter().rev() {
-        out.push(row.get(col_idx).map(|b| *b).unwrap_or(false));
+/// Outcome of the word-level delta encoder. `NotMonotonic`/`ZeroDelta` mirror the
+/// two conditions under which the encoder bails out and the caller keeps the raw
+/// base table.
+enum DeltaEncodeResult {
+    Encoded {
+        first_sort_key: BitVec<usize, Lsb0>,
+        delta_bit_stream: BitVec<usize, Lsb0>,
+        delta_count: usize,
+        stats: DeltaBitStats,
+    },
+    NotMonotonic,
+    ZeroDelta,
+}
+
+/// Delta-encode the base rows by treating each `row_width`-bit sort key as a
+/// little-endian array of `usize` words. The descending key deltas are computed
+/// word-wise (a few word subtractions per row instead of a bit-by-bit loop), and
+/// each delta is emitted via the tiered prefix coder selected by the caller
+/// (`tier_widths` / `prefix_bits` / `use_unary_prefix`).
+fn delta_encode_base_rows(
+    raw_rows: &[(BitVec<usize, Lsb0>, usize)],
+    order: &[usize],
+    row_width: usize,
+    tier_widths: &[usize],
+    prefix_bits: usize,
+    use_unary_prefix: bool,
+) -> DeltaEncodeResult {
+    const WORD_BITS: usize = usize::BITS as usize;
+    let lb = row_width;
+    let num_words = lb.div_ceil(WORD_BITS);
+    let max_tier_width = tier_widths.iter().copied().max().unwrap_or(0);
+    // The payload buffer must be able to hold a tier whose width exceeds `lb`, so
+    // the zero-padded high bits are addressable when emitting the payload.
+    let cap_words = lb.max(max_tier_width).div_ceil(WORD_BITS).max(1);
+
+    // Forward permutation: row column -> key bit index. Key bit `lb - 1 - rank`
+    // carries row column `order[rank]` (callers guarantee `order[rank] < row_width`).
+    let mut key_idx_for_col = vec![usize::MAX; lb];
+    for (rank, &col) in order.iter().enumerate() {
+        key_idx_for_col[col] = lb - 1 - rank;
     }
-    out
+
+    let mut prev = vec![0usize; num_words];
+    build_sort_key_words(&raw_rows[0].0, &key_idx_for_col, lb, &mut prev);
+
+    let mut first_sort_key = BitVec::<usize, Lsb0>::from_vec(prev.clone());
+    first_sort_key.truncate(lb);
+
+    let mut curr = vec![0usize; num_words];
+    let mut delta = vec![0usize; num_words];
+    let mut d = vec![0usize; cap_words];
+
+    let mut delta_bit_stream = BitVec::new();
+    let mut stats = DeltaBitStats::default();
+    let mut delta_count = 0usize;
+
+    for (row, _) in raw_rows.iter().skip(1) {
+        build_sort_key_words(row, &key_idx_for_col, lb, &mut curr);
+
+        // delta = prev - curr (a non-zero borrow out means prev < curr).
+        let mut borrow = 0usize;
+        for w in 0..num_words {
+            let (r1, b1) = prev[w].overflowing_sub(curr[w]);
+            let (r2, b2) = r1.overflowing_sub(borrow);
+            delta[w] = r2;
+            borrow = (b1 | b2) as usize;
+        }
+        if borrow != 0 {
+            return DeltaEncodeResult::NotMonotonic;
+        }
+        if delta.iter().all(|&x| x == 0) {
+            return DeltaEncodeResult::ZeroDelta;
+        }
+
+        // d = delta - 1, zero-extended into the wider payload buffer.
+        d[..num_words].copy_from_slice(&delta);
+        for slot in d[num_words..].iter_mut() {
+            *slot = 0;
+        }
+        let mut dec_borrow = 1usize;
+        for slot in d[..num_words].iter_mut() {
+            let (r, b) = slot.overflowing_sub(dec_borrow);
+            *slot = r;
+            dec_borrow = b as usize;
+            if dec_borrow == 0 {
+                break;
+            }
+        }
+
+        let s = encode_adjusted_delta_words(
+            &d,
+            lb,
+            &mut delta_bit_stream,
+            tier_widths,
+            prefix_bits,
+            use_unary_prefix,
+        );
+        stats.total_written_bits += s.total_written_bits;
+        stats.prefix_bits += s.prefix_bits;
+        stats.payload_bits += s.payload_bits;
+        stats.minimally_necessary_bits += s.minimally_necessary_bits;
+
+        delta_count += 1;
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    DeltaEncodeResult::Encoded {
+        first_sort_key,
+        delta_bit_stream,
+        delta_count,
+        stats,
+    }
 }
 
-fn is_zero_bits(bits: &BitSlice<usize, Lsb0>) -> bool {
-    bits.not_any()
-}
-
-fn compare_unsigned(
-    lhs: &BitSlice<usize, Lsb0>,
-    rhs: &BitSlice<usize, Lsb0>,
-) -> std::cmp::Ordering {
-    let max_len = lhs.len().max(rhs.len());
-    for idx in (0..max_len).rev() {
-        let l = lhs.get(idx).map(|b| *b).unwrap_or(false);
-        let r = rhs.get(idx).map(|b| *b).unwrap_or(false);
-        match l.cmp(&r) {
-            std::cmp::Ordering::Equal => continue,
-            non_equal => return non_equal,
+/// Build the sort key for `row` into the little-endian word buffer `out`, scattering
+/// each set row bit to its key position via the forward permutation. Iterates only
+/// the set bits, so cost is proportional to the row's popcount.
+fn build_sort_key_words(
+    row: &BitVec<usize, Lsb0>,
+    key_idx_for_col: &[usize],
+    lb: usize,
+    out: &mut [usize],
+) {
+    const WORD_BITS: usize = usize::BITS as usize;
+    out.fill(0);
+    for (w, &word) in row.as_raw_slice().iter().enumerate() {
+        let base = w * WORD_BITS;
+        let mut bits = word;
+        while bits != 0 {
+            let col = base + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            if col < lb {
+                let key_idx = key_idx_for_col[col];
+                if key_idx != usize::MAX {
+                    out[key_idx / WORD_BITS] |= 1usize << (key_idx % WORD_BITS);
+                }
+            }
         }
     }
-    std::cmp::Ordering::Equal
 }
 
-fn subtract_unsigned(
-    minuend: &BitSlice<usize, Lsb0>,
-    subtrahend: &BitSlice<usize, Lsb0>,
-) -> BitVec<usize, Lsb0> {
-    let max_len = minuend.len().max(subtrahend.len());
-    let mut out = BitVec::with_capacity(max_len);
-
-    let mut borrow: i8 = 0;
-    for idx in 0..max_len {
-        let a = if minuend.get(idx).map(|b| *b).unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-        let b = if subtrahend.get(idx).map(|b| *b).unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-
-        let mut diff = a - b - borrow;
-        if diff < 0 {
-            diff += 2;
-            borrow = 1;
-        } else {
-            borrow = 0;
+/// Number of significant bits in a little-endian word array (0 if the value is 0).
+fn word_bit_length(words: &[usize]) -> usize {
+    const WORD_BITS: usize = usize::BITS as usize;
+    for w in (0..words.len()).rev() {
+        if words[w] != 0 {
+            return w * WORD_BITS + (WORD_BITS - words[w].leading_zeros() as usize);
         }
-        out.push(diff == 1);
     }
-
-    while out.last().map(|bit| *bit) == Some(false) {
-        out.pop();
-    }
-
-    out
+    0
 }
-
-fn subtract_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
-    let mut out = bits.to_bitvec();
-    for idx in 0..out.len() {
-        if out[idx] {
-            out.set(idx, false);
-            break;
-        }
-        out.set(idx, true);
-    }
-    while out.last().map(|bit| *bit) == Some(false) {
-        out.pop();
-    }
-    out
-}
-
 
 // Update these from prefix_scheme.py output if you want
 pub const fn get_delta_codec() -> [usize; 30] {
@@ -420,35 +462,25 @@ pub const fn get_delta_codec_fixed() -> [usize; 64] {
 }
 
 // Assign d to the first tier whose width >= bit_length(d); write prefix + d zero-padded.
-// No biasing: the optimizer's bit-length model is exact.
-fn encode_adjusted_delta_bits_generic(
-    d_bits: &BitSlice<usize, Lsb0>,
+// No biasing: the optimizer's bit-length model is exact. `d` is a little-endian word
+// array holding the adjusted delta in its low `lb` bits (zero-padded above).
+fn encode_adjusted_delta_words(
+    d: &[usize],
     lb: usize,
     out: &mut BitVec<usize, Lsb0>,
     tier_widths: &[usize],
     prefix_bits: usize,
     use_unary_prefix: bool,
 ) -> DeltaBitStats {
-    let d_len = d_bits.len();
+    let d_len = word_bit_length(d);
     let n_active = tier_widths.len();
+    let d_bits = d.view_bits::<Lsb0>();
 
     for (tier, &width) in tier_widths.iter().enumerate() {
         if d_len <= width {
-            let p_bits = if use_unary_prefix {
-                for _ in 0..tier {
-                    out.push(true);
-                }
-                out.push(false);
-                tier + 1
-            } else {
-                for i in 0..prefix_bits {
-                    out.push(((tier >> i) & 1) == 1);
-                }
-                prefix_bits
-            };
-            for idx in 0..width {
-                out.push(d_bits.get(idx).map(|b| *b).unwrap_or(false));
-            }
+            let p_bits =
+                write_delta_prefix(out, tier, n_active, prefix_bits, use_unary_prefix, false);
+            out.extend_from_bitslice(&d_bits[..width]);
             return DeltaBitStats {
                 minimally_necessary_bits: d_len,
                 prefix_bits: p_bits,
@@ -459,20 +491,8 @@ fn encode_adjusted_delta_bits_generic(
     }
 
     // Overflow: write the original d in lb raw bits (not the modified remainder).
-    let p_bits = if use_unary_prefix {
-        for _ in 0..n_active {
-            out.push(true);
-        }
-        n_active
-    } else {
-        for i in 0..prefix_bits {
-            out.push(((n_active >> i) & 1) == 1);
-        }
-        prefix_bits
-    };
-    for idx in 0..lb {
-        out.push(d_bits.get(idx).map(|b| *b).unwrap_or(false));
-    }
+    let p_bits = write_delta_prefix(out, n_active, n_active, prefix_bits, use_unary_prefix, true);
+    out.extend_from_bitslice(&d_bits[..lb]);
     DeltaBitStats {
         minimally_necessary_bits: d_len,
         prefix_bits: p_bits,
@@ -481,23 +501,37 @@ fn encode_adjusted_delta_bits_generic(
     }
 }
 
-fn encode_adjusted_delta_bits_with_stats(
-    d_bits: &BitSlice<usize, Lsb0>,
-    lb: usize,
+/// Write the tier prefix and return the number of prefix bits written. For unary
+/// prefixes a normal tier is `tier` ones then a terminating zero, and overflow is
+/// `n_active` ones with no terminator; for fixed prefixes the `prefix_bits`-bit code
+/// (tier, or `n_active` for overflow) is written LSB-first.
+fn write_delta_prefix(
     out: &mut BitVec<usize, Lsb0>,
-) -> DeltaBitStats {
-    const TIER_WIDTHS: [usize; 30] = get_delta_codec();
-    encode_adjusted_delta_bits_generic(d_bits, lb, out, &TIER_WIDTHS, 5, true)
-}
-
-fn encode_adjusted_delta_bits_with_stats_fixed(
-    d_bits: &BitSlice<usize, Lsb0>,
-    lb: usize,
-    out: &mut BitVec<usize, Lsb0>,
-) -> DeltaBitStats {
-    const TIER_WIDTHS: [usize; 64] = get_delta_codec_fixed();
-    // 6-bit prefix supports tiers 0..62 as normal; tier 63 (= 0b111111 = all-ones) is overflow.
-    encode_adjusted_delta_bits_generic(d_bits, lb, out, &TIER_WIDTHS[..63], 6, false)
+    code: usize,
+    n_active: usize,
+    prefix_bits: usize,
+    use_unary_prefix: bool,
+    is_overflow: bool,
+) -> usize {
+    if use_unary_prefix {
+        if is_overflow {
+            for _ in 0..n_active {
+                out.push(true);
+            }
+            n_active
+        } else {
+            for _ in 0..code {
+                out.push(true);
+            }
+            out.push(false);
+            code + 1
+        }
+    } else {
+        for i in 0..prefix_bits {
+            out.push(((code >> i) & 1) == 1);
+        }
+        prefix_bits
+    }
 }
 
 // ── Delta decode ─────────────────────────────────────────────────────────────
@@ -546,17 +580,51 @@ fn decode_delta_base_rows(
         });
     }
 
+    // The sort key is an `lb`-bit little-endian integer; treat it as a fixed-width
+    // array of `usize` words so each per-row subtraction touches ~lb/word_bits words
+    // instead of looping bit-by-bit through bitvec's bounds-checked proxy.
+    const WORD_BITS: usize = usize::BITS as usize;
+    let num_words = lb.div_ceil(WORD_BITS);
+    // Mask for the live bits in the most significant word (keeps bits >= lb at 0 so
+    // the word array stays a faithful lb-bit value across subtractions).
+    let top_mask: usize = match lb % WORD_BITS {
+        0 => usize::MAX,
+        rem => (1usize << rem) - 1,
+    };
+
+    // Inverse permutation: for each key bit index, the destination row column. Key
+    // bit `lb - 1 - rank` carries the row column `order[rank]`.
+    let mut col_for_key_idx = vec![0usize; lb];
+    for (rank, &col_idx) in order.iter().enumerate() {
+        col_for_key_idx[lb.saturating_sub(1 + rank)] = col_idx;
+    }
+
+    // prev_key words, reused in place across iterations.
+    let mut prev_key = vec![0usize; num_words];
+    {
+        let src = first_sort_key.to_bitvec();
+        let raw = src.as_raw_slice();
+        prev_key[..raw.len().min(num_words)]
+            .copy_from_slice(&raw[..raw.len().min(num_words)]);
+        if let Some(last) = prev_key.last_mut() {
+            *last &= top_mask;
+        }
+    }
+
+    // Scratch buffer for the decoded delta payload, reused across iterations.
+    let mut payload_words = vec![0usize; num_words];
+
     let mut rows = Vec::with_capacity(num_bases);
-    let mut prev_key = first_sort_key.to_bitvec();
-    rows.push((sort_key_to_row(&prev_key, order, lb), 0usize));
+    rows.push((scatter_key_to_row(&prev_key, &col_for_key_idx, lb), 0usize));
 
     let mut bit_pos = 0usize;
     for _ in 0..delta_count {
-        let d = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb, codec_tag)?;
-        let delta = add_one(d.as_bitslice());
-        let next_key = subtract_unsigned(prev_key.as_bitslice(), delta.as_bitslice());
-        rows.push((sort_key_to_row(&next_key, order, lb), 0usize));
-        prev_key = next_key;
+        let payload = decode_adjusted_delta(delta_bit_stream, &mut bit_pos, lb, codec_tag)?;
+        // next_key = prev_key - (payload + 1); the +1 is folded into the subtraction's
+        // initial borrow. Both operands and the result are `lb`-bit word arrays.
+        load_bits_into_words(payload, &mut payload_words);
+        subtract_words_plus_one(&mut prev_key, &payload_words, top_mask);
+        rows.push((scatter_key_to_row(&prev_key, &col_for_key_idx, lb), 0usize));
     }
 
     if bit_pos != delta_bit_stream.len() {
@@ -568,28 +636,63 @@ fn decode_delta_base_rows(
     Ok(rows)
 }
 
-fn sort_key_to_row(
-    sort_key: &BitVec<usize, Lsb0>,
-    order: &[usize],
+/// Load a bit payload into a little-endian word buffer, zero-filling unused words.
+/// `dst` must be wide enough to hold `src` (callers size it to the key width).
+fn load_bits_into_words(src: &BitSlice<usize, Lsb0>, dst: &mut [usize]) {
+    const WORD_BITS: usize = usize::BITS as usize;
+    dst.fill(0);
+    for (i, chunk) in src.chunks(WORD_BITS).enumerate() {
+        dst[i] = chunk.load_le::<usize>();
+    }
+}
+
+/// Compute `key -= payload + 1` in place over little-endian `usize` words. The `+1`
+/// is realised by seeding the borrow with 1. `top_mask` clears bits above the key
+/// width in the most significant word. Callers must guarantee `key >= payload + 1`
+/// (base rows are strictly descending in sort-key order, so this always holds).
+fn subtract_words_plus_one(key: &mut [usize], payload: &[usize], top_mask: usize) {
+    let mut borrow = 1usize;
+    for (k, &p) in key.iter_mut().zip(payload.iter()) {
+        let (d1, b1) = k.overflowing_sub(p);
+        let (d2, b2) = d1.overflowing_sub(borrow);
+        *k = d2;
+        borrow = (b1 | b2) as usize;
+    }
+    if let Some(last) = key.last_mut() {
+        *last &= top_mask;
+    }
+}
+
+/// Reconstruct a row by scattering the key's set bits to their row columns via the
+/// precomputed inverse permutation. Reads/writes whole `usize` words and iterates
+/// only the set bits of the key, so the cost is proportional to the popcount.
+fn scatter_key_to_row(
+    key: &[usize],
+    col_for_key_idx: &[usize],
     lb: usize,
 ) -> BitVec<usize, Lsb0> {
+    const WORD_BITS: usize = usize::BITS as usize;
     let mut row = BitVec::repeat(false, lb);
-    for (rank, &col_idx) in order.iter().enumerate() {
-        let key_idx = lb.saturating_sub(1 + rank);
-        let bit = sort_key.get(key_idx).map(|b| *b).unwrap_or(false);
-        if col_idx < lb {
-            row.set(col_idx, bit);
+    let row_words = row.as_raw_mut_slice();
+    for (w, &word) in key.iter().enumerate() {
+        let base = w * WORD_BITS;
+        let mut bits = word;
+        while bits != 0 {
+            let key_idx = base + bits.trailing_zeros() as usize;
+            let col = col_for_key_idx[key_idx];
+            row_words[col / WORD_BITS] |= 1usize << (col % WORD_BITS);
+            bits &= bits - 1;
         }
     }
     row
 }
 
-fn decode_adjusted_delta(
-    bits: &BitSlice<usize, Lsb0>,
+fn decode_adjusted_delta<'a>(
+    bits: &'a BitSlice<usize, Lsb0>,
     bit_pos: &mut usize,
     lb: usize,
     codec_tag: u8,
-) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
+) -> Result<&'a BitSlice<usize, Lsb0>, EntroGdError> {
     if codec_tag == BASE_TABLE_TAG_DELTA_UNARY {
         decode_adjusted_delta_unary(bits, bit_pos, lb)
     } else if codec_tag == BASE_TABLE_TAG_DELTA_FIXED {
@@ -601,11 +704,11 @@ fn decode_adjusted_delta(
     }
 }
 
-fn decode_adjusted_delta_unary(
-    bits: &BitSlice<usize, Lsb0>,
+fn decode_adjusted_delta_unary<'a>(
+    bits: &'a BitSlice<usize, Lsb0>,
     bit_pos: &mut usize,
     lb: usize,
-) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
+) -> Result<&'a BitSlice<usize, Lsb0>, EntroGdError> {
     const TIER_WIDTHS: [usize; 30] = get_delta_codec();
     let n_active = TIER_WIDTHS.len();
 
@@ -642,14 +745,14 @@ fn decode_adjusted_delta_unary(
     let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
     *bit_pos += payload_width;
 
-    Ok(payload.to_bitvec())
+    Ok(payload)
 }
 
-fn decode_adjusted_delta_fixed(
-    bits: &BitSlice<usize, Lsb0>,
+fn decode_adjusted_delta_fixed<'a>(
+    bits: &'a BitSlice<usize, Lsb0>,
     bit_pos: &mut usize,
     lb: usize,
-) -> Result<BitVec<usize, Lsb0>, EntroGdError> {
+) -> Result<&'a BitSlice<usize, Lsb0>, EntroGdError> {
     const TIER_WIDTHS: [usize; 64] = get_delta_codec_fixed();
     const PREFIX_BITS: usize = 6;
     // 63 normal tiers (0..62); tier 63 = 0b111111 = all-ones in 6 bits = overflow sentinel.
@@ -690,22 +793,5 @@ fn decode_adjusted_delta_fixed(
     let payload = unsafe { bits.get_unchecked(*bit_pos..*bit_pos + payload_width) };
     *bit_pos += payload_width;
 
-    Ok(payload.to_bitvec())
-}
-
-fn add_one(bits: &BitSlice<usize, Lsb0>) -> BitVec<usize, Lsb0> {
-    let mut out = bits.to_bitvec();
-    let mut carry = true;
-    let mut idx = 0usize;
-    while carry {
-        if idx >= out.len() {
-            out.push(true);
-            break;
-        }
-        let bit = out[idx];
-        out.set(idx, !bit);
-        carry = bit;
-        idx += 1;
-    }
-    out
+    Ok(payload)
 }
