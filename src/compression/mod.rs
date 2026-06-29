@@ -32,10 +32,7 @@ pub use encoding::{
     DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataFusedDictionary,
     EncodeDataFusedDictionarySinglePass, EncodeDataHuffman, EncodeDataOffsetRLE, EncodeDataRLE,
 };
-pub use entropy::{
-    EntropyBatched, EntropyBitScore, EntropyNaive, EntropyScoredContext, EntropyStrideSampled,
-    EntropyStrideSampledBatched, calculate_entropy, calculate_entropy_stride_sampled,
-};
+pub use entropy::{Entropy, EntropyBitScore, EntropyScoredContext, calculate_entropy};
 pub use file_format::{
     DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES,
     IgdFile, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile,

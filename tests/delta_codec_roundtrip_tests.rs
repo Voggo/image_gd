@@ -42,7 +42,7 @@ fn test_delta_codec_roundtrip_unary_prefix() {
 
     let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
 
-    let compression_pipeline = EntropyBatched {}
+    let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
@@ -115,7 +115,7 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
 
     let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
 
-    let compression_pipeline = EntropyBatched {}
+    let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
@@ -189,7 +189,7 @@ fn test_delta_codec_tag_serialization() {
     let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
 
     // Test unary prefix codec serialization
-    let compression_pipeline_unary = EntropyBatched {}
+    let compression_pipeline_unary = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
@@ -217,7 +217,7 @@ fn test_delta_codec_tag_serialization() {
     );
 
     // Test fixed prefix codec serialization
-    let compression_pipeline_fixed = EntropyBatched {}
+    let compression_pipeline_fixed = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,

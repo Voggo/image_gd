@@ -83,7 +83,7 @@ fn main() -> Result<(), EntroGdError> {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .then(EntropyNaive {})
+    .then(Entropy {})
     .then(SelectBasesAdaptive {
         width_decay: 0.45,
         patience: 5,
@@ -121,7 +121,9 @@ fn main() -> Result<(), EntroGdError> {
         let cloned_compressed_data = compressed_data.clone();
         let _timer = ScopedTimer::info("Decompression time for random access handle");
         let decompress_handle = DecompressRandomAccessHandle::new(cloned_compressed_data)?;
-        let _decompressed_data = decompress_handle.decompress_samples(&vec![compressed_data.encoded_data.get_num_samples() / 2 as usize])?;
+        let _decompressed_data = decompress_handle.decompress_samples(&vec![
+            compressed_data.encoded_data.get_num_samples() / 2 as usize,
+        ])?;
         black_box(decompress_handle);
         drop(_timer);
 

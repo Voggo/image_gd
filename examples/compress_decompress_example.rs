@@ -76,7 +76,7 @@ fn main() -> Result<(), EntroGdError> {
         ScopedTimer::info("Compression process without loading .csv file and parsing");
     // Compress the data with filters (pipe-and-filter style)
     tracing::info!("\nCompressing data...");
-    let compression_pipeline = EntropyBatched {}
+    let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,

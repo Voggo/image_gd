@@ -24,7 +24,7 @@ mod tests {
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{CompressedData, EncodedData};
     use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
-    use crate::compression::entropy::EntropyBatched;
+    use crate::compression::entropy::Entropy;
     use crate::compression::preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
         ImageGroupingTransform, ImageReconstructionInfo, PixelGrouping,
@@ -34,7 +34,7 @@ mod tests {
     use bitvec::prelude::*;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyBatched {}
+        Entropy {}
             .then(GenCondensedSamples { m_max: 50 })
             .then(SelectBases { patience: 10 })
             .then(BuildBaseTable {})
@@ -42,7 +42,7 @@ mod tests {
     }
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyBatched {}
+        Entropy {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
@@ -51,7 +51,7 @@ mod tests {
 
     fn get_huffman_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData>
     {
-        EntropyBatched {}
+        Entropy {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
@@ -263,7 +263,10 @@ mod tests {
             (EncodedData::Rle(src), EncodedData::Rle(dst)) => {
                 let src_as_raw = src.to_deviation_data().unwrap();
                 let dst_as_raw = dst.to_deviation_data().unwrap();
-                assert_eq!(src_as_raw.encoded_bit_stream(), dst_as_raw.encoded_bit_stream());
+                assert_eq!(
+                    src_as_raw.encoded_bit_stream(),
+                    dst_as_raw.encoded_bit_stream()
+                );
                 assert_eq!(src_as_raw.get_num_samples(), dst_as_raw.get_num_samples());
                 assert_eq!(
                     src_as_raw.get_num_deviation_bits(),

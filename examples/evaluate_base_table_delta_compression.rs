@@ -9,8 +9,8 @@ use csv::Writer;
 use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
 use image_gd::prelude::*;
 use image_gd::{
-    BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet,
-    BuildSortedBaseTable, EntroGdError, InferFeatureSpecs, PreprocessOptions,
+    BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet, BuildSortedBaseTable,
+    EntroGdError, InferFeatureSpecs, PreprocessOptions,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,12 +255,12 @@ fn evaluate_file(
     let bit_data = load_bit_data(input_path)?;
 
     let context = if use_sorted {
-        EntropyNaive {}
+        Entropy {}
             .then(SelectBases { patience: 10 })
             .then(BuildSortedBaseTable {})
             .process(bit_data)?
     } else {
-        EntropyNaive {}
+        Entropy {}
             .then(SelectBases { patience: 10 })
             .then(BuildBaseTable {})
             .process(bit_data)?

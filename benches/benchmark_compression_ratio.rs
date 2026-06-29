@@ -275,7 +275,7 @@ fn bench_select_bases(paths: &[PathBuf]) {
                 }
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let entropy_ctx = Entropy {}.process(bit_data).unwrap();
 
             for variant in SELECT_BASES_VARIANTS {
                 done += 1;
@@ -364,7 +364,7 @@ fn bench_encoding(paths: &[PathBuf]) {
                 }
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let entropy_ctx = Entropy {}.process(bit_data).unwrap();
             let base_sel = SelectBases {
                 patience: NORMAL_PATIENCE,
             }
@@ -467,7 +467,7 @@ fn bench_delta_encoding(paths: &[PathBuf]) {
                 }
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let entropy_ctx = Entropy {}.process(bit_data).unwrap();
 
             for variant in DELTA_VARIANTS {
                 done += 1;
@@ -550,7 +550,11 @@ fn bench_color_model(paths: &[PathBuf]) {
         for seed in SEED_PREPROCESSING_CONFIGS {
             for variant in COLOR_MODEL_VARIANTS {
                 done += 1;
-                eprintln!("[{done}/{total}] color_model/{}/{}", variant.name(), file_name);
+                eprintln!(
+                    "[{done}/{total}] color_model/{}/{}",
+                    variant.name(),
+                    file_name
+                );
 
                 // Override the seed's color_model with the variant's so each color
                 // model is measured against the full grouping/transform grid.
@@ -568,7 +572,7 @@ fn bench_color_model(paths: &[PathBuf]) {
                     }
                 };
                 let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-                let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+                let entropy_ctx = Entropy {}.process(bit_data).unwrap();
                 let base_sel = SelectBases {
                     patience: NORMAL_PATIENCE,
                 }

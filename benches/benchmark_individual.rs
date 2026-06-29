@@ -117,8 +117,8 @@ impl EntropyImpl {
 
     fn process(self, input: BitDataSet) -> Result<EntropyScoredContext, EntroGdError> {
         match self {
-            Self::Naive => EntropyNaive {}.process(input),
-            Self::Batched => EntropyBatched {}.process(input),
+            Self::Naive => Entropy {}.process(input),
+            Self::Batched => Entropy {}.process(input),
         }
     }
 }
@@ -674,7 +674,7 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
     let bit_data_seed = preprocessing.process(image_path.clone()).unwrap();
     let source_size = (bit_data_seed.data.num_rows * bit_data_seed.data.chunk_size / 8) as u64;
 
-    let entropy_seed = EntropyBatched {}.process(bit_data_seed.clone()).unwrap();
+    let entropy_seed = Entropy {}.process(bit_data_seed.clone()).unwrap();
 
     let base_table_ctx_seed = want_unsorted_ctx.then(|| {
         let sel = canonical_select_bases(entropy_seed.clone());

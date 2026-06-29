@@ -51,7 +51,8 @@ fn main() -> Result<(), EntroGdError> {
         i += 1;
     }
 
-    let input_path = input_path.unwrap_or_else(|| PathBuf::from("data/bench_datasets/kodak_dataset"));
+    let input_path =
+        input_path.unwrap_or_else(|| PathBuf::from("data/bench_datasets/kodak_dataset"));
 
     let files = collect_image_files(&input_path)?;
     if files.is_empty() {
@@ -68,7 +69,7 @@ fn main() -> Result<(), EntroGdError> {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .then(EntropyNaive {})
+    .then(Entropy {})
     .then(SelectBasesAdaptive {
         patience: 5,
         base_bit_impl: BaseBitImpl::Naive,
@@ -83,10 +84,7 @@ fn main() -> Result<(), EntroGdError> {
     let mut summary_rows: Vec<SummaryRow> = Vec::new();
 
     for file in &files {
-        let stem = file
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image");
+        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
 
         tracing::info!("Processing: {}", file.display());
 
@@ -126,7 +124,8 @@ fn main() -> Result<(), EntroGdError> {
             id_entropy,
             (num_bases as f64).log2(),
             dev_counts.len(),
-            1u64.checked_shl(num_deviation_bits.min(63) as u32).unwrap_or(u64::MAX),
+            1u64.checked_shl(num_deviation_bits.min(63) as u32)
+                .unwrap_or(u64::MAX),
             dev_entropy,
             num_deviation_bits as f64,
         );
@@ -152,7 +151,10 @@ fn main() -> Result<(), EntroGdError> {
     }
 
     write_frequency_csv(&output_path.join("aggregate_base_ids.csv"), &agg_id_counts)?;
-    write_frequency_csv(&output_path.join("aggregate_deviations.csv"), &agg_dev_counts)?;
+    write_frequency_csv(
+        &output_path.join("aggregate_deviations.csv"),
+        &agg_dev_counts,
+    )?;
     write_summary_csv(&output_path.join("summary.csv"), &summary_rows)?;
 
     tracing::info!("Done. Output written to: {}", output_path.display());
@@ -219,10 +221,7 @@ fn entropy(counts: &HashMap<u64, u64>) -> f64 {
     })
 }
 
-fn write_frequency_csv(
-    output_path: &Path,
-    counts: &HashMap<u64, u64>,
-) -> Result<(), EntroGdError> {
+fn write_frequency_csv(output_path: &Path, counts: &HashMap<u64, u64>) -> Result<(), EntroGdError> {
     let mut sorted: Vec<(u64, u64)> = counts.iter().map(|(&k, &v)| (k, v)).collect();
     sorted.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
