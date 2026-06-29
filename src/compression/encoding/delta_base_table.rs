@@ -637,11 +637,14 @@ fn decode_delta_base_rows(
 }
 
 /// Load a bit payload into a little-endian word buffer, zero-filling unused words.
-/// `dst` must be wide enough to hold `src` (callers size it to the key width).
+/// `dst` is sized to the key width (`num_words`); a payload may be wider than that
+/// because a tier field width can exceed `lb`, but the encoded value is `delta - 1`
+/// (`< 2^lb`), so any bits beyond `dst` are guaranteed zero. We therefore load only
+/// the low `dst.len()` words and drop the zero high words.
 fn load_bits_into_words(src: &BitSlice<usize, Lsb0>, dst: &mut [usize]) {
     const WORD_BITS: usize = usize::BITS as usize;
     dst.fill(0);
-    for (i, chunk) in src.chunks(WORD_BITS).enumerate() {
+    for (i, chunk) in src.chunks(WORD_BITS).take(dst.len()).enumerate() {
         dst[i] = chunk.load_le::<usize>();
     }
 }

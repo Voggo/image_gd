@@ -219,14 +219,18 @@ enum BuildBaseTableImpl {
 impl BuildBaseTableImpl {
     fn label(self) -> &'static str {
         match self {
-            Self::Unsorted { base_bit_impl: BaseBitImpl::Naive } => "build_base_table_naive",
-            Self::Unsorted { base_bit_impl: BaseBitImpl::IncSignatureGroups } => {
-                "build_base_table_inc_sig"
-            }
-            Self::Sorted { base_bit_impl: BaseBitImpl::Naive } => "build_sorted_base_table_naive",
-            Self::Sorted { base_bit_impl: BaseBitImpl::IncSignatureGroups } => {
-                "build_sorted_base_table_inc_sig"
-            }
+            Self::Unsorted {
+                base_bit_impl: BaseBitImpl::Naive,
+            } => "build_base_table_naive",
+            Self::Unsorted {
+                base_bit_impl: BaseBitImpl::IncSignatureGroups,
+            } => "build_base_table_inc_sig",
+            Self::Sorted {
+                base_bit_impl: BaseBitImpl::Naive,
+            } => "build_sorted_base_table_naive",
+            Self::Sorted {
+                base_bit_impl: BaseBitImpl::IncSignatureGroups,
+            } => "build_sorted_base_table_inc_sig",
             _ => unreachable!(),
         }
     }
@@ -460,10 +464,8 @@ const SEED_PREPROCESSING_CONFIGS: &[SeedPreprocessing] = seed_configs![
 ];
 
 // Rgb vs YCoCgR at 1x1/Raw to isolate color model conversion cost.
-const BUILD_IMAGE_COLOR_MODEL_CONFIGS: &[SeedPreprocessing] = seed_configs![
-    (Rgb, 1, 1, Raw),
-    (YCoCgR, 1, 1, Raw),
-];
+const BUILD_IMAGE_COLOR_MODEL_CONFIGS: &[SeedPreprocessing] =
+    seed_configs![(Rgb, 1, 1, Raw), (YCoCgR, 1, 1, Raw),];
 
 // YCoCgR with various groupings × all 3 transforms to isolate grouping cost.
 const BUILD_IMAGE_GROUPING_CONFIGS: &[SeedPreprocessing] = seed_configs![
@@ -527,10 +529,18 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
 ];
 
 const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 4] = [
-    BuildBaseTableImpl::Unsorted { base_bit_impl: BaseBitImpl::Naive },
-    BuildBaseTableImpl::Unsorted { base_bit_impl: BaseBitImpl::IncSignatureGroups },
-    BuildBaseTableImpl::Sorted { base_bit_impl: BaseBitImpl::Naive },
-    BuildBaseTableImpl::Sorted { base_bit_impl: BaseBitImpl::IncSignatureGroups },
+    BuildBaseTableImpl::Unsorted {
+        base_bit_impl: BaseBitImpl::Naive,
+    },
+    BuildBaseTableImpl::Unsorted {
+        base_bit_impl: BaseBitImpl::IncSignatureGroups,
+    },
+    BuildBaseTableImpl::Sorted {
+        base_bit_impl: BaseBitImpl::Naive,
+    },
+    BuildBaseTableImpl::Sorted {
+        base_bit_impl: BaseBitImpl::IncSignatureGroups,
+    },
 ];
 
 const ENCODE_IMPLS: [EncodeImpl; 5] = [
@@ -597,14 +607,26 @@ struct PreparedCase {
     preprocessing: SeedPreprocessing,
     bit_data_seed: BitDataSet,
     entropy_seed: EntropyScoredContext,
-    base_table_ctx_seed: PreEncodeContext,
-    pre_delta_compressed_seed: CompressedData,
-    delta_unary_seed: CompressedData,
-    delta_fixed_seed: CompressedData,
-    compressed_seeds: CompressedDataSeeds,
-    loaded_compressed_seeds: CompressedDataSeeds,
+    // Heavy seeds are only built when BENCH_FILTER selects a stage that consumes them;
+    // otherwise they stay None so a filtered run skips the work. The closures in
+    // `benchmark_filter_steps` unwrap them, which is safe because a closure only runs
+    // for a stage that was selected (and therefore prepared).
+    base_table_ctx_seed: Option<PreEncodeContext>,
+    pre_delta_compressed_seed: Option<CompressedData>,
+    delta_unary_seed: Option<CompressedData>,
+    delta_fixed_seed: Option<CompressedData>,
+    compressed_seeds: Option<CompressedDataSeeds>,
+    loaded_compressed_seeds: Option<CompressedDataSeeds>,
     igd_paths: IgdPaths,
-    rows_context_seeds: DecompressRowsSeeds,
+    rows_context_seeds: Option<DecompressRowsSeeds>,
+}
+
+/// True when `stage` is selected by the current `BENCH_FILTER` (empty filter = all
+/// stages). Mirrors the gate inside `bench_step_group` so `prepare_case` only builds
+/// the seed artifacts the selected stages will actually use.
+fn stage_selected(stage: &str) -> bool {
+    let filter = std::env::var("BENCH_FILTER").unwrap_or_default();
+    filter.is_empty() || stage.contains(filter.as_str())
 }
 
 fn canonical_select_bases(input: EntropyScoredContext) -> BaseSelectionContext {
@@ -631,35 +653,53 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         .to_string_lossy()
         .into_owned();
 
+    // Which downstream stages BENCH_FILTER selects. We only build the seed artifacts the
+    // selected stages consume, so e.g. `BENCH_FILTER=Delta` skips the unsorted base table,
+    // the extra encodes, and all igd save/load + random-access decode work.
+    let want_encode_data = stage_selected("EncodeData");
+    let want_save = stage_selected("SaveIgdFile");
+    let want_load = stage_selected("LoadIgdFile");
+    let want_decompress_file = stage_selected("DecompressFileData");
+    let want_decompress_rows = stage_selected("DecompressRowsData");
+    let want_delta_decode = stage_selected("DecodeDeltaBaseTable");
+    let want_delta = stage_selected("DeltaEncodeBaseTable") || want_delta_decode;
+
+    // The compressed seeds (and the encodes producing them) feed every igd/decompress stage.
+    let want_compressed_seeds =
+        want_save || want_load || want_decompress_file || want_decompress_rows;
+    let want_igd_files = want_load || want_decompress_file || want_decompress_rows;
+    let want_loaded = want_decompress_file || want_decompress_rows;
+    let want_unsorted_ctx = want_encode_data || want_compressed_seeds;
+
     let bit_data_seed = preprocessing.process(image_path.clone()).unwrap();
     let source_size = (bit_data_seed.data.num_rows * bit_data_seed.data.chunk_size / 8) as u64;
 
     let entropy_seed = EntropyBatched {}.process(bit_data_seed.clone()).unwrap();
 
-    let base_table_ctx_seed = {
+    let base_table_ctx_seed = want_unsorted_ctx.then(|| {
         let sel = canonical_select_bases(entropy_seed.clone());
         BuildBaseTable {}.process(sel).unwrap()
-    };
-    let sorted_ctx = {
-        let sel = canonical_select_bases(entropy_seed.clone());
-        BuildSortedBaseTable {}.process(sel).unwrap()
-    };
+    });
 
-    let normal = EncodeData {}.process(base_table_ctx_seed.clone()).unwrap();
-    let rle = EncodeDataRLE {}
-        .process(base_table_ctx_seed.clone())
-        .unwrap();
-    let rle_offset = EncodeDataOffsetRLE {}
-        .process(base_table_ctx_seed.clone())
-        .unwrap();
-    let huffman = EncodeDataHuffman {}.process(sorted_ctx).unwrap();
-    let pre_delta_compressed_seed = normal.clone();
-    let delta_unary_seed = DeltaEncodeBaseTable {}
-        .process(pre_delta_compressed_seed.clone())
-        .unwrap();
-    let delta_fixed_seed = DeltaEncodeBaseTableFixed {}
-        .process(pre_delta_compressed_seed.clone())
-        .unwrap();
+    // Delta coding only engages when the base table is sorted (it bails to Raw unless
+    // `entropy_sorted_column_order` is Some, which only `BuildSortedBaseTable` sets). Seed
+    // the delta stages from a sorted context so the codec actually runs — encoding the
+    // unsorted `base_table_ctx_seed` would make every delta sample a no-op.
+    let pre_delta_compressed_seed = want_delta.then(|| {
+        let sel = canonical_select_bases(entropy_seed.clone());
+        let sorted = BuildSortedBaseTable {}.process(sel).unwrap();
+        EncodeData {}.process(sorted).unwrap()
+    });
+    let delta_unary_seed = want_delta_decode.then(|| {
+        DeltaEncodeBaseTable {}
+            .process(pre_delta_compressed_seed.clone().unwrap())
+            .unwrap()
+    });
+    let delta_fixed_seed = want_delta_decode.then(|| {
+        DeltaEncodeBaseTableFixed {}
+            .process(pre_delta_compressed_seed.clone().unwrap())
+            .unwrap()
+    });
 
     let pre_label = preprocessing.artifact_label();
     let igd_paths = IgdPaths {
@@ -669,40 +709,83 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         huffman: igd_artifact_path(&name, &pre_label, "huffman"),
     };
 
-    SaveIgdFile {
-        output_path: igd_paths.normal.clone(),
-    }
-    .process(normal.clone())
-    .unwrap();
-    SaveIgdFile {
-        output_path: igd_paths.rle.clone(),
-    }
-    .process(rle.clone())
-    .unwrap();
-    SaveIgdFile {
-        output_path: igd_paths.rle_offset.clone(),
-    }
-    .process(rle_offset.clone())
-    .unwrap();
-    SaveIgdFile {
-        output_path: igd_paths.huffman.clone(),
-    }
-    .process(huffman.clone())
-    .unwrap();
+    let compressed_seeds = want_compressed_seeds.then(|| {
+        let base_ctx = base_table_ctx_seed
+            .clone()
+            .expect("unsorted base table context is built whenever compressed seeds are");
+        let sorted_ctx = {
+            let sel = canonical_select_bases(entropy_seed.clone());
+            BuildSortedBaseTable {}.process(sel).unwrap()
+        };
+        let normal = EncodeData {}.process(base_ctx.clone()).unwrap();
+        let rle = EncodeDataRLE {}.process(base_ctx.clone()).unwrap();
+        let rle_offset = EncodeDataOffsetRLE {}.process(base_ctx).unwrap();
+        let huffman = EncodeDataHuffman {}.process(sorted_ctx).unwrap();
 
-    let loaded_normal = LoadIgdFile {}.process(igd_paths.normal.clone()).unwrap();
-    let loaded_rle = LoadIgdFile {}.process(igd_paths.rle.clone()).unwrap();
-    let loaded_rle_offset = LoadIgdFile {}
-        .process(igd_paths.rle_offset.clone())
-        .unwrap();
-    let loaded_huffman = LoadIgdFile {}.process(igd_paths.huffman.clone()).unwrap();
+        if want_igd_files {
+            SaveIgdFile {
+                output_path: igd_paths.normal.clone(),
+            }
+            .process(normal.clone())
+            .unwrap();
+            SaveIgdFile {
+                output_path: igd_paths.rle.clone(),
+            }
+            .process(rle.clone())
+            .unwrap();
+            SaveIgdFile {
+                output_path: igd_paths.rle_offset.clone(),
+            }
+            .process(rle_offset.clone())
+            .unwrap();
+            SaveIgdFile {
+                output_path: igd_paths.huffman.clone(),
+            }
+            .process(huffman.clone())
+            .unwrap();
+        }
 
-    let rows: Vec<usize> = (0..bit_data_seed.data.num_rows).collect();
+        CompressedDataSeeds {
+            normal,
+            rle,
+            rle_offset,
+            huffman,
+        }
+    });
 
-    let ctx_normal = DecompressRandomAccessHandle::new(loaded_normal.clone()).unwrap();
-    let ctx_rle = DecompressRandomAccessHandle::new(loaded_rle.clone()).unwrap();
-    let ctx_rle_offset = DecompressRandomAccessHandle::new(loaded_rle_offset.clone()).unwrap();
-    let ctx_huffman = DecompressRandomAccessHandle::new(loaded_huffman.clone()).unwrap();
+    let loaded_compressed_seeds = want_loaded.then(|| CompressedDataSeeds {
+        normal: LoadIgdFile {}.process(igd_paths.normal.clone()).unwrap(),
+        rle: LoadIgdFile {}.process(igd_paths.rle.clone()).unwrap(),
+        rle_offset: LoadIgdFile {}
+            .process(igd_paths.rle_offset.clone())
+            .unwrap(),
+        huffman: LoadIgdFile {}.process(igd_paths.huffman.clone()).unwrap(),
+    });
+
+    let rows_context_seeds = want_decompress_rows.then(|| {
+        let loaded = loaded_compressed_seeds
+            .as_ref()
+            .expect("loaded seeds are built whenever random-access handles are");
+        let rows: Vec<usize> = (0..bit_data_seed.data.num_rows).collect();
+        DecompressRowsSeeds {
+            normal: (
+                Rc::new(DecompressRandomAccessHandle::new(loaded.normal.clone()).unwrap()),
+                rows.clone(),
+            ),
+            rle: (
+                Rc::new(DecompressRandomAccessHandle::new(loaded.rle.clone()).unwrap()),
+                rows.clone(),
+            ),
+            rle_offset: (
+                Rc::new(DecompressRandomAccessHandle::new(loaded.rle_offset.clone()).unwrap()),
+                rows.clone(),
+            ),
+            huffman: (
+                Rc::new(DecompressRandomAccessHandle::new(loaded.huffman.clone()).unwrap()),
+                rows,
+            ),
+        }
+    });
 
     PreparedCase {
         name,
@@ -714,25 +797,10 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         pre_delta_compressed_seed,
         delta_unary_seed,
         delta_fixed_seed,
-        compressed_seeds: CompressedDataSeeds {
-            normal: normal.clone(),
-            rle: rle.clone(),
-            rle_offset: rle_offset.clone(),
-            huffman: huffman.clone(),
-        },
-        loaded_compressed_seeds: CompressedDataSeeds {
-            normal: loaded_normal,
-            rle: loaded_rle,
-            rle_offset: loaded_rle_offset,
-            huffman: loaded_huffman,
-        },
+        compressed_seeds,
+        loaded_compressed_seeds,
         igd_paths,
-        rows_context_seeds: DecompressRowsSeeds {
-            normal: (Rc::new(ctx_normal), rows.clone()),
-            rle: (Rc::new(ctx_rle), rows.clone()),
-            rle_offset: (Rc::new(ctx_rle_offset), rows.clone()),
-            huffman: (Rc::new(ctx_huffman), rows),
-        },
+        rows_context_seeds,
     }
 }
 
@@ -815,7 +883,11 @@ fn bench_build_image_grouping_step(image_cases: &[ImageCase]) {
     let mut done = 0;
     for case in image_cases {
         for &pre in BUILD_IMAGE_GROUPING_CONFIGS {
-            let label = format!("{}_{}", pre.pixel_grouping_label(), pre.group_transform_label());
+            let label = format!(
+                "{}_{}",
+                pre.pixel_grouping_label(),
+                pre.group_transform_label()
+            );
             done += 1;
             eprintln!("[{done}/{total}] {stage_name}/{label}/{}", case.name);
             let _ = black_box(pre.process(case.path.clone()));
@@ -969,7 +1041,7 @@ fn benchmark_filter_steps() {
                 &ENCODE_IMPLS,
                 EncodeImpl::label,
                 |_, case| EncodeSeed {
-                    pre_encode: case.base_table_ctx_seed.clone(),
+                    pre_encode: case.base_table_ctx_seed.clone().unwrap(),
                     base_selection: canonical_select_bases(case.entropy_seed.clone()),
                 },
                 |implementation, input| implementation.process(input),
@@ -982,11 +1054,16 @@ fn benchmark_filter_steps() {
                 cases,
                 &DELTA_ENCODE_IMPLS,
                 DeltaEncodeImpl::label,
-                |_, case| case.pre_delta_compressed_seed.clone(),
+                |_, case| case.pre_delta_compressed_seed.clone().unwrap(),
                 |implementation, input| implementation.process(input),
                 seed_meta,
                 |case| {
-                    let raw = case.pre_delta_compressed_seed.base_table.as_raw();
+                    let raw = case
+                        .pre_delta_compressed_seed
+                        .as_ref()
+                        .unwrap()
+                        .base_table
+                        .as_raw();
                     let bits_per_row = raw.first().map(|(bv, _)| bv.len()).unwrap_or(0);
                     (raw.len() * bits_per_row).div_ceil(8) as u64
                 },
@@ -998,13 +1075,18 @@ fn benchmark_filter_steps() {
                 &DECODE_DELTA_IMPLS,
                 DecodeDeltaImpl::label,
                 |impl_, case| match impl_ {
-                    DecodeDeltaImpl::Unary => case.delta_unary_seed.clone(),
-                    DecodeDeltaImpl::Fixed => case.delta_fixed_seed.clone(),
+                    DecodeDeltaImpl::Unary => case.delta_unary_seed.clone().unwrap(),
+                    DecodeDeltaImpl::Fixed => case.delta_fixed_seed.clone().unwrap(),
                 },
                 |_, input| DecodeDeltaBaseTable {}.process(input),
                 seed_meta,
                 |case| {
-                    let raw = case.pre_delta_compressed_seed.base_table.as_raw();
+                    let raw = case
+                        .pre_delta_compressed_seed
+                        .as_ref()
+                        .unwrap()
+                        .base_table
+                        .as_raw();
                     let bits_per_row = raw.first().map(|(bv, _)| bv.len()).unwrap_or(0);
                     (raw.len() * bits_per_row).div_ceil(8) as u64
                 },
@@ -1017,19 +1099,19 @@ fn benchmark_filter_steps() {
                 SaveIgdImpl::label,
                 |impl_, case| match impl_ {
                     SaveIgdImpl::Normal => (
-                        case.compressed_seeds.normal.clone(),
+                        case.compressed_seeds.as_ref().unwrap().normal.clone(),
                         case.igd_paths.normal.clone(),
                     ),
                     SaveIgdImpl::Rle => (
-                        case.compressed_seeds.rle.clone(),
+                        case.compressed_seeds.as_ref().unwrap().rle.clone(),
                         case.igd_paths.rle.clone(),
                     ),
                     SaveIgdImpl::RleOffset => (
-                        case.compressed_seeds.rle_offset.clone(),
+                        case.compressed_seeds.as_ref().unwrap().rle_offset.clone(),
                         case.igd_paths.rle_offset.clone(),
                     ),
                     SaveIgdImpl::Huffman => (
-                        case.compressed_seeds.huffman.clone(),
+                        case.compressed_seeds.as_ref().unwrap().huffman.clone(),
                         case.igd_paths.huffman.clone(),
                     ),
                 },
@@ -1060,12 +1142,27 @@ fn benchmark_filter_steps() {
                 &DECOMPRESS_FILE_IMPLS,
                 DecompressFileImpl::label,
                 |impl_, case| match impl_ {
-                    DecompressFileImpl::Normal => case.loaded_compressed_seeds.normal.clone(),
-                    DecompressFileImpl::Rle => case.loaded_compressed_seeds.rle.clone(),
-                    DecompressFileImpl::RleOffset => {
-                        case.loaded_compressed_seeds.rle_offset.clone()
+                    DecompressFileImpl::Normal => case
+                        .loaded_compressed_seeds
+                        .as_ref()
+                        .unwrap()
+                        .normal
+                        .clone(),
+                    DecompressFileImpl::Rle => {
+                        case.loaded_compressed_seeds.as_ref().unwrap().rle.clone()
                     }
-                    DecompressFileImpl::Huffman => case.loaded_compressed_seeds.huffman.clone(),
+                    DecompressFileImpl::RleOffset => case
+                        .loaded_compressed_seeds
+                        .as_ref()
+                        .unwrap()
+                        .rle_offset
+                        .clone(),
+                    DecompressFileImpl::Huffman => case
+                        .loaded_compressed_seeds
+                        .as_ref()
+                        .unwrap()
+                        .huffman
+                        .clone(),
                 },
                 |implementation, input| implementation.process(input),
                 seed_meta,
@@ -1079,20 +1176,30 @@ fn benchmark_filter_steps() {
                 DecompressRowsImpl::label,
                 |impl_, case| match impl_ {
                     DecompressRowsImpl::Normal => (
-                        case.rows_context_seeds.normal.0.clone(),
-                        case.rows_context_seeds.normal.1.clone(),
+                        case.rows_context_seeds.as_ref().unwrap().normal.0.clone(),
+                        case.rows_context_seeds.as_ref().unwrap().normal.1.clone(),
                     ),
                     DecompressRowsImpl::Rle => (
-                        case.rows_context_seeds.rle.0.clone(),
-                        case.rows_context_seeds.rle.1.clone(),
+                        case.rows_context_seeds.as_ref().unwrap().rle.0.clone(),
+                        case.rows_context_seeds.as_ref().unwrap().rle.1.clone(),
                     ),
                     DecompressRowsImpl::RleOffset => (
-                        case.rows_context_seeds.rle_offset.0.clone(),
-                        case.rows_context_seeds.rle_offset.1.clone(),
+                        case.rows_context_seeds
+                            .as_ref()
+                            .unwrap()
+                            .rle_offset
+                            .0
+                            .clone(),
+                        case.rows_context_seeds
+                            .as_ref()
+                            .unwrap()
+                            .rle_offset
+                            .1
+                            .clone(),
                     ),
                     DecompressRowsImpl::Huffman => (
-                        case.rows_context_seeds.huffman.0.clone(),
-                        case.rows_context_seeds.huffman.1.clone(),
+                        case.rows_context_seeds.as_ref().unwrap().huffman.0.clone(),
+                        case.rows_context_seeds.as_ref().unwrap().huffman.1.clone(),
                     ),
                 },
                 |implementation, (handle, indices)| implementation.process(handle, indices),
