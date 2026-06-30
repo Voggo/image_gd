@@ -77,7 +77,7 @@ fn main() -> Result<(), EntroGdError> {
     // Compress the data with filters (pipe-and-filter style)
     tracing::info!("\nCompressing data...");
     let compression_pipeline = Entropy {}
-        .then(GenCondensedSamples { m_max: 50 })
+        .then(GenCondensedSamples { m_max: 50, base_bit_impl: BaseBitImpl::Naive })
         .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::Naive,

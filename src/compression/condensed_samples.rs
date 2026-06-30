@@ -1,4 +1,5 @@
-use crate::compression::base_bits::BaseBitGroups;
+use crate::compression::base_bits::{BaseBit, BaseBitGroups, BaseBitHyperLogLogCount};
+use crate::compression::base_selection::BaseBitImpl;
 use crate::compression::encoding::CondensedSamples;
 use crate::compression::entropy::{ConstantBitPolarity, EntropyScoredContext};
 use crate::compression::preprocessor::BitDataSet;
@@ -49,6 +50,7 @@ fn organize_entropy_by_feature(
 
 pub struct GenCondensedSamples {
     pub m_max: usize,
+    pub base_bit_impl: BaseBitImpl,
 }
 
 impl Filter for GenCondensedSamples {
@@ -66,7 +68,17 @@ impl Filter for GenCondensedSamples {
             constant_bit_polarity,
         } = input;
         let original_num_rows = bit_data.num_rows();
-        let condensed_samples = select_condensed_samples(&bit_data, &entropy_scores, self.m_max);
+        let condensed_samples = match self.base_bit_impl {
+            BaseBitImpl::Naive => {
+                let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+                select_condensed_samples(&bit_data, &entropy_scores, self.m_max, &mut bb)
+            }
+            BaseBitImpl::HyperLogLogCount => {
+                let mut bb =
+                    BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+                select_condensed_samples(&bit_data, &entropy_scores, self.m_max, &mut bb)
+            }
+        };
         let bit_data = append_condensed_samples(bit_data, condensed_samples);
         let constant_bit_polarity = update_constant_bit_polarity_from_appended_rows(
             &bit_data,
@@ -129,10 +141,11 @@ fn update_constant_bit_polarity_from_appended_rows(
     }
 }
 
-fn select_condensed_samples(
+fn select_condensed_samples<B: BaseBit>(
     bit_data: &BitDataSet,
     entropy: &[(usize, f64)],
     m_max: usize,
+    base_bits: &mut B,
 ) -> CondensedSamples {
     fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
         if bits.is_empty() {
@@ -164,36 +177,41 @@ fn select_condensed_samples(
     let mut weights = Vec::new();
 
     let organized_entropy_by_feature = organize_entropy_by_feature(entropy, bit_data);
-    let mut condensed_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
 
     let zero_entropy_bits: Vec<usize> = organized_entropy_by_feature
         .iter()
         .take_while(|&(_bit_position, entropy_val)| *entropy_val == 0.0)
         .map(|(bit_position, _)| *bit_position)
         .collect();
-    condensed_bit_groups.add_constant_bit_positions(&zero_entropy_bits);
+    base_bits.add_constant_bit_positions(&zero_entropy_bits);
 
     for &(bit_position, _entropy_val) in organized_entropy_by_feature
         .iter()
         .skip(zero_entropy_bits.len())
     {
-        if condensed_bit_groups.get_num_bases() >= m_max {
+        if base_bits.get_num_bases() >= m_max {
             break;
         }
-        condensed_bit_groups.add_bit_position(bit_data, bit_position);
+        base_bits.add_bit_position(bit_data, bit_position);
         tracing::debug!(
             bit_position,
-            current_num_bases = condensed_bit_groups.get_num_bases(),
+            current_num_bases = base_bits.get_num_bases(),
             m_max,
             "added bit position to condensed samples"
         );
     }
 
-    let bases = condensed_bit_groups.get_bases(bit_data);
-    let base_mask = condensed_bit_groups.get_base_bit_mask();
-    let selected_positions = condensed_bit_groups.get_base_bit_positions();
+    let ctx = base_bits.get_encoding_context(bit_data, false);
+    let base_mask = base_bits.get_base_bit_mask();
+    let selected_positions = base_bits.get_base_bit_positions();
 
-    for (base_group, base) in condensed_bit_groups.get_groups().iter().zip(bases.iter()) {
+    let num_bases = ctx.base_table.len();
+    let mut groups: Vec<Vec<usize>> = vec![Vec::new(); num_bases];
+    for (row, &id) in ctx.row_to_id.iter().enumerate() {
+        groups[id].push(row);
+    }
+
+    for (base_group, base) in groups.iter().zip(ctx.base_table.iter()) {
         if base_group.is_empty() {
             continue;
         }
@@ -403,7 +421,8 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(4, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let result = select_condensed_samples(&bit_data, &entropy, 2);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, 2, &mut bb);
 
         assert_eq!(result.samples.len(), result.weights.len());
         for sample in &result.samples {
@@ -416,7 +435,8 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(4, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let result = select_condensed_samples(&bit_data, &entropy, 0);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, 0, &mut bb);
 
         // With m_max = 0, we should only have empty groups or samples with zero-entropy bits
         assert!(result.samples.is_empty() || result.weights.iter().sum::<usize>() > 0);
@@ -428,7 +448,8 @@ mod tests {
         let entropy = create_test_entropy(16);
 
         let m_max = 4;
-        let result = select_condensed_samples(&bit_data, &entropy, m_max);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, m_max, &mut bb);
 
         // Number of groups/bases should not exceed m_max
         assert!(result.samples.len() <= m_max);
@@ -439,7 +460,8 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(10, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let result = select_condensed_samples(&bit_data, &entropy, 3);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, 3, &mut bb);
 
         // All rows should be accounted for in weights
         let total_weight: usize = result.weights.iter().sum();
@@ -451,7 +473,8 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(4, 1, 8).build();
         let entropy = vec![];
 
-        let result = select_condensed_samples(&bit_data, &entropy, 2);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, 2, &mut bb);
 
         assert_eq!(result.samples.len(), 1); // Single group with all rows
         assert_eq!(result.weights, vec![4]); // All 4 rows in one group
@@ -462,7 +485,8 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(6, 1, 8).build();
         let entropy = create_entropy_with_zeros(8, 3);
 
-        let result = select_condensed_samples(&bit_data, &entropy, 2);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, 2, &mut bb);
 
         assert_eq!(result.samples.len(), result.weights.len());
         let total_weight: usize = result.weights.iter().sum();
@@ -561,7 +585,7 @@ mod tests {
         let entropy = create_test_entropy(8);
         let m_max = 3;
 
-        let filter = GenCondensedSamples { m_max };
+        let filter = GenCondensedSamples { m_max, base_bit_impl: BaseBitImpl::Naive };
         let result = filter.process(EntropyScoredContext::new(bit_data.clone(), entropy.clone()));
 
         assert!(result.is_ok());
@@ -576,7 +600,7 @@ mod tests {
         let entropy = create_test_entropy(16);
         let m_max = 5;
 
-        let filter = GenCondensedSamples { m_max };
+        let filter = GenCondensedSamples { m_max, base_bit_impl: BaseBitImpl::Naive };
         let output = filter
             .process(EntropyScoredContext::new(bit_data, entropy))
             .expect("filter should succeed");
@@ -592,7 +616,7 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(5, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let filter = GenCondensedSamples { m_max: 2 };
+        let filter = GenCondensedSamples { m_max: 2, base_bit_impl: BaseBitImpl::Naive };
         let output = filter
             .process(EntropyScoredContext::new(bit_data, entropy.clone()))
             .expect("filter should succeed");
@@ -613,7 +637,7 @@ mod tests {
             },
         };
 
-        let filter = GenCondensedSamples { m_max: 2 };
+        let filter = GenCondensedSamples { m_max: 2, base_bit_impl: BaseBitImpl::Naive };
         let output = filter.process(input).expect("filter should succeed");
 
         assert_eq!(
@@ -673,7 +697,7 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(4, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let filter = GenCondensedSamples { m_max: 0 };
+        let filter = GenCondensedSamples { m_max: 0, base_bit_impl: BaseBitImpl::Naive };
         let result = filter.process(EntropyScoredContext::new(bit_data, entropy));
 
         assert!(result.is_ok());
@@ -688,7 +712,7 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(10, 2, 8).build();
         let entropy = create_entropy_with_zeros(16, 2);
 
-        let filter = GenCondensedSamples { m_max: 4 };
+        let filter = GenCondensedSamples { m_max: 4, base_bit_impl: BaseBitImpl::Naive };
         let output = filter
             .process(EntropyScoredContext::new(bit_data.clone(), entropy))
             .expect("filter should succeed");
@@ -711,7 +735,7 @@ mod tests {
         assert_eq!(bit_data.chunk_size(), chunk_size);
 
         let entropy = create_test_entropy(chunk_size);
-        let filter = GenCondensedSamples { m_max: 3 };
+        let filter = GenCondensedSamples { m_max: 3, base_bit_impl: BaseBitImpl::Naive };
         let output = filter
             .process(EntropyScoredContext::new(bit_data, entropy))
             .expect("filter should succeed");
@@ -725,7 +749,8 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(8, 4, 4).build();
         let entropy = create_entropy_with_zeros(16, 1);
 
-        let result = select_condensed_samples(&bit_data, &entropy, 4);
+        let mut bb = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        let result = select_condensed_samples(&bit_data, &entropy, 4, &mut bb);
 
         // Verify samples have correct size
         for sample in &result.samples {
