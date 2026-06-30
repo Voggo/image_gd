@@ -217,7 +217,6 @@ fn sort_encoding_context(
     }
 }
 
-
 #[derive(Clone)]
 pub struct BaseBitGroups {
     groups: Vec<Vec<usize>>,
@@ -311,18 +310,6 @@ impl BaseBitGroups {
         self.num_bases
     }
 
-    /// Returns base-table entries packed to selected-bit order only.
-    /// For each base, bit index `i` corresponds to `self.get_base_bit_positions()[i]`.
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let _timer = ScopedTimer::debug("Getting bases");
-        get_selected_bases_from_groups(
-            &self.groups,
-            &self.base_bit_positions,
-            self.num_bases,
-            bit_data,
-        )
-    }
-
     pub fn get_groups(&self) -> &[Vec<usize>] {
         &self.groups
     }
@@ -369,7 +356,10 @@ impl BaseBit for BaseBitGroups {
         if sort {
             sort_encoding_context(&mut base_table, &mut row_to_id);
         }
-        EncodingContext { row_to_id, base_table }
+        EncodingContext {
+            row_to_id,
+            base_table,
+        }
     }
 
     fn get_num_bases(&self) -> usize {
@@ -661,7 +651,10 @@ impl BaseBit for BaseBitHyperLogLogCount {
             sort_encoding_context(&mut base_table, &mut row_to_id);
         }
 
-        EncodingContext { row_to_id, base_table }
+        EncodingContext {
+            row_to_id,
+            base_table,
+        }
     }
 
     fn get_num_bases(&self) -> usize {
@@ -771,8 +764,7 @@ mod tests {
     #[test]
     fn test_hll_get_encoding_context_no_sort() {
         let bit_data = create_test_bit_data();
-        let mut groups =
-            BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+        let mut groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
         let _ = groups.add_bit_positions(&bit_data, &[0, 4]);
 
         let ctx = groups.get_encoding_context(&bit_data, false);
