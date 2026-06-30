@@ -27,8 +27,8 @@ pub use encoding::{
     DeviationSample, EncodedData, RleDeviationData, RleDeviationOffsetData,
 };
 pub use encoding::{
-    DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataFusedDictionary,
-    EncodeDataHuffman, EncodeDataOffsetRLE, EncodeDataRLE,
+    DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataHuffman,
+    EncodeDataOffsetRLE, EncodeDataRLE,
 };
 pub use entropy::{Entropy, EntropyBitScore, EntropyScoredContext, calculate_entropy};
 pub use file_format::{

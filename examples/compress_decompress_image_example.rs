@@ -87,7 +87,7 @@ fn main() -> Result<(), EntroGdError> {
     .then(SelectBasesAdaptive {
         width_decay: 0.45,
         patience: 5,
-        base_bit_impl: BaseBitImpl::HyperLogLogCount,
+        base_bit_impl: BaseBitImpl::Naive,
     })
     .then(BuildBaseTable {})
     .then(EncodeData {});

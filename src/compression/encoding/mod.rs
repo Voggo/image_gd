@@ -1,6 +1,5 @@
 mod delta_base_table;
 mod encoding_core;
-mod fused_dictionary;
 mod huffman;
 mod rle;
 
@@ -12,6 +11,5 @@ pub use self::encoding_core::{
     DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataRLE, EncodedData,
     HuffmanDeviationData, RleDeviationData, RleDeviationOffsetData,
 };
-pub use self::fused_dictionary::EncodeDataFusedDictionary;
 pub use self::huffman::EncodeDataHuffman;
 pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX};

@@ -163,7 +163,8 @@ impl CompressionPipeline {
                     width_decay: WIDTH_DECAY_DEFAULT,
                     base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 })
-                .then(EncodeDataFusedDictionary {})
+                .then(BuildBaseTable {})
+                .then(EncodeData {})
                 .process(bit_data),
         }
     }

@@ -286,7 +286,8 @@ fn bench_select_bases(paths: &[PathBuf]) {
                 );
 
                 let base_sel = variant.process(entropy_ctx.clone()).unwrap();
-                let compressed = EncodeDataFusedDictionary {}.process(base_sel).unwrap();
+                let pre_encode = BuildBaseTable {}.process(base_sel).unwrap();
+                let compressed = EncodeData {}.process(pre_encode).unwrap();
                 let sizes = compute_sizes(&compressed).unwrap();
 
                 BENCH_RECORDS.lock().unwrap().push(BenchRecord {

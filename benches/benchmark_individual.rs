@@ -228,7 +228,6 @@ impl BuildBaseTableImpl {
 
 struct EncodeSeed {
     pre_encode: PreEncodeContext,
-    base_selection: BaseSelectionContext,
 }
 
 #[derive(Clone, Copy)]
@@ -237,7 +236,6 @@ enum EncodeImpl {
     Rle,
     RleOffset,
     Huffman,
-    Fused,
 }
 
 impl EncodeImpl {
@@ -247,7 +245,6 @@ impl EncodeImpl {
             Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
-            Self::Fused => "fused_dictionary",
         }
     }
 
@@ -257,7 +254,6 @@ impl EncodeImpl {
             Self::Rle => EncodeDataRLE {}.process(input.pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(input.pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(input.pre_encode),
-            Self::Fused => EncodeDataFusedDictionary {}.process(input.base_selection),
         }
     }
 }
@@ -491,12 +487,11 @@ const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 2] = [
     },
 ];
 
-const ENCODE_IMPLS: [EncodeImpl; 5] = [
+const ENCODE_IMPLS: [EncodeImpl; 4] = [
     EncodeImpl::Normal,
     EncodeImpl::Rle,
     EncodeImpl::RleOffset,
     EncodeImpl::Huffman,
-    EncodeImpl::Fused,
 ];
 
 const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 2] = [DeltaEncodeImpl::Unary, DeltaEncodeImpl::Fixed];
@@ -990,7 +985,6 @@ fn benchmark_filter_steps() {
                 EncodeImpl::label,
                 |_, case| EncodeSeed {
                     pre_encode: case.base_table_ctx_seed.clone().unwrap(),
-                    base_selection: canonical_select_bases(case.entropy_seed.clone()),
                 },
                 |implementation, input| implementation.process(input),
                 seed_meta,

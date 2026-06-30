@@ -1,5 +1,6 @@
 use super::rle::RLE_LONG_MAX;
 use bitvec::prelude::*;
+use rayon::prelude::*;
 
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo, PreEncodeContext};
 use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
@@ -559,21 +560,31 @@ pub(super) fn encode_rows_as_symbol_stream(
 ) -> BitVec<usize, Lsb0> {
     let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
+    let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).clamp(256, 4096);
+
+    let chunk_results: Vec<BitVec<usize, Lsb0>> = (0..num_rows)
+        .into_par_iter()
+        .chunks(chunk_size)
+        .map(|row_chunk| {
+            let mut chunk_stream = BitVec::with_capacity(row_chunk.len() * symbol_width);
+            for row in row_chunk {
+                let id = input.row_to_base_id[row];
+                let chunk = unsafe { input.bit_data.get_chunk_unchecked(row) };
+                for &(start, end) in deviation_ranges {
+                    chunk_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+                }
+                if l_id > 0 {
+                    chunk_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
+                }
+            }
+            chunk_stream
+        })
+        .collect();
+
     let mut symbol_stream = BitVec::with_capacity(num_rows * symbol_width);
-
-    for (row, id_ref) in input.row_to_base_id.iter().enumerate().take(num_rows) {
-        let id = *id_ref;
-        let chunk = unsafe { input.bit_data.get_chunk_unchecked(row) };
-
-        for &(start, end) in deviation_ranges {
-            symbol_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
-        }
-
-        if l_id > 0 {
-            symbol_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
-        }
+    for chunk_stream in chunk_results {
+        symbol_stream.extend_from_bitslice(chunk_stream.as_bitslice());
     }
-
     symbol_stream
 }
 
