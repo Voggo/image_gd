@@ -11,9 +11,7 @@ pub mod file_format;
 pub mod image_preprocessor;
 pub mod preprocessor;
 
-pub use base_bits::{
-    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitSignatureGroups,
-};
+pub use base_bits::{BaseBit, BaseBitGroups, BaseBitHyperLogLogCount};
 pub use base_selection::{
     BaseBitImpl, BaseSelectionContext, SelectBases, SelectBasesAdaptive, SelectBasesDebug,
     SelectBasesProfileAllBits, SelectBasesThreshold,
@@ -30,7 +28,7 @@ pub use encoding::{
 };
 pub use encoding::{
     DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataFusedDictionary,
-    EncodeDataFusedDictionarySinglePass, EncodeDataHuffman, EncodeDataOffsetRLE, EncodeDataRLE,
+    EncodeDataHuffman, EncodeDataOffsetRLE, EncodeDataRLE,
 };
 pub use entropy::{Entropy, EntropyBitScore, EntropyScoredContext, calculate_entropy};
 pub use file_format::{

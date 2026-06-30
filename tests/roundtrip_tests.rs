@@ -68,7 +68,7 @@ fn test_csv_roundtrip_compression() {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
@@ -133,7 +133,7 @@ fn test_csv_roundtrip_compression_rle() {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
@@ -198,7 +198,7 @@ fn test_image_roundtrip_compression() {
     .then(GenCondensedSamples { m_max: 0 })
     .then(SelectBasesThreshold {
         patience: 10,
-        base_bit_impl: BaseBitImpl::BatchGroups,
+        base_bit_impl: BaseBitImpl::Naive,
         entropy_threshold: 0.70,
     })
     .then(BuildBaseTable {})
@@ -266,7 +266,7 @@ fn test_image_roundtrip_compression_rle_offset() {
         .then(GenCondensedSamples { m_max: 0 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})

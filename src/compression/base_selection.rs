@@ -1,7 +1,4 @@
-use crate::compression::base_bits::{
-    BaseBit, BaseBitBatchGroups, BaseBitGroups, BaseBitHyperLogLogCount, BaseBitIncSignatureGroups,
-    BaseBitSignatureGroups,
-};
+use crate::compression::base_bits::{BaseBit, BaseBitGroups, BaseBitHyperLogLogCount};
 use crate::compression::entropy::{ConstantBitPolarity, EntropyScoredContext};
 use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
@@ -229,9 +226,6 @@ pub struct SelectBasesDebug {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaseBitImpl {
     Naive,
-    BatchGroups,
-    IncSignatureGroups,
-    SignatureGroups,
     HyperLogLogCount,
 }
 
@@ -283,16 +277,6 @@ impl Filter for SelectBasesProfileAllBits {
         let all_bit_positions: Vec<usize> = (0..chunk_size).collect();
         let mut base_bit_groups: Box<dyn BaseBit> = match self.base_bit_impl {
             BaseBitImpl::Naive => Box::new(BaseBitGroups::new(bit_data.num_rows(), chunk_size)),
-            BaseBitImpl::BatchGroups => {
-                Box::new(BaseBitBatchGroups::new(bit_data.num_rows(), chunk_size))
-            }
-            BaseBitImpl::IncSignatureGroups => Box::new(BaseBitIncSignatureGroups::new(
-                bit_data.num_rows(),
-                chunk_size,
-            )),
-            BaseBitImpl::SignatureGroups => {
-                Box::new(BaseBitSignatureGroups::new(bit_data.num_rows(), chunk_size))
-            }
             BaseBitImpl::HyperLogLogCount => Box::new(BaseBitHyperLogLogCount::new(
                 bit_data.num_rows(),
                 chunk_size,
@@ -544,30 +528,6 @@ impl Filter for SelectBasesThreshold {
                 self.entropy_threshold,
                 self.patience,
             ),
-            BaseBitImpl::BatchGroups => select_base_bits_threshold_optimized(
-                &bit_data,
-                BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy_scores,
-                &constant_positions,
-                self.entropy_threshold,
-                self.patience,
-            ),
-            BaseBitImpl::IncSignatureGroups => select_base_bits_threshold_optimized(
-                &bit_data,
-                BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy_scores,
-                &constant_positions,
-                self.entropy_threshold,
-                self.patience,
-            ),
-            BaseBitImpl::SignatureGroups => select_base_bits_threshold_optimized(
-                &bit_data,
-                BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy_scores,
-                &constant_positions,
-                self.entropy_threshold,
-                self.patience,
-            ),
             BaseBitImpl::HyperLogLogCount => select_base_bits_threshold_optimized(
                 &bit_data,
                 BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size()),
@@ -697,30 +657,6 @@ impl Filter for SelectBasesAdaptive {
             BaseBitImpl::Naive => select_base_bits_adaptive(
                 &bit_data,
                 BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy_scores,
-                &constant_positions,
-                self.width_decay,
-                self.patience,
-            ),
-            BaseBitImpl::BatchGroups => select_base_bits_adaptive(
-                &bit_data,
-                BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy_scores,
-                &constant_positions,
-                self.width_decay,
-                self.patience,
-            ),
-            BaseBitImpl::IncSignatureGroups => select_base_bits_adaptive(
-                &bit_data,
-                BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
-                entropy_scores,
-                &constant_positions,
-                self.width_decay,
-                self.patience,
-            ),
-            BaseBitImpl::SignatureGroups => select_base_bits_adaptive(
-                &bit_data,
-                BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size()),
                 entropy_scores,
                 &constant_positions,
                 self.width_decay,

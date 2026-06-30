@@ -12,7 +12,7 @@ use std::path::Path;
 fn main() -> Result<(), EntroGdError> {
     unsafe {
         env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
-        env::set_var("RUST_LOG", "debug");
+        env::set_var("RUST_LOG", "info");
     }
     let _log_handle = init_logging();
     let _timer =
@@ -87,11 +87,10 @@ fn main() -> Result<(), EntroGdError> {
     .then(SelectBasesAdaptive {
         width_decay: 0.45,
         patience: 5,
-        base_bit_impl: BaseBitImpl::Naive,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
     })
-    .then(BuildSortedBaseTable {})
-    .then(EncodeDataHuffman {})
-    .then(DeltaEncodeBaseTableFixed {});
+    .then(BuildBaseTable {})
+    .then(EncodeData {});
 
     let load_compressed_data = LoadIgdFile {};
 

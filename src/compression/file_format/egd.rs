@@ -11,6 +11,7 @@ use super::tags::{
     ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
+use crate::ScopedTimer;
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
@@ -269,11 +270,10 @@ impl EgdFile {
             }
             BaseTable::Delta(delta) => {
                 writer.write_u8(delta.codec_id);
-                let num_bases = u64::try_from(delta.num_bases).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
+                let num_bases =
+                    u64::try_from(delta.num_bases).map_err(|_| EntroGdError::InvalidMetadata {
                         message: "num_bases does not fit into u64".to_string(),
-                    }
-                })?;
+                    })?;
                 writer.write_u64(num_bases);
 
                 let mapped_order: Vec<usize> = delta
@@ -571,6 +571,7 @@ impl EgdFile {
         // Align after weights
         reader.align_to_byte();
 
+        let _timer = ScopedTimer::info("Loading base table");
         // Base table
         let base_table_tag = reader.read_u8()?;
         let num_bases =
@@ -651,6 +652,7 @@ impl EgdFile {
                 });
             }
         };
+        drop(_timer);
 
         let num_samples = n
             .checked_add(m)

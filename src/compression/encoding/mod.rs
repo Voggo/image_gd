@@ -12,6 +12,6 @@ pub use self::encoding_core::{
     DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataRLE, EncodedData,
     HuffmanDeviationData, RleDeviationData, RleDeviationOffsetData,
 };
-pub use self::fused_dictionary::{EncodeDataFusedDictionary, EncodeDataFusedDictionarySinglePass};
+pub use self::fused_dictionary::EncodeDataFusedDictionary;
 pub use self::huffman::EncodeDataHuffman;
 pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX};

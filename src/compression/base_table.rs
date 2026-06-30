@@ -1,6 +1,4 @@
-use std::cmp::Ordering;
-
-use crate::compression::base_bits::BaseBit;
+use crate::compression::base_bits::{BaseBit, EncodingContext, column_order_by_unweighted_entropy};
 use crate::compression::base_selection::BaseSelectionContext;
 use crate::compression::entropy::ConstantBitPolarity;
 use crate::compression::preprocessor::BitDataSet;
@@ -175,7 +173,13 @@ fn build_encode_context(
     constant_bit_polarity: &ConstantBitPolarity,
     sort_bases: bool,
 ) -> PreEncodeContext {
-    let selected_base_table = base_bit_groups.get_bases(&bit_data);
+    let _timer = ScopedTimer::info("build_encode_context");
+    let EncodingContext {
+        row_to_id: row_to_base_id,
+        base_table: selected_base_table,
+    } = base_bit_groups.get_encoding_context(&bit_data, sort_bases);
+    drop(_timer);
+
     let base_bit_positions = base_bit_groups.get_base_bit_positions().to_vec();
     let layout = build_base_layout_from_constant_polarity(
         bit_data.chunk_size(),
@@ -190,26 +194,19 @@ fn build_encode_context(
         &selected_base_table,
     );
 
-    let mut row_to_base_id = vec![0usize; bit_data.num_rows()];
-    for (id, group) in base_bit_groups.get_groups().iter().enumerate() {
-        for &row in group {
-            row_to_base_id[row] = id;
-        }
-    }
+    let entropy_sorted_column_order = if sort_bases {
+        Some(column_order_by_unweighted_entropy(&variable_base_table))
+    } else {
+        None
+    };
 
-    let mut context = PreEncodeContext {
+    PreEncodeContext {
         bit_data,
         row_to_base_id,
         layout,
         variable_base_table,
-        entropy_sorted_column_order: None,
-    };
-
-    if sort_bases {
-        sort_context_base_tables(&mut context);
+        entropy_sorted_column_order,
     }
-
-    context
 }
 
 pub(crate) fn build_base_layout_from_constant_polarity(
@@ -261,118 +258,6 @@ pub(crate) fn project_selected_bases_to_variable(
             (variable_bits, *count)
         })
         .collect()
-}
-
-fn sort_context_base_tables(context: &mut PreEncodeContext) {
-    let _timer = ScopedTimer::trace("Sorting base table entries and remapping IDs");
-    let base_count = context.variable_base_table.len();
-    let column_order = column_order_by_unweighted_entropy(&context.variable_base_table);
-    context.entropy_sorted_column_order = Some(column_order.clone());
-
-    if base_count <= 1 {
-        return;
-    }
-
-    let mut indices: Vec<usize> = (0..base_count).collect();
-    indices.sort_by(|&lhs, &rhs| {
-        compare_rows_by_column_order(
-            &context.variable_base_table[lhs].0,
-            &context.variable_base_table[rhs].0,
-            &column_order,
-        )
-        .then_with(|| lhs.cmp(&rhs))
-    });
-
-    let mut old_to_new = vec![0usize; base_count];
-    for (new_id, old_id) in indices.iter().copied().enumerate() {
-        old_to_new[old_id] = new_id;
-    }
-
-    context.variable_base_table = indices
-        .iter()
-        .map(|&old_id| context.variable_base_table[old_id].clone())
-        .collect();
-
-    for id in &mut context.row_to_base_id {
-        if let Some(&new_id) = old_to_new.get(*id) {
-            *id = new_id;
-        }
-    }
-}
-
-fn column_order_by_unweighted_entropy(
-    variable_base_table: &[(BitVec<usize, Lsb0>, usize)],
-) -> Vec<usize> {
-    let Some((first_bits, _)) = variable_base_table.first() else {
-        return Vec::new();
-    };
-
-    let row_count = variable_base_table.len();
-    let bit_len = first_bits.len();
-
-    let mut columns_with_entropy: Vec<(usize, f64)> = (0..bit_len)
-        .map(|column_idx| {
-            let ones = variable_base_table
-                .iter()
-                .filter(|(bits, _)| bits.get(column_idx).map(|b| *b).unwrap_or(false))
-                .count();
-            let entropy = binary_entropy_from_counts(ones, row_count);
-            (column_idx, entropy)
-        })
-        .collect();
-
-    columns_with_entropy.sort_by(|(lhs_idx, lhs_entropy), (rhs_idx, rhs_entropy)| {
-        lhs_entropy
-            .partial_cmp(rhs_entropy)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| lhs_idx.cmp(rhs_idx))
-    });
-
-    columns_with_entropy
-        .into_iter()
-        .map(|(column_idx, _)| column_idx)
-        .collect()
-}
-
-fn compare_rows_by_column_order(
-    lhs: &BitSlice<usize, Lsb0>,
-    rhs: &BitSlice<usize, Lsb0>,
-    column_order: &[usize],
-) -> Ordering {
-    for &column_idx in column_order {
-        let l = lhs.get(column_idx).map(|bit| *bit).unwrap_or(false);
-        let r = rhs.get(column_idx).map(|bit| *bit).unwrap_or(false);
-        match r.cmp(&l) {
-            Ordering::Equal => continue,
-            non_equal => return non_equal,
-        }
-    }
-
-    let len = lhs.len().min(rhs.len());
-    for idx in 0..len {
-        let l = lhs.get(idx).map(|bit| *bit).unwrap_or(false);
-        let r = rhs.get(idx).map(|bit| *bit).unwrap_or(false);
-        match r.cmp(&l) {
-            Ordering::Equal => continue,
-            non_equal => return non_equal,
-        }
-    }
-
-    lhs.len().cmp(&rhs.len())
-}
-
-fn binary_entropy_from_counts(ones: usize, total: usize) -> f64 {
-    if total == 0 {
-        return 0.0;
-    }
-
-    if ones == 0 || ones == total {
-        return 0.0;
-    }
-
-    let p = ones as f64 / total as f64;
-    let q = 1.0 - p;
-    -(p * p.log2()) - (q * q.log2())
 }
 
 #[cfg(test)]
@@ -513,39 +398,31 @@ mod tests {
 
     #[test]
     fn test_sorted_base_table_uses_column_entropy_priority_lexicographic_order() {
-        let bit_data =
-            create_test_bit_data_set(vec![vec![true], vec![true], vec![true], vec![true]]);
+        let bit_data = create_test_bit_data_set(vec![
+            vec![true, false, true, false],  // row 0: 1010
+            vec![false, false, false, true], // row 1: 0001
+            vec![true, false, true, true],   // row 2: 1011
+            vec![false, true, true, true],   // row 3: 0111
+        ]);
 
-        let make_bits = |bits: &[bool]| {
-            let mut out = BitVec::with_capacity(bits.len());
-            for bit in bits {
-                out.push(*bit);
-            }
-            out
-        };
+        let mut groups = BaseBitGroups::new(4, 4);
+        groups.add_bit_position(&bit_data, 0);
+        groups.add_bit_position(&bit_data, 1);
+        groups.add_bit_position(&bit_data, 2);
+        groups.add_bit_position(&bit_data, 3);
 
-        let mut context = PreEncodeContext {
-            bit_data,
-            row_to_base_id: vec![0, 1, 2, 3],
-            layout: BaseLayoutInfo::from_bit_states(vec![
-                BaseBitLayoutState::Variable,
-                BaseBitLayoutState::Variable,
-                BaseBitLayoutState::Variable,
-                BaseBitLayoutState::Variable,
-            ]),
-            variable_base_table: vec![
-                (make_bits(&[true, false, true, false]), 1),  // 1010
-                (make_bits(&[false, false, false, true]), 1), // 0001
-                (make_bits(&[true, false, true, true]), 1),   // 1011
-                (make_bits(&[false, true, true, true]), 1),   // 0111
-            ],
-            entropy_sorted_column_order: None,
-        };
-
-        sort_context_base_tables(&mut context);
+        let sorted = BuildSortedBaseTable {}
+            .process(
+                crate::compression::base_selection::BaseSelectionContext::new(
+                    bit_data,
+                    Box::new(groups),
+                    ConstantBitPolarity::default(),
+                ),
+            )
+            .expect("BuildSortedBaseTable should succeed");
 
         let as_vec = |bits: &BitVec<usize, Lsb0>| -> Vec<bool> { bits.iter().by_vals().collect() };
-        let sorted_rows: Vec<Vec<bool>> = context
+        let sorted_rows: Vec<Vec<bool>> = sorted
             .variable_base_table
             .iter()
             .map(|(bits, _)| as_vec(bits))
@@ -560,7 +437,7 @@ mod tests {
                 vec![false, false, false, true],
             ]
         );
-        assert_eq!(context.row_to_base_id, vec![2, 3, 1, 0]);
-        assert_eq!(context.entropy_sorted_column_order, Some(vec![1, 2, 3, 0]));
+        assert_eq!(sorted.row_to_base_id, vec![2, 3, 1, 0]);
+        assert_eq!(sorted.entropy_sorted_column_order, Some(vec![1, 2, 3, 0]));
     }
 }

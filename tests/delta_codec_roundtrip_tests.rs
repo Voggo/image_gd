@@ -46,7 +46,7 @@ fn test_delta_codec_roundtrip_unary_prefix() {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
@@ -119,7 +119,7 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
@@ -193,7 +193,7 @@ fn test_delta_codec_tag_serialization() {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})
@@ -221,7 +221,7 @@ fn test_delta_codec_tag_serialization() {
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildSortedBaseTable {})

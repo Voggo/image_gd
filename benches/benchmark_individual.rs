@@ -147,18 +147,6 @@ impl SelectBasesImpl {
                 ..
             } => "threshold_naive",
             Self::Threshold {
-                base_bit_impl: BaseBitImpl::BatchGroups,
-                ..
-            } => "threshold_batch_groups",
-            Self::Threshold {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-                ..
-            } => "threshold_inc_signature_groups",
-            Self::Threshold {
-                base_bit_impl: BaseBitImpl::SignatureGroups,
-                ..
-            } => "threshold_signature_groups",
-            Self::Threshold {
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 ..
             } => "threshold_hyper_log_log_count",
@@ -166,18 +154,6 @@ impl SelectBasesImpl {
                 base_bit_impl: BaseBitImpl::Naive,
                 ..
             } => "adaptive_naive",
-            Self::Adaptive {
-                base_bit_impl: BaseBitImpl::BatchGroups,
-                ..
-            } => "adaptive_batch_groups",
-            Self::Adaptive {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-                ..
-            } => "adaptive_inc_signature_groups",
-            Self::Adaptive {
-                base_bit_impl: BaseBitImpl::SignatureGroups,
-                ..
-            } => "adaptive_signature_groups",
             Self::Adaptive {
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 ..
@@ -222,15 +198,9 @@ impl BuildBaseTableImpl {
             Self::Unsorted {
                 base_bit_impl: BaseBitImpl::Naive,
             } => "build_base_table_naive",
-            Self::Unsorted {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-            } => "build_base_table_inc_sig",
             Self::Sorted {
                 base_bit_impl: BaseBitImpl::Naive,
             } => "build_sorted_base_table_naive",
-            Self::Sorted {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-            } => "build_sorted_base_table_inc_sig",
             _ => unreachable!(),
         }
     }
@@ -490,7 +460,7 @@ const BUILD_IMAGE_GROUPING_CONFIGS: &[SeedPreprocessing] = seed_configs![
 
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Batched];
 
-const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
+const SELECT_BASES_IMPLS: [SelectBasesImpl; 5] = [
     SelectBasesImpl::Naive {
         patience: NORMAL_PATIENCE,
     },
@@ -499,27 +469,11 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
         patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Threshold {
-        base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: THRESHOLD_PATIENCE,
-    },
-    SelectBasesImpl::Threshold {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: THRESHOLD_PATIENCE,
-    },
-    SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
         patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::Naive,
-        patience: ADAPTIVE_PATIENCE,
-    },
-    SelectBasesImpl::Adaptive {
-        base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: ADAPTIVE_PATIENCE,
-    },
-    SelectBasesImpl::Adaptive {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
         patience: ADAPTIVE_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
@@ -528,18 +482,12 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
     },
 ];
 
-const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 4] = [
+const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 2] = [
     BuildBaseTableImpl::Unsorted {
         base_bit_impl: BaseBitImpl::Naive,
     },
-    BuildBaseTableImpl::Unsorted {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
-    },
     BuildBaseTableImpl::Sorted {
         base_bit_impl: BaseBitImpl::Naive,
-    },
-    BuildBaseTableImpl::Sorted {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
     },
 ];
 
