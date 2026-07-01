@@ -8,8 +8,8 @@ pub use self::delta_base_table::{
 };
 pub use self::encoding_core::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
-    DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodeDataRLE, EncodedData,
-    HuffmanDeviationData, RleDeviationData, RleDeviationOffsetData,
+    DeviationSample, EncodeData, EncodeDataOffsetRLE, EncodedData, HuffmanDeviationData,
+    RleDeviationOffsetData,
 };
 pub use self::huffman::EncodeDataHuffman;
 pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX};

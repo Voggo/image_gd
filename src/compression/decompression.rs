@@ -1,4 +1,4 @@
-use crate::compression::encoding::{CompressedData, CondensedSamples, EncodedData, BaseTable};
+use crate::compression::encoding::{BaseTable, CompressedData, CondensedSamples, EncodedData};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     decode_value_from_bits,
@@ -118,7 +118,10 @@ impl DecompressRandomAccessHandle {
         let info = self
             .compressed
             .metadata
-            .with_original_size_bits_and_row_stride(self.chunk_size * sorted_indices.len(), self.stride);
+            .with_original_size_bits_and_row_stride(
+                self.chunk_size * sorted_indices.len(),
+                self.stride,
+            );
         Ok(BitDataSet { data, info })
     }
 
@@ -204,16 +207,23 @@ pub fn decompress_file(mut compressed: CompressedData) -> Result<BitDataSet, Ent
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let stride = data_info.row_stride();
 
-    match &compressed.encoded_data {
-        EncodedData::Rle(rle_data) if original_num_rows >= PARALLEL_MIN_ROWS => {
-            let deviation_data = rle_data.to_deviation_data()?;
-            let converted = EncodedData::Normal(deviation_data);
-            decompress_file_parallel(&compressed, &converted, data_info, chunk_size, stride, original_num_rows)
-        }
-        _ if original_num_rows >= PARALLEL_MIN_ROWS => {
-            decompress_file_parallel(&compressed, &compressed.encoded_data, data_info, chunk_size, stride, original_num_rows)
-        }
-        _ => decompress_file_sequential(&compressed, data_info, chunk_size, stride, original_num_rows),
+    if original_num_rows >= PARALLEL_MIN_ROWS {
+        decompress_file_parallel(
+            &compressed,
+            &compressed.encoded_data,
+            data_info,
+            chunk_size,
+            stride,
+            original_num_rows,
+        )
+    } else {
+        decompress_file_sequential(
+            &compressed,
+            data_info,
+            chunk_size,
+            stride,
+            original_num_rows,
+        )
     }
 }
 
@@ -230,7 +240,7 @@ fn decompress_file_parallel(
     let deviation_positions = compressed.layout.deviation_bit_positions();
     let variable_base_positions = compressed.layout.variable_base_bit_positions();
     let constant_one_positions = compressed.layout.constant_one_bit_positions();
-    
+
     let base_table = compressed.base_table.as_raw();
 
     let num_threads = rayon::current_num_threads();
@@ -248,21 +258,20 @@ fn decompress_file_parallel(
             let mut chunk_bits = bitvec![usize, Lsb0; 0; stride * count];
             let mut local_cursor = 0usize;
 
-            encoded_data
-                .for_each_sample_range(start, count, |sample| {
-                    append_reconstructed_chunk(
-                        &mut chunk_bits,
-                        local_cursor,
-                        &deviation_positions,
-                        &variable_base_positions,
-                        &constant_one_positions,
-                        base_table,
-                        sample.deviation,
-                        sample.id,
-                    )?;
-                    local_cursor += stride;
-                    Ok(())
-                })?;
+            encoded_data.for_each_sample_range(start, count, |sample| {
+                append_reconstructed_chunk(
+                    &mut chunk_bits,
+                    local_cursor,
+                    &deviation_positions,
+                    &variable_base_positions,
+                    &constant_one_positions,
+                    base_table,
+                    sample.deviation,
+                    sample.id,
+                )?;
+                local_cursor += stride;
+                Ok(())
+            })?;
 
             Ok(chunk_bits)
         })

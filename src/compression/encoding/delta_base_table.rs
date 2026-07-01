@@ -61,7 +61,8 @@ impl Filter for DeltaEncodeBaseTable {
         }
 
         let (first_sort_key, delta_bit_stream, delta_count, delta_stats) =
-            match delta_encode_base_rows(&raw_rows, &order, row_width, &get_delta_codec(), 5, true) {
+            match delta_encode_base_rows(&raw_rows, &order, row_width, &get_delta_codec(), 5, true)
+            {
                 DeltaEncodeResult::Encoded {
                     first_sort_key,
                     delta_bit_stream,
@@ -195,35 +196,36 @@ impl Filter for DeltaEncodeBaseTableFixed {
         }
 
         const TIER_WIDTHS_FIXED: [usize; 64] = get_delta_codec_fixed();
-        let (first_sort_key, delta_bit_stream, delta_count, delta_stats) = match delta_encode_base_rows(
-            &raw_rows,
-            &order,
-            row_width,
-            &TIER_WIDTHS_FIXED[..63],
-            6,
-            false,
-        ) {
-            DeltaEncodeResult::Encoded {
-                first_sort_key,
-                delta_bit_stream,
-                delta_count,
-                stats,
-            } => (first_sort_key, delta_bit_stream, delta_count, stats),
-            DeltaEncodeResult::NotMonotonic => {
-                tracing::warn!(
-                    "DeltaEncodeBaseTableFixed skipped: base rows are not monotonic for descending key deltas; keeping raw base table"
-                );
-                input.base_table = BaseTable::Raw(raw_rows);
-                return Ok(input);
-            }
-            DeltaEncodeResult::ZeroDelta => {
-                tracing::warn!(
-                    "DeltaEncodeBaseTableFixed skipped: encountered zero delta (expected unique sorted rows); keeping raw base table"
-                );
-                input.base_table = BaseTable::Raw(raw_rows);
-                return Ok(input);
-            }
-        };
+        let (first_sort_key, delta_bit_stream, delta_count, delta_stats) =
+            match delta_encode_base_rows(
+                &raw_rows,
+                &order,
+                row_width,
+                &TIER_WIDTHS_FIXED[..63],
+                6,
+                false,
+            ) {
+                DeltaEncodeResult::Encoded {
+                    first_sort_key,
+                    delta_bit_stream,
+                    delta_count,
+                    stats,
+                } => (first_sort_key, delta_bit_stream, delta_count, stats),
+                DeltaEncodeResult::NotMonotonic => {
+                    tracing::warn!(
+                        "DeltaEncodeBaseTableFixed skipped: base rows are not monotonic for descending key deltas; keeping raw base table"
+                    );
+                    input.base_table = BaseTable::Raw(raw_rows);
+                    return Ok(input);
+                }
+                DeltaEncodeResult::ZeroDelta => {
+                    tracing::warn!(
+                        "DeltaEncodeBaseTableFixed skipped: encountered zero delta (expected unique sorted rows); keeping raw base table"
+                    );
+                    input.base_table = BaseTable::Raw(raw_rows);
+                    return Ok(input);
+                }
+            };
 
         let raw_base_table_bits = num_bases * row_width;
         let delta_base_table_bits = first_sort_key.len() + delta_bit_stream.len();
@@ -451,7 +453,6 @@ pub const fn get_delta_codec() -> [usize; 30] {
     ]
 }
 
-
 // Update these from prefix_scheme.py if you want
 pub const fn get_delta_codec_fixed() -> [usize; 64] {
     [
@@ -604,8 +605,7 @@ fn decode_delta_base_rows(
     {
         let src = first_sort_key.to_bitvec();
         let raw = src.as_raw_slice();
-        prev_key[..raw.len().min(num_words)]
-            .copy_from_slice(&raw[..raw.len().min(num_words)]);
+        prev_key[..raw.len().min(num_words)].copy_from_slice(&raw[..raw.len().min(num_words)]);
         if let Some(last) = prev_key.last_mut() {
             *last &= top_mask;
         }
@@ -669,11 +669,7 @@ fn subtract_words_plus_one(key: &mut [usize], payload: &[usize], top_mask: usize
 /// Reconstruct a row by scattering the key's set bits to their row columns via the
 /// precomputed inverse permutation. Reads/writes whole `usize` words and iterates
 /// only the set bits of the key, so the cost is proportional to the popcount.
-fn scatter_key_to_row(
-    key: &[usize],
-    col_for_key_idx: &[usize],
-    lb: usize,
-) -> BitVec<usize, Lsb0> {
+fn scatter_key_to_row(key: &[usize], col_for_key_idx: &[usize], lb: usize) -> BitVec<usize, Lsb0> {
     const WORD_BITS: usize = usize::BITS as usize;
     let mut row = BitVec::repeat(false, lb);
     let row_words = row.as_raw_mut_slice();

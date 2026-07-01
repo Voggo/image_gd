@@ -65,7 +65,10 @@ fn test_csv_roundtrip_compression() {
     let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
 
     let compression_pipeline = Entropy {}
-        .then(GenCondensedSamples { m_max: 50, base_bit_impl: BaseBitImpl::Naive })
+        .then(GenCondensedSamples {
+            m_max: 50,
+            base_bit_impl: BaseBitImpl::Naive,
+        })
         .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::Naive,
@@ -130,14 +133,17 @@ fn test_csv_roundtrip_compression_rle() {
     let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
 
     let compression_pipeline = Entropy {}
-        .then(GenCondensedSamples { m_max: 50, base_bit_impl: BaseBitImpl::Naive })
+        .then(GenCondensedSamples {
+            m_max: 50,
+            base_bit_impl: BaseBitImpl::Naive,
+        })
         .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
-        .then(EncodeDataRLE {});
+        .then(EncodeDataOffsetRLE {});
 
     let compressed = compression_pipeline
         .process(bit_data.clone())
@@ -195,7 +201,10 @@ fn test_image_roundtrip_compression() {
         pad_rows_to_word: true,
     }
     .then(Entropy {})
-    .then(GenCondensedSamples { m_max: 0, base_bit_impl: BaseBitImpl::Naive })
+    .then(GenCondensedSamples {
+        m_max: 0,
+        base_bit_impl: BaseBitImpl::Naive,
+    })
     .then(SelectBasesThreshold {
         patience: 10,
         base_bit_impl: BaseBitImpl::Naive,
@@ -263,7 +272,10 @@ fn test_image_roundtrip_compression_rle_offset() {
     .expect("Failed to build image BitDataSet");
 
     let compression_pipeline = Entropy {}
-        .then(GenCondensedSamples { m_max: 0, base_bit_impl: BaseBitImpl::Naive })
+        .then(GenCondensedSamples {
+            m_max: 0,
+            base_bit_impl: BaseBitImpl::Naive,
+        })
         .then(SelectBasesThreshold {
             patience: 10,
             base_bit_impl: BaseBitImpl::Naive,

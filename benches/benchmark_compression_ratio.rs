@@ -318,7 +318,6 @@ fn bench_select_bases(paths: &[PathBuf]) {
 #[derive(Clone, Copy)]
 enum EncodingVariant {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -327,7 +326,6 @@ impl EncodingVariant {
     fn name(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -336,16 +334,14 @@ impl EncodingVariant {
     fn process(self, pre_encode: PreEncodeContext) -> Result<CompressedData, EntroGdError> {
         match self {
             Self::Normal => EncodeData {}.process(pre_encode),
-            Self::Rle => EncodeDataRLE {}.process(pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(pre_encode),
         }
     }
 }
 
-const ENCODING_VARIANTS: [EncodingVariant; 4] = [
+const ENCODING_VARIANTS: [EncodingVariant; 3] = [
     EncodingVariant::Normal,
-    EncodingVariant::Rle,
     EncodingVariant::RleOffset,
     EncodingVariant::Huffman,
 ];

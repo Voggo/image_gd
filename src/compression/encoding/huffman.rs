@@ -77,25 +77,29 @@ pub(super) fn encode_data_huffman(
                 }
                 let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
                 for &(start, end) in &deviation_ranges {
-                    deviation_bits
-                        .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+                    deviation_bits.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
                 }
                 let symbol = input.row_to_base_id[sample_idx] as u64;
                 let idx = symbol as usize;
-                let entry = codes_by_symbol
-                    .get(idx)
-                    .ok_or_else(|| EntroGdError::InvalidMetadata {
-                        message: format!(
-                            "Huffman symbol {} exceeds symbol table bounds",
-                            symbol
-                        ),
-                    })?;
+                let entry =
+                    codes_by_symbol
+                        .get(idx)
+                        .ok_or_else(|| EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "Huffman symbol {} exceeds symbol table bounds",
+                                symbol
+                            ),
+                        })?;
                 let (code, code_len) = entry.ok_or_else(|| EntroGdError::InvalidMetadata {
                     message: format!("missing Huffman code for base-id symbol {}", symbol),
                 })?;
                 append_code_bits(&mut pixel_bits, code, code_len);
             }
-            Ok(ChunkResult { pixel_bits, deviation_bits, row_offsets: offsets })
+            Ok(ChunkResult {
+                pixel_bits,
+                deviation_bits,
+                row_offsets: offsets,
+            })
         })
         .collect();
     drop(_timer);

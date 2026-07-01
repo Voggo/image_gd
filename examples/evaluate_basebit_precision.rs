@@ -384,10 +384,7 @@ fn main() -> Result<(), EntroGdError> {
         let image_paths = collect_image_paths(&options.input)?;
         if image_paths.is_empty() {
             return Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "no images found in directory '{}'",
-                    options.input.display()
-                ),
+                message: format!("no images found in directory '{}'", options.input.display()),
             });
         }
 

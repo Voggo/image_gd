@@ -233,7 +233,6 @@ struct EncodeSeed {
 #[derive(Clone, Copy)]
 enum EncodeImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -242,7 +241,6 @@ impl EncodeImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -251,7 +249,6 @@ impl EncodeImpl {
     fn process(self, input: EncodeSeed) -> Result<CompressedData, EntroGdError> {
         match self {
             Self::Normal => EncodeData {}.process(input.pre_encode),
-            Self::Rle => EncodeDataRLE {}.process(input.pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(input.pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(input.pre_encode),
         }
@@ -298,7 +295,6 @@ impl DeltaEncodeImpl {
 #[derive(Clone, Copy)]
 enum SaveIgdImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -307,7 +303,6 @@ impl SaveIgdImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -321,7 +316,6 @@ impl SaveIgdImpl {
 #[derive(Clone, Copy)]
 enum LoadIgdImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -330,7 +324,6 @@ impl LoadIgdImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -344,7 +337,6 @@ impl LoadIgdImpl {
 #[derive(Clone, Copy)]
 enum DecompressFileImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -353,7 +345,6 @@ impl DecompressFileImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -367,7 +358,6 @@ impl DecompressFileImpl {
 #[derive(Clone, Copy)]
 enum DecompressRowsImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -376,7 +366,6 @@ impl DecompressRowsImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -487,36 +476,31 @@ const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 2] = [
     },
 ];
 
-const ENCODE_IMPLS: [EncodeImpl; 4] = [
+const ENCODE_IMPLS: [EncodeImpl; 3] = [
     EncodeImpl::Normal,
-    EncodeImpl::Rle,
     EncodeImpl::RleOffset,
     EncodeImpl::Huffman,
 ];
 
 const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 2] = [DeltaEncodeImpl::Unary, DeltaEncodeImpl::Fixed];
 const DECODE_DELTA_IMPLS: [DecodeDeltaImpl; 2] = [DecodeDeltaImpl::Unary, DecodeDeltaImpl::Fixed];
-const SAVE_IGD_IMPLS: [SaveIgdImpl; 4] = [
+const SAVE_IGD_IMPLS: [SaveIgdImpl; 3] = [
     SaveIgdImpl::Normal,
-    SaveIgdImpl::Rle,
     SaveIgdImpl::RleOffset,
     SaveIgdImpl::Huffman,
 ];
-const LOAD_IGD_IMPLS: [LoadIgdImpl; 4] = [
+const LOAD_IGD_IMPLS: [LoadIgdImpl; 3] = [
     LoadIgdImpl::Normal,
-    LoadIgdImpl::Rle,
     LoadIgdImpl::RleOffset,
     LoadIgdImpl::Huffman,
 ];
-const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 4] = [
+const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 3] = [
     DecompressFileImpl::Normal,
-    DecompressFileImpl::Rle,
     DecompressFileImpl::RleOffset,
     DecompressFileImpl::Huffman,
 ];
-const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 4] = [
+const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 3] = [
     DecompressRowsImpl::Normal,
-    DecompressRowsImpl::Rle,
     DecompressRowsImpl::RleOffset,
     DecompressRowsImpl::Huffman,
 ];
@@ -525,21 +509,18 @@ const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 4] = [
 
 struct CompressedDataSeeds {
     normal: CompressedData,
-    rle: CompressedData,
     rle_offset: CompressedData,
     huffman: CompressedData,
 }
 
 struct IgdPaths {
     normal: PathBuf,
-    rle: PathBuf,
     rle_offset: PathBuf,
     huffman: PathBuf,
 }
 
 struct DecompressRowsSeeds {
     normal: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
-    rle: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
     rle_offset: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
     huffman: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
 }
@@ -647,7 +628,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
     let pre_label = preprocessing.artifact_label();
     let igd_paths = IgdPaths {
         normal: igd_artifact_path(&name, &pre_label, "normal"),
-        rle: igd_artifact_path(&name, &pre_label, "rle"),
         rle_offset: igd_artifact_path(&name, &pre_label, "rle_offset"),
         huffman: igd_artifact_path(&name, &pre_label, "huffman"),
     };
@@ -661,7 +641,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
             BuildSortedBaseTable {}.process(sel).unwrap()
         };
         let normal = EncodeData {}.process(base_ctx.clone()).unwrap();
-        let rle = EncodeDataRLE {}.process(base_ctx.clone()).unwrap();
         let rle_offset = EncodeDataOffsetRLE {}.process(base_ctx).unwrap();
         let huffman = EncodeDataHuffman {}.process(sorted_ctx).unwrap();
 
@@ -670,11 +649,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
                 output_path: igd_paths.normal.clone(),
             }
             .process(normal.clone())
-            .unwrap();
-            SaveIgdFile {
-                output_path: igd_paths.rle.clone(),
-            }
-            .process(rle.clone())
             .unwrap();
             SaveIgdFile {
                 output_path: igd_paths.rle_offset.clone(),
@@ -690,7 +664,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
 
         CompressedDataSeeds {
             normal,
-            rle,
             rle_offset,
             huffman,
         }
@@ -698,7 +671,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
 
     let loaded_compressed_seeds = want_loaded.then(|| CompressedDataSeeds {
         normal: LoadIgdFile {}.process(igd_paths.normal.clone()).unwrap(),
-        rle: LoadIgdFile {}.process(igd_paths.rle.clone()).unwrap(),
         rle_offset: LoadIgdFile {}
             .process(igd_paths.rle_offset.clone())
             .unwrap(),
@@ -713,10 +685,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         DecompressRowsSeeds {
             normal: (
                 Rc::new(DecompressRandomAccessHandle::new(loaded.normal.clone()).unwrap()),
-                rows.clone(),
-            ),
-            rle: (
-                Rc::new(DecompressRandomAccessHandle::new(loaded.rle.clone()).unwrap()),
                 rows.clone(),
             ),
             rle_offset: (
@@ -1044,10 +1012,6 @@ fn benchmark_filter_steps() {
                         case.compressed_seeds.as_ref().unwrap().normal.clone(),
                         case.igd_paths.normal.clone(),
                     ),
-                    SaveIgdImpl::Rle => (
-                        case.compressed_seeds.as_ref().unwrap().rle.clone(),
-                        case.igd_paths.rle.clone(),
-                    ),
                     SaveIgdImpl::RleOffset => (
                         case.compressed_seeds.as_ref().unwrap().rle_offset.clone(),
                         case.igd_paths.rle_offset.clone(),
@@ -1069,7 +1033,6 @@ fn benchmark_filter_steps() {
                 LoadIgdImpl::label,
                 |impl_, case| match impl_ {
                     LoadIgdImpl::Normal => case.igd_paths.normal.clone(),
-                    LoadIgdImpl::Rle => case.igd_paths.rle.clone(),
                     LoadIgdImpl::RleOffset => case.igd_paths.rle_offset.clone(),
                     LoadIgdImpl::Huffman => case.igd_paths.huffman.clone(),
                 },
@@ -1090,9 +1053,6 @@ fn benchmark_filter_steps() {
                         .unwrap()
                         .normal
                         .clone(),
-                    DecompressFileImpl::Rle => {
-                        case.loaded_compressed_seeds.as_ref().unwrap().rle.clone()
-                    }
                     DecompressFileImpl::RleOffset => case
                         .loaded_compressed_seeds
                         .as_ref()
@@ -1120,10 +1080,6 @@ fn benchmark_filter_steps() {
                     DecompressRowsImpl::Normal => (
                         case.rows_context_seeds.as_ref().unwrap().normal.0.clone(),
                         case.rows_context_seeds.as_ref().unwrap().normal.1.clone(),
-                    ),
-                    DecompressRowsImpl::Rle => (
-                        case.rows_context_seeds.as_ref().unwrap().rle.0.clone(),
-                        case.rows_context_seeds.as_ref().unwrap().rle.1.clone(),
                     ),
                     DecompressRowsImpl::RleOffset => (
                         case.rows_context_seeds

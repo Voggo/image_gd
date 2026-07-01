@@ -24,11 +24,11 @@ pub use decompression::{
 };
 pub use encoding::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
-    DeviationSample, EncodedData, RleDeviationData, RleDeviationOffsetData,
+    DeviationSample, EncodedData, RleDeviationOffsetData,
 };
 pub use encoding::{
     DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData, EncodeDataHuffman,
-    EncodeDataOffsetRLE, EncodeDataRLE,
+    EncodeDataOffsetRLE,
 };
 pub use entropy::{Entropy, EntropyBitScore, EntropyScoredContext, calculate_entropy};
 pub use file_format::{

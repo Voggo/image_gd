@@ -18,12 +18,13 @@ pub use igd::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EncodeDataOffsetRLE;
     use crate::compression::base_selection::{BaseBitImpl, SelectBases};
     use crate::compression::base_table::BuildBaseTable;
     use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{CompressedData, EncodedData};
-    use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
+    use crate::compression::encoding::{EncodeData, EncodeDataHuffman};
     use crate::compression::entropy::Entropy;
     use crate::compression::preprocessor::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
@@ -35,7 +36,10 @@ mod tests {
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         Entropy {}
-            .then(GenCondensedSamples { m_max: 50, base_bit_impl: BaseBitImpl::Naive })
+            .then(GenCondensedSamples {
+                m_max: 50,
+                base_bit_impl: BaseBitImpl::Naive,
+            })
             .then(SelectBases { patience: 10 })
             .then(BuildBaseTable {})
             .then(EncodeData {})
@@ -43,16 +47,22 @@ mod tests {
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         Entropy {}
-            .then(GenCondensedSamples { m_max: 100, base_bit_impl: BaseBitImpl::Naive })
+            .then(GenCondensedSamples {
+                m_max: 100,
+                base_bit_impl: BaseBitImpl::Naive,
+            })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
-            .then(EncodeDataRLE {})
+            .then(EncodeDataOffsetRLE {})
     }
 
     fn get_huffman_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData>
     {
         Entropy {}
-            .then(GenCondensedSamples { m_max: 100, base_bit_impl: BaseBitImpl::Naive })
+            .then(GenCondensedSamples {
+                m_max: 100,
+                base_bit_impl: BaseBitImpl::Naive,
+            })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
             .then(EncodeDataHuffman {})
@@ -260,7 +270,7 @@ mod tests {
         let loaded = egd.to_compressed_data().unwrap();
 
         match (&compressed.encoded_data, &loaded.encoded_data) {
-            (EncodedData::Rle(src), EncodedData::Rle(dst)) => {
+            (EncodedData::RleOffset(src), EncodedData::RleOffset(dst)) => {
                 let src_as_raw = src.to_deviation_data().unwrap();
                 let dst_as_raw = dst.to_deviation_data().unwrap();
                 assert_eq!(

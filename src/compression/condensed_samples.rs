@@ -585,7 +585,10 @@ mod tests {
         let entropy = create_test_entropy(8);
         let m_max = 3;
 
-        let filter = GenCondensedSamples { m_max, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let result = filter.process(EntropyScoredContext::new(bit_data.clone(), entropy.clone()));
 
         assert!(result.is_ok());
@@ -600,7 +603,10 @@ mod tests {
         let entropy = create_test_entropy(16);
         let m_max = 5;
 
-        let filter = GenCondensedSamples { m_max, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let output = filter
             .process(EntropyScoredContext::new(bit_data, entropy))
             .expect("filter should succeed");
@@ -616,7 +622,10 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(5, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let filter = GenCondensedSamples { m_max: 2, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max: 2,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let output = filter
             .process(EntropyScoredContext::new(bit_data, entropy.clone()))
             .expect("filter should succeed");
@@ -637,7 +646,10 @@ mod tests {
             },
         };
 
-        let filter = GenCondensedSamples { m_max: 2, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max: 2,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let output = filter.process(input).expect("filter should succeed");
 
         assert_eq!(
@@ -697,7 +709,10 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(4, 1, 8).build();
         let entropy = create_test_entropy(8);
 
-        let filter = GenCondensedSamples { m_max: 0, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max: 0,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let result = filter.process(EntropyScoredContext::new(bit_data, entropy));
 
         assert!(result.is_ok());
@@ -712,7 +727,10 @@ mod tests {
         let bit_data = TestBitDataBuilder::new(10, 2, 8).build();
         let entropy = create_entropy_with_zeros(16, 2);
 
-        let filter = GenCondensedSamples { m_max: 4, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max: 4,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let output = filter
             .process(EntropyScoredContext::new(bit_data.clone(), entropy))
             .expect("filter should succeed");
@@ -735,7 +753,10 @@ mod tests {
         assert_eq!(bit_data.chunk_size(), chunk_size);
 
         let entropy = create_test_entropy(chunk_size);
-        let filter = GenCondensedSamples { m_max: 3, base_bit_impl: BaseBitImpl::Naive };
+        let filter = GenCondensedSamples {
+            m_max: 3,
+            base_bit_impl: BaseBitImpl::Naive,
+        };
         let output = filter
             .process(EntropyScoredContext::new(bit_data, entropy))
             .expect("filter should succeed");

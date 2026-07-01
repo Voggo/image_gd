@@ -8,7 +8,7 @@ use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
 use super::tags::{
     BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_RAW,
     ENCODING_TAG_HUFFMAN_BASE_ID_ONLY, ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET,
-    ENCODING_TAG_RLE_RM_PACKED, HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
+    HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
 };
 
 use crate::ScopedTimer;
@@ -16,7 +16,7 @@ use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
 use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
-    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationData, RleDeviationOffsetData,
+    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationOffsetData,
 };
 use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
 use crate::error::EntroGdError;
@@ -340,11 +340,6 @@ impl EgdFile {
             EncodedData::Normal(raw) => {
                 writer.write_u8(ENCODING_TAG_NORMAL);
                 writer.write_bitslice(raw.encoded_bit_stream());
-            }
-            EncodedData::Rle(rle) => {
-                writer.write_u8(ENCODING_TAG_RLE_RM_PACKED);
-                writer.write_bitslice(rle.rm_control_stream());
-                writer.write_bitslice(rle.symbol_bit_stream());
             }
             EncodedData::RleOffset(rle_offset) => {
                 writer.write_u8(ENCODING_TAG_RLE_OFFSET);
@@ -682,27 +677,6 @@ impl EgdFile {
                     num_deviation_bits,
                     num_id_bits,
                 ))
-            }
-            ENCODING_TAG_RLE_RM_PACKED => {
-                let rm_values = decode_rle_rm_values(&mut reader, num_samples)?;
-                let symbol_count = rle_symbol_count(&rm_values)?;
-
-                let expected_symbol_bits =
-                    symbol_count.checked_mul(bits_per_sample).ok_or_else(|| {
-                        EntroGdError::InvalidMetadata {
-                            message: "rle symbol stream expected length overflow".to_string(),
-                        }
-                    })?;
-
-                let symbol_stream = reader.read_bits(expected_symbol_bits)?;
-                let rle = RleDeviationData::new(
-                    symbol_stream,
-                    rm_values,
-                    num_samples,
-                    num_deviation_bits,
-                    num_id_bits,
-                );
-                EncodedData::Rle(rle)
             }
             ENCODING_TAG_RLE_OFFSET => {
                 let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
