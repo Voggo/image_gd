@@ -1,4 +1,5 @@
 use bitvec::prelude::*;
+use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -49,39 +50,78 @@ pub(super) fn encode_data_huffman(
 
     let (original_num_samples, row_count, row_width) = huffman_row_layout(&bit_data.info)?;
 
-    let mut pixel_bit_stream = BitVec::new();
-    let mut raw_deviation_bit_stream =
-        BitVec::with_capacity(bit_data.num_rows() * num_deviation_bits);
-    let mut row_offsets = Vec::with_capacity(row_count);
+    let num_rows = bit_data.num_rows();
+    let effective_row_width = if row_width > 0 { row_width } else { 1 };
+    let target = (num_rows / (rayon::current_num_threads() * 4)).clamp(256, 4096);
+    let chunk_size = target.div_ceil(effective_row_width) * effective_row_width;
 
-    for sample_idx in 0..bit_data.num_rows() {
-        if sample_idx < original_num_samples && sample_idx % row_width == 0 {
-            row_offsets.push(u32::try_from(pixel_bit_stream.len()).map_err(|_| {
+    struct ChunkResult {
+        pixel_bits: BitVec<usize, Lsb0>,
+        deviation_bits: BitVec<usize, Lsb0>,
+        row_offsets: Vec<usize>,
+    }
+
+    let _timer = ScopedTimer::info("Encoding pixel bit stream");
+    let par_chunk_results: Result<Vec<ChunkResult>, EntroGdError> = (0..num_rows)
+        .into_par_iter()
+        .chunks(chunk_size)
+        .map(|chunk_indices| -> Result<ChunkResult, EntroGdError> {
+            let mut pixel_bits = BitVec::new();
+            let mut deviation_bits =
+                BitVec::with_capacity(chunk_indices.len() * num_deviation_bits);
+            let mut offsets = Vec::new();
+
+            for sample_idx in chunk_indices {
+                if sample_idx < original_num_samples && sample_idx % effective_row_width == 0 {
+                    offsets.push(pixel_bits.len());
+                }
+                let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
+                for &(start, end) in &deviation_ranges {
+                    deviation_bits
+                        .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+                }
+                let symbol = input.row_to_base_id[sample_idx] as u64;
+                let idx = symbol as usize;
+                let entry = codes_by_symbol
+                    .get(idx)
+                    .ok_or_else(|| EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "Huffman symbol {} exceeds symbol table bounds",
+                            symbol
+                        ),
+                    })?;
+                let (code, code_len) = entry.ok_or_else(|| EntroGdError::InvalidMetadata {
+                    message: format!("missing Huffman code for base-id symbol {}", symbol),
+                })?;
+                append_code_bits(&mut pixel_bits, code, code_len);
+            }
+            Ok(ChunkResult { pixel_bits, deviation_bits, row_offsets: offsets })
+        })
+        .collect();
+    drop(_timer);
+    let par_chunk_results = par_chunk_results?;
+
+    let total_pixel_bits: usize = par_chunk_results.iter().map(|c| c.pixel_bits.len()).sum();
+    let mut pixel_bit_stream = BitVec::with_capacity(total_pixel_bits);
+    let mut raw_deviation_bit_stream = BitVec::with_capacity(num_rows * num_deviation_bits);
+    let mut row_offsets: Vec<u32> = Vec::with_capacity(row_count);
+
+    let mut prefix_pixel_len = 0usize;
+    for chunk in par_chunk_results {
+        for local_offset in chunk.row_offsets {
+            let global_offset = prefix_pixel_len + local_offset;
+            row_offsets.push(u32::try_from(global_offset).map_err(|_| {
                 EntroGdError::InvalidMetadata {
-                    message: "Huffman row offset does not fit into u32 
+                    message: "Huffman row offset does not fit into u32
                     Size: of offset much mean that input is above 536 MB
                     Change how offsets are stored to allow larger inputs"
                         .to_string(),
                 }
             })?);
         }
-        let chunk = unsafe { bit_data.get_chunk_unchecked(sample_idx) };
-        for &(start, end) in &deviation_ranges {
-            raw_deviation_bit_stream
-                .extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
-        }
-
-        let symbol = input.row_to_base_id[sample_idx] as u64;
-        let idx = symbol as usize;
-        let entry = codes_by_symbol
-            .get(idx)
-            .ok_or_else(|| EntroGdError::InvalidMetadata {
-                message: format!("Huffman symbol {} exceeds symbol table bounds", symbol),
-            })?;
-        let (code, code_len) = entry.ok_or_else(|| EntroGdError::InvalidMetadata {
-            message: format!("missing Huffman code for base-id symbol {}", symbol),
-        })?;
-        append_code_bits(&mut pixel_bit_stream, code, code_len);
+        prefix_pixel_len += chunk.pixel_bits.len();
+        pixel_bit_stream.extend_from_bitslice(chunk.pixel_bits.as_bitslice());
+        raw_deviation_bit_stream.extend_from_bitslice(chunk.deviation_bits.as_bitslice());
     }
     tracing::debug!(row_offeset_size = ?row_offsets.len(), "Encoded Huffman row offsets");
 
