@@ -1,14 +1,12 @@
-use bitvec::prelude::*;
 use fxhash::FxHashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::bit_io::{BitReader, BitWriter};
 use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
 use super::tags::{
     BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_RAW,
     ENCODING_TAG_HUFFMAN_BASE_ID_ONLY, ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET,
-    HUFFMAN_CODE_LENGTH_BITS, decode_data_type, encode_data_type,
+    decode_data_type, encode_data_type,
 };
 
 use crate::ScopedTimer;
@@ -22,62 +20,10 @@ use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, Fea
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::utils::bits_needed_nonzero;
+use bitvec::prelude::*;
 
 pub const MAGIC_BYTES: [u8; 3] = *b"EGD";
 pub const FORMAT_VERSION: u8 = 1;
-
-fn read_rle_control_value(reader: &mut BitReader<'_>) -> Result<u8, EntroGdError> {
-    let is_long_packet = reader.read_bit()?;
-    if !is_long_packet {
-        Ok(reader.read_usize_bits(3)? as u8)
-    } else {
-        let payload = reader.read_usize_bits(7)? as u8;
-        let val = payload.saturating_add(8);
-        if !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&val) {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "invalid rm control packet value".to_string(),
-            });
-        }
-        Ok(val)
-    }
-}
-
-fn decode_rle_rm_values(
-    reader: &mut BitReader<'_>,
-    num_samples: usize,
-) -> Result<Vec<(u8, u8)>, EntroGdError> {
-    let mut rm_values: Vec<(u8, u8)> = Vec::new();
-    let mut decoded_samples = 0usize;
-
-    while decoded_samples < num_samples {
-        let r = read_rle_control_value(reader)?;
-        let m_val = read_rle_control_value(reader)?;
-
-        let run_samples = if r > 0 { (r as usize) + 1 } else { 0usize };
-        let literal_samples = m_val as usize;
-        let pair_samples = run_samples.checked_add(literal_samples).ok_or_else(|| {
-            EntroGdError::InvalidMetadata {
-                message: "rm pair sample count overflow".to_string(),
-            }
-        })?;
-
-        decoded_samples = decoded_samples.checked_add(pair_samples).ok_or_else(|| {
-            EntroGdError::InvalidMetadata {
-                message: "decoded sample count overflow".to_string(),
-            }
-        })?;
-
-        if decoded_samples > num_samples {
-            return Err(EntroGdError::InvalidMetadata {
-                message: "rm control stream decodes more samples than header count".to_string(),
-            });
-        }
-
-        rm_values.push((r, m_val));
-    }
-
-    Ok(rm_values)
-}
 
 fn rle_symbol_count(rm_values: &[(u8, u8)]) -> Result<usize, EntroGdError> {
     rm_values
@@ -92,6 +38,52 @@ fn rle_symbol_count(rm_values: &[(u8, u8)]) -> Result<usize, EntroGdError> {
         })
 }
 
+fn write_int_le(buf: &mut [u8], value: u64, num_bytes: usize) {
+    let le = value.to_le_bytes();
+    buf[..num_bytes].copy_from_slice(&le[..num_bytes]);
+}
+
+fn read_int_le(buf: &[u8], num_bytes: usize) -> u64 {
+    let mut le = [0u8; 8];
+    le[..num_bytes].copy_from_slice(&buf[..num_bytes]);
+    u64::from_le_bytes(le)
+}
+
+fn write_bitvec_as_bytes(out: &mut [u8], bv: &BitVec<usize, Lsb0>, bit_len: usize) {
+    let byte_len = bit_len.div_ceil(8);
+    let words = bv.as_raw_slice();
+    let available = std::mem::size_of_val(words);
+    let copy_len = byte_len.min(available);
+    unsafe {
+        std::ptr::copy_nonoverlapping(words.as_ptr() as *const u8, out.as_mut_ptr(), copy_len);
+    }
+    for b in &mut out[copy_len..byte_len] {
+        *b = 0;
+    }
+    if !bit_len.is_multiple_of(8) && byte_len > 0 {
+        out[byte_len - 1] &= (1u8 << (bit_len % 8)) - 1;
+    }
+    if bit_len == 0 && byte_len > 0 {
+        out[0] = 0;
+    }
+}
+
+fn read_bitvec_from_bytes(bytes: &[u8], bit_len: usize) -> BitVec<usize, Lsb0> {
+    if bit_len == 0 {
+        return BitVec::new();
+    }
+    let byte_len = bit_len.div_ceil(8);
+    let word_size = std::mem::size_of::<usize>();
+    let word_count = byte_len.div_ceil(word_size);
+    let mut words = vec![0usize; word_count];
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr() as *mut u8, byte_len);
+    }
+    let mut bv = BitVec::from_vec(words);
+    bv.truncate(bit_len);
+    bv
+}
+
 /// In-memory EGD file contents that can be saved to disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgdFile {
@@ -99,25 +91,6 @@ pub struct EgdFile {
 }
 
 impl EgdFile {
-    /// Build an EGD file from compression output.
-    ///
-    /// Bitstream layout:
-    /// 1) header: magic ("EGD") + version
-    /// 2) global: n (u64), m (u64), num_features (u64)
-    /// 3) feature metadata (per feature):
-    ///    tag=1 (u8), data_type (u8), transform_tag (u8), [transform params], bits_per_feature (u16), 2-bit bit-state per feature bit
-    ///    bit-state encoding: 0=deviation, 1=variable base, 2=constant-zero base, 3=constant-one base
-    /// 4) zero-padding to next byte
-    /// 5) condensed weights bitstream (m * ceil(log2(n)) bits)
-    /// 6) zero-padding to next byte
-    /// 7) base table: num_bases (u64) then packed base bits for each base
-    /// 8) byte-align, then encoded data section:
-    ///    - encoding tag (u8)
-    ///    - payload (depends on tag)
-    ///      tag=0: raw encoded data stream bits
-    ///      tag=1: rm-control packed stream (alternating r,m 4/8-bit packets, terminated by 0xFF), then symbol stream bits
-    ///      tag=2: row count (u32), row width (u32), row offsets ((rm_idx, symbol_bit_idx) u32 pairs), then rm-control packed stream, then symbol stream bits
-    ///      tag=3: base-id-only canonical Huffman table + row offsets + raw deviation stream + pixel bitstream
     pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
         let data_info = &compressed.metadata;
         let num_features = data_info.num_features();
@@ -129,133 +102,225 @@ impl EgdFile {
 
         let chunk_size = data_info.chunk_size();
         let original_num_rows = data_info.original_size_bits() / chunk_size;
+        let n = original_num_rows;
         let condensed_weights = compressed
             .condensed_sample_weights
             .as_deref()
             .unwrap_or(&[]);
+        let m = condensed_weights.len();
+
+        let num_bases = compressed.base_table.len();
+        let num_id_bits = bits_needed_nonzero(num_bases);
+        let base_bit_positions = compressed.layout.selected_base_bit_positions();
+        let num_deviation_bits = chunk_size.saturating_sub(base_bit_positions.len());
+        let bits_per_sample = num_deviation_bits + num_id_bits;
+        let _num_samples = n
+            .checked_add(m)
+            .ok_or_else(|| EntroGdError::InvalidMetadata {
+                message: "n + m overflows usize".to_string(),
+            })?;
+
+        // ---- Pre-compute all section sizes ----
+
+        let header_size: usize = 3 + 1 + 8 + 8 + 8; // 28
+
+        let mut feature_sizes = Vec::with_capacity(num_features);
+        let mut total_feature_size = 0usize;
+        for feature_idx in 0..num_features {
+            let spec = data_info.feature_spec(feature_idx);
+            let bits = data_info.feature_bits(feature_idx);
+            let transform_size = match spec.transform {
+                FeatureTransform::None => 0,
+                FeatureTransform::ScaledSignedInt { .. } => 1,
+                FeatureTransform::OffsetSignedInt { .. } => 8,
+                FeatureTransform::OffsetUnsignedInt { .. } => 8,
+                FeatureTransform::ScaledOffsetSignedInt { .. } => 9,
+            };
+            let bit_states_bytes = (2 * bits).div_ceil(8);
+            let size = 3 + transform_size + 2 + bit_states_bytes;
+            feature_sizes.push(size);
+            total_feature_size += size;
+        }
+
+        let weight_bits = bits_needed_nonzero(n);
+        let weight_bytes = weight_bits.div_ceil(8);
+        let weights_size = m * weight_bytes;
 
         let variable_positions = compressed.layout.variable_base_bit_positions();
+        let v = variable_positions.len();
 
+        let base_table_size = match &compressed.base_table {
+            BaseTable::Raw(rows) => {
+                let base_entry_bytes = v.div_ceil(8);
+                1 + 8 + rows.len() * base_entry_bytes
+            }
+            BaseTable::Delta(delta) => {
+                let lb = variable_positions.len();
+                let index_bits = bits_needed_nonzero(lb.max(1));
+                let index_bytes = index_bits.div_ceil(8);
+                let order_len = delta.sort_column_order.len();
+                let fsk_bytes = if delta.num_bases > 0 {
+                    lb.div_ceil(8)
+                } else {
+                    0
+                };
+                let delta_byte_len = delta.delta_bit_stream.len().div_ceil(8);
+                1 + 8 + 8 + order_len * index_bytes + fsk_bytes + 8 + 8 + delta_byte_len
+            }
+        };
+
+        let encoded_data_size = match &compressed.encoded_data {
+            EncodedData::Normal(raw) => {
+                let stream_bit_len = raw.get_num_samples() * bits_per_sample;
+                1 + stream_bit_len.div_ceil(8)
+            }
+            EncodedData::RleOffset(rle) => {
+                let row_count = rle.row_offsets().len();
+                let rm_count = rle.rm_values().len();
+                let symbol_count = rle_symbol_count(rle.rm_values())?;
+                let sym_byte_len = (symbol_count * bits_per_sample).div_ceil(8);
+                1 + 4 + 4 + row_count * 8 + 4 + rm_count * 2 + sym_byte_len
+            }
+            EncodedData::Huffman(huff) => {
+                let symbol_count = huff.canonical_symbols().len();
+                let l_id = huff.get_num_id_bits();
+                let l_d = huff.get_num_deviation_bits();
+                let row_count = huff.row_offsets().len();
+                let symbol_width = l_id;
+                let symbol_bytes = symbol_width.div_ceil(8);
+                let canonical_bytes = symbol_count * (symbol_bytes + 1);
+                let row_offsets_bytes = row_count * 4;
+                let dev_byte_len = (huff.get_num_samples() * l_d).div_ceil(8);
+                let pixel_bit_len = huff.pixel_bit_stream().len();
+                let pixel_byte_len = if pixel_bit_len == 0 {
+                    0
+                } else {
+                    pixel_bit_len.div_ceil(8)
+                };
+                1 + 4
+                    + 1
+                    + 1
+                    + 4
+                    + canonical_bytes
+                    + row_offsets_bytes
+                    + dev_byte_len
+                    + pixel_byte_len
+            }
+        };
+
+        let total =
+            header_size + total_feature_size + weights_size + base_table_size + encoded_data_size;
+        let mut buf = vec![0u8; total];
+        let mut off = 0usize;
+
+        // ---- Section 1: Header ----
+        buf[off..off + 3].copy_from_slice(&MAGIC_BYTES);
+        off += 3;
+        buf[off] = FORMAT_VERSION;
+        off += 1;
+        buf[off..off + 8].copy_from_slice(&(n as u64).to_le_bytes());
+        off += 8;
+        buf[off..off + 8].copy_from_slice(&(m as u64).to_le_bytes());
+        off += 8;
+        buf[off..off + 8].copy_from_slice(&(num_features as u64).to_le_bytes());
+        off += 8;
+
+        // ---- Section 2: Feature metadata ----
         let mut variable_position_to_index =
-            FxHashMap::with_capacity_and_hasher(variable_positions.len(), Default::default());
+            FxHashMap::with_capacity_and_hasher(v, Default::default());
         for (idx, &bit_pos) in variable_positions.iter().enumerate() {
             variable_position_to_index.insert(bit_pos, idx);
         }
 
-        let mut variable_positions_in_metadata_order = Vec::with_capacity(variable_positions.len());
-
-        let n_u64 =
-            u64::try_from(original_num_rows).map_err(|_| EntroGdError::InvalidMetadata {
-                message: "n does not fit into u64".to_string(),
-            })?;
-        let m_u64 =
-            u64::try_from(condensed_weights.len()).map_err(|_| EntroGdError::InvalidMetadata {
-                message: "m does not fit into u64".to_string(),
-            })?;
-        let num_features_u64 =
-            u64::try_from(num_features).map_err(|_| EntroGdError::InvalidMetadata {
-                message: "num_features does not fit into u64".to_string(),
-            })?;
-
-        let mut writer = BitWriter::new();
-
-        // Header
-        writer.write_u8(MAGIC_BYTES[0]);
-        writer.write_u8(MAGIC_BYTES[1]);
-        writer.write_u8(MAGIC_BYTES[2]);
-        writer.write_u8(FORMAT_VERSION);
-
-        // Global
-        writer.write_u64(n_u64);
-        writer.write_u64(m_u64);
-        writer.write_u64(num_features_u64);
-
-        // Feature metadata
         for feature_idx in 0..num_features {
-            let feature_spec = data_info.feature_spec(feature_idx);
-            let feature_bits = data_info.feature_bits(feature_idx);
-            let bits_per_feature =
-                u16::try_from(feature_bits).map_err(|_| EntroGdError::InvalidMetadata {
-                    message: format!(
-                        "feature {} bits {} does not fit into u16",
-                        feature_idx, feature_bits
-                    ),
-                })?;
+            let spec = data_info.feature_spec(feature_idx);
+            let bits = data_info.feature_bits(feature_idx);
 
-            writer.write_u8(1); // BitInfo tag
-            writer.write_u8(encode_data_type(feature_spec.data_type));
-            match feature_spec.transform {
-                FeatureTransform::None => writer.write_u8(0),
+            buf[off] = 1;
+            off += 1; // tag
+            buf[off] = encode_data_type(spec.data_type);
+            off += 1;
+
+            match spec.transform {
+                FeatureTransform::None => {
+                    buf[off] = 0;
+                    off += 1;
+                }
                 FeatureTransform::ScaledSignedInt { decimal_scale } => {
-                    writer.write_u8(1);
-                    writer.write_u8(decimal_scale);
+                    buf[off] = 1;
+                    off += 1;
+                    buf[off] = decimal_scale;
+                    off += 1;
                 }
                 FeatureTransform::OffsetSignedInt { min_value } => {
-                    writer.write_u8(2);
-                    writer.write_u64(min_value as u64);
+                    buf[off] = 2;
+                    off += 1;
+                    buf[off..off + 8].copy_from_slice(&(min_value as u64).to_le_bytes());
+                    off += 8;
                 }
                 FeatureTransform::OffsetUnsignedInt { min_value } => {
-                    writer.write_u8(3);
-                    writer.write_u64(min_value);
+                    buf[off] = 3;
+                    off += 1;
+                    buf[off..off + 8].copy_from_slice(&min_value.to_le_bytes());
+                    off += 8;
                 }
                 FeatureTransform::ScaledOffsetSignedInt {
                     decimal_scale,
                     min_value,
                 } => {
-                    writer.write_u8(4);
-                    writer.write_u8(decimal_scale);
-                    writer.write_u64(min_value as u64);
+                    buf[off] = 4;
+                    off += 1;
+                    buf[off] = decimal_scale;
+                    off += 1;
+                    buf[off..off + 8].copy_from_slice(&(min_value as u64).to_le_bytes());
+                    off += 8;
                 }
             }
-            writer.write_u16(bits_per_feature);
+
+            buf[off..off + 2].copy_from_slice(&(bits as u16).to_le_bytes());
+            off += 2;
 
             let offset = data_info.feature_offset(feature_idx);
-            for local_bit in 0..feature_bits {
+            for local_bit in 0..bits {
                 let global_bit = offset + local_bit;
-                let bit_state = match compressed.layout.state_at(global_bit) {
-                    BaseBitLayoutState::Deviation => 0usize,
-                    BaseBitLayoutState::Variable => {
-                        variable_positions_in_metadata_order.push(global_bit);
-                        1usize
-                    }
-                    BaseBitLayoutState::ConstantZero => 2usize,
-                    BaseBitLayoutState::ConstantOne => 3usize,
+                let state: u8 = match compressed.layout.state_at(global_bit) {
+                    BaseBitLayoutState::Deviation => 0,
+                    BaseBitLayoutState::Variable => 1,
+                    BaseBitLayoutState::ConstantZero => 2,
+                    BaseBitLayoutState::ConstantOne => 3,
                 };
-                writer.write_usize_bits(bit_state, 2);
+                let byte_idx = local_bit / 4;
+                let bit_shift = ((local_bit % 4) * 2) as u32;
+                buf[off + byte_idx] |= state << bit_shift;
             }
+            off += (2 * bits).div_ceil(8);
         }
 
-        // Align after feature metadata
-        writer.align_to_byte();
-
-        let mut metadata_variable_position_to_index = FxHashMap::with_capacity_and_hasher(
-            variable_positions_in_metadata_order.len(),
-            Default::default(),
-        );
-        for (metadata_idx, &global_bit) in variable_positions_in_metadata_order.iter().enumerate() {
-            metadata_variable_position_to_index.insert(global_bit, metadata_idx);
-        }
-
-        // Condensed sample weights
-        let weight_bits = bits_needed_nonzero(original_num_rows);
+        // ---- Section 3: Condensed sample weights ----
         for &weight in condensed_weights {
-            writer.write_usize_bits(weight, weight_bits);
+            write_int_le(
+                &mut buf[off..off + weight_bytes],
+                weight as u64,
+                weight_bytes,
+            );
+            off += weight_bytes;
         }
 
-        // Align after weights
-        writer.align_to_byte();
-
-        // Base table
+        // ---- Section 4: Base table ----
         match &compressed.base_table {
-            BaseTable::Raw(base_table) => {
-                writer.write_u8(BASE_TABLE_TAG_RAW);
-                let num_bases =
-                    u64::try_from(base_table.len()).map_err(|_| EntroGdError::InvalidMetadata {
-                        message: "num_bases does not fit into u64".to_string(),
-                    })?;
-                writer.write_u64(num_bases);
-                for (base_bits, _) in base_table {
-                    for &global_bit in &variable_positions_in_metadata_order {
+            BaseTable::Raw(rows) => {
+                buf[off] = BASE_TABLE_TAG_RAW;
+                off += 1;
+                buf[off..off + 8].copy_from_slice(&(rows.len() as u64).to_le_bytes());
+                off += 8;
+
+                let base_entry_bytes = v.div_ceil(8);
+                for (base_bits, _) in rows {
+                    let entry_start = off;
+                    for b in &mut buf[entry_start..entry_start + base_entry_bytes] {
+                        *b = 0;
+                    }
+                    for (local_idx, &global_bit) in variable_positions.iter().enumerate() {
                         let variable_idx = *variable_position_to_index
                             .get(&global_bit)
                             .ok_or_else(|| EntroGdError::InvalidMetadata {
@@ -264,171 +329,222 @@ impl EgdFile {
                                     global_bit
                                 ),
                             })?;
-                        writer.write_bit(base_bits.get(variable_idx).map(|b| *b).unwrap_or(false));
+                        if base_bits.get(variable_idx).map(|r| *r).unwrap_or(false) {
+                            buf[entry_start + local_idx / 8] |= 1u8 << (local_idx % 8);
+                        }
                     }
+                    off += base_entry_bytes;
                 }
             }
             BaseTable::Delta(delta) => {
-                writer.write_u8(delta.codec_id);
-                let num_bases =
-                    u64::try_from(delta.num_bases).map_err(|_| EntroGdError::InvalidMetadata {
-                        message: "num_bases does not fit into u64".to_string(),
-                    })?;
-                writer.write_u64(num_bases);
+                buf[off] = delta.codec_id;
+                off += 1;
+                buf[off..off + 8].copy_from_slice(&(delta.num_bases as u64).to_le_bytes());
+                off += 8;
 
-                let mapped_order: Vec<usize> = delta
-                    .sort_column_order
-                    .iter()
-                    .map(|&current_idx| {
-                        let &global_bit = variable_positions.get(current_idx).ok_or_else(|| {
+                let lb = variable_positions.len();
+                let index_bits = bits_needed_nonzero(lb.max(1));
+                let index_bytes = index_bits.div_ceil(8);
+                let order_len = delta.sort_column_order.len();
+                buf[off..off + 8].copy_from_slice(&(order_len as u64).to_le_bytes());
+                off += 8;
+
+                for &current_idx in &delta.sort_column_order {
+                    let &global_bit = variable_positions.get(current_idx).ok_or_else(|| {
+                        EntroGdError::InvalidMetadata {
+                            message: format!(
+                                "delta sort column index {} out of range {}",
+                                current_idx,
+                                variable_positions.len()
+                            ),
+                        }
+                    })?;
+                    let meta_idx =
+                        *variable_position_to_index.get(&global_bit).ok_or_else(|| {
                             EntroGdError::InvalidMetadata {
                                 message: format!(
-                                    "delta sort column index {} out of range {}",
-                                    current_idx,
-                                    variable_positions.len()
+                                    "variable base position {} missing from index map",
+                                    global_bit
                                 ),
                             }
                         })?;
-                        metadata_variable_position_to_index
-                            .get(&global_bit)
-                            .copied()
-                            .ok_or_else(|| EntroGdError::InvalidMetadata {
-                                message: format!(
-                                    "variable base position {} missing from metadata index map",
-                                    global_bit
-                                ),
-                            })
-                    })
-                    .collect::<Result<Vec<_>, EntroGdError>>()?;
-
-                let order_len = u64::try_from(mapped_order.len()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "sort_column_order length does not fit into u64".to_string(),
-                    }
-                })?;
-                writer.write_u64(order_len);
-                let index_bits = bits_needed_nonzero(variable_positions.len().max(1));
-                for &idx in &mapped_order {
-                    writer.write_usize_bits(idx, index_bits);
+                    write_int_le(
+                        &mut buf[off..off + index_bytes],
+                        meta_idx as u64,
+                        index_bytes,
+                    );
+                    off += index_bytes;
                 }
 
-                let lb = variable_positions.len();
                 if delta.num_bases > 0 {
-                    for idx in 0..lb {
-                        writer
-                            .write_bit(delta.first_sort_key.get(idx).map(|b| *b).unwrap_or(false));
+                    let fsk_bytes = lb.div_ceil(8);
+                    for b in &mut buf[off..off + fsk_bytes] {
+                        *b = 0;
                     }
+                    for idx in 0..lb {
+                        if delta.first_sort_key.get(idx).map(|r| *r).unwrap_or(false) {
+                            buf[off + idx / 8] |= 1u8 << (idx % 8);
+                        }
+                    }
+                    off += fsk_bytes;
                 }
 
-                writer.write_u64(u64::try_from(delta.delta_count).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "delta_count does not fit into u64".to_string(),
-                    }
-                })?);
-                writer.write_u64(u64::try_from(delta.delta_bit_stream.len()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "delta bitstream length does not fit into u64".to_string(),
-                    }
-                })?);
-                writer.write_bitslice(delta.delta_bit_stream.as_bitslice());
+                buf[off..off + 8].copy_from_slice(&(delta.delta_count as u64).to_le_bytes());
+                off += 8;
+                let delta_bit_len = delta.delta_bit_stream.len();
+                buf[off..off + 8].copy_from_slice(&(delta_bit_len as u64).to_le_bytes());
+                off += 8;
+                let delta_byte_len = delta_bit_len.div_ceil(8);
+                write_bitvec_as_bytes(
+                    &mut buf[off..off + delta_byte_len],
+                    &delta.delta_bit_stream,
+                    delta_bit_len,
+                );
+                off += delta_byte_len;
             }
         }
 
-        // Encoded data section: byte-aligned + tagged payload.
-        writer.align_to_byte();
+        // ---- Section 5: Encoded data ----
         match &compressed.encoded_data {
             EncodedData::Normal(raw) => {
-                writer.write_u8(ENCODING_TAG_NORMAL);
-                writer.write_bitslice(raw.encoded_bit_stream());
+                buf[off] = ENCODING_TAG_NORMAL;
+                off += 1;
+                let stream_bit_len = raw.get_num_samples() * bits_per_sample;
+                let stream_byte_len = stream_bit_len.div_ceil(8);
+                write_bitvec_as_bytes(
+                    &mut buf[off..off + stream_byte_len],
+                    raw.encoded_bit_stream(),
+                    stream_bit_len,
+                );
+                off += stream_byte_len;
             }
-            EncodedData::RleOffset(rle_offset) => {
-                writer.write_u8(ENCODING_TAG_RLE_OFFSET);
-                writer.write_u32(u32::try_from(rle_offset.row_offsets().len()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "RLE row offset count does not fit into u32".to_string(),
-                    }
-                })?);
-                writer.write_u32(u32::try_from(rle_offset.row_width()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "RLE row width does not fit into u32".to_string(),
-                    }
-                })?);
-                writer.write_bitslice(rle_offset.row_offset_stream());
-                writer.write_bitslice(rle_offset.rm_control_stream());
-                writer.write_bitslice(rle_offset.symbol_bit_stream());
+            EncodedData::RleOffset(rle) => {
+                buf[off] = ENCODING_TAG_RLE_OFFSET;
+                off += 1;
+                let row_count = rle.row_offsets().len();
+                buf[off..off + 4].copy_from_slice(&(row_count as u32).to_le_bytes());
+                off += 4;
+                buf[off..off + 4].copy_from_slice(&(rle.row_width() as u32).to_le_bytes());
+                off += 4;
+
+                for &(rm_idx, symbol_bit_idx) in rle.row_offsets() {
+                    buf[off..off + 4].copy_from_slice(&rm_idx.to_le_bytes());
+                    off += 4;
+                    buf[off..off + 4].copy_from_slice(&symbol_bit_idx.to_le_bytes());
+                    off += 4;
+                }
+
+                let rm_count = rle.rm_values().len();
+                buf[off..off + 4].copy_from_slice(&(rm_count as u32).to_le_bytes());
+                off += 4;
+                for &(r, m_val) in rle.rm_values() {
+                    buf[off] = r;
+                    off += 1;
+                    buf[off] = m_val;
+                    off += 1;
+                }
+
+                let symbol_count = rle_symbol_count(rle.rm_values())?;
+                let sym_bit_len = symbol_count * bits_per_sample;
+                let sym_byte_len = sym_bit_len.div_ceil(8);
+                write_bitvec_as_bytes(
+                    &mut buf[off..off + sym_byte_len],
+                    rle.symbol_bit_stream(),
+                    sym_bit_len,
+                );
+                off += sym_byte_len;
             }
-            EncodedData::Huffman(huffman) => {
-                writer.write_u8(ENCODING_TAG_HUFFMAN_BASE_ID_ONLY);
+            EncodedData::Huffman(huff) => {
+                buf[off] = ENCODING_TAG_HUFFMAN_BASE_ID_ONLY;
+                off += 1;
 
-                writer.write_u32(u32::try_from(huffman.canonical_symbols().len()).map_err(
-                    |_| EntroGdError::InvalidMetadata {
-                        message: "Huffman symbol count does not fit into u32".to_string(),
-                    },
-                )?);
-                writer.write_u8(u8::try_from(huffman.get_num_id_bits()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "Huffman l_id does not fit into u8".to_string(),
-                    }
-                })?);
-                writer.write_u8(u8::try_from(huffman.get_num_deviation_bits()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "Huffman l_d does not fit into u8".to_string(),
-                    }
-                })?);
-                writer.write_u32(u32::try_from(huffman.row_offsets().len()).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "Huffman row count does not fit into u32".to_string(),
-                    }
-                })?);
+                let symbol_count = huff.canonical_symbols().len();
+                let l_id = huff.get_num_id_bits();
+                let l_d = huff.get_num_deviation_bits();
+                let row_count = huff.row_offsets().len();
 
-                let symbol_width = huffman.get_num_id_bits();
-                for (&symbol, &code_len) in huffman
+                buf[off..off + 4].copy_from_slice(&(symbol_count as u32).to_le_bytes());
+                off += 4;
+                buf[off] = l_id as u8;
+                off += 1;
+                buf[off] = l_d as u8;
+                off += 1;
+                buf[off..off + 4].copy_from_slice(&(row_count as u32).to_le_bytes());
+                off += 4;
+
+                let symbol_bytes = l_id.div_ceil(8);
+                for (&symbol, &code_len) in huff
                     .canonical_symbols()
                     .iter()
-                    .zip(huffman.canonical_code_lengths().iter())
+                    .zip(huff.canonical_code_lengths().iter())
                 {
-                    writer.write_u64_bits(symbol, symbol_width);
-                    writer.write_usize_bits((code_len - 1) as usize, HUFFMAN_CODE_LENGTH_BITS);
-                }
-                for &offset in huffman.row_offsets() {
-                    writer.write_u32(offset);
+                    write_int_le(&mut buf[off..off + symbol_bytes], symbol, symbol_bytes);
+                    off += symbol_bytes;
+                    buf[off] = code_len;
+                    off += 1;
                 }
 
-                writer.write_bitslice(huffman.raw_deviation_bit_stream());
-                writer.write_bitslice(huffman.pixel_bit_stream());
+                for &offset in huff.row_offsets() {
+                    buf[off..off + 4].copy_from_slice(&offset.to_le_bytes());
+                    off += 4;
+                }
+
+                let dev_bit_len = huff.get_num_samples() * l_d;
+                let dev_byte_len = dev_bit_len.div_ceil(8);
+                write_bitvec_as_bytes(
+                    &mut buf[off..off + dev_byte_len],
+                    huff.raw_deviation_bit_stream(),
+                    dev_bit_len,
+                );
+                off += dev_byte_len;
+
+                let pixel_bit_len = huff.pixel_bit_stream().len();
+                let pixel_byte_len = if pixel_bit_len == 0 {
+                    0
+                } else {
+                    pixel_bit_len.div_ceil(8)
+                };
+                write_bitvec_as_bytes(
+                    &mut buf[off..off + pixel_byte_len],
+                    huff.pixel_bit_stream(),
+                    pixel_bit_len,
+                );
+                off += pixel_byte_len;
             }
         }
 
-        Ok(EgdFile {
-            bytes: writer.into_bytes(),
-        })
+        assert_eq!(off, total, "buffer write overflow/underflow");
+
+        Ok(EgdFile { bytes: buf })
     }
 
-    /// Build an EGD file wrapper from raw bytes.
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         EgdFile { bytes }
     }
 
-    /// Load an `.egd` file from disk.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, EntroGdError> {
         let bytes = fs::read(path)?;
         Ok(EgdFile { bytes })
     }
 
-    /// Parse this EGD file into an in-memory `CompressedData` object.
     pub fn to_compressed_data(&self) -> Result<CompressedData, EntroGdError> {
-        let mut reader = BitReader::new(&self.bytes);
+        let bytes = &self.bytes;
+        let mut off = 0usize;
 
-        // Header
-        let m0 = reader.read_u8()?;
-        let m1 = reader.read_u8()?;
-        let m2 = reader.read_u8()?;
-        if [m0, m1, m2] != MAGIC_BYTES {
+        // ---- Section 1: Header ----
+        if bytes.len() < 28 {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "EGD file too short for header".to_string(),
+            });
+        }
+        if bytes[0..3] != MAGIC_BYTES {
             return Err(EntroGdError::InvalidMetadata {
                 message: "invalid magic bytes (expected EGD)".to_string(),
             });
         }
-        let version = reader.read_u8()?;
+        off += 3;
+        let version = bytes[off];
+        off += 1;
         if version != FORMAT_VERSION {
             return Err(EntroGdError::InvalidMetadata {
                 message: format!(
@@ -438,31 +554,48 @@ impl EgdFile {
             });
         }
 
-        // Global
-        let n = usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "n does not fit into usize".to_string(),
-        })?;
-        let m = usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
-            message: "m does not fit into usize".to_string(),
-        })?;
-        let num_features =
-            usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
-                message: "num_features does not fit into usize".to_string(),
+        let n = usize::try_from(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()))
+            .map_err(|_| EntroGdError::InvalidMetadata {
+                message: "n does not fit into usize".to_string(),
             })?;
+        off += 8;
+        let m = usize::try_from(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()))
+            .map_err(|_| EntroGdError::InvalidMetadata {
+                message: "m does not fit into usize".to_string(),
+            })?;
+        off += 8;
+        let num_features = usize::try_from(u64::from_le_bytes(
+            bytes[off..off + 8].try_into().unwrap(),
+        ))
+        .map_err(|_| EntroGdError::InvalidMetadata {
+            message: "num_features does not fit into usize".to_string(),
+        })?;
+        off += 8;
         if num_features == 0 {
             return Err(EntroGdError::InvalidMetadata {
                 message: "num_features is 0".to_string(),
             });
         }
 
-        // Feature metadata
+        // ---- Section 2: Feature metadata ----
         let mut features = Vec::with_capacity(num_features);
         let mut base_bit_positions = Vec::new();
         let mut variable_base_bit_positions = Vec::new();
         let mut bit_states = Vec::new();
         let mut running_offset = 0usize;
+
         for feature_idx in 0..num_features {
-            let tag = reader.read_u8()?;
+            if off >= bytes.len() {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "unexpected end of EGD while reading feature {} metadata",
+                        feature_idx
+                    ),
+                });
+            }
+
+            let tag = bytes[off];
+            off += 1;
             if tag != 1 {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!(
@@ -471,24 +604,39 @@ impl EgdFile {
                     ),
                 });
             }
-            let data_type = decode_data_type(reader.read_u8()?)?;
-            let transform = match reader.read_u8()? {
-                0 => FeatureTransform::None,
+
+            let data_type = decode_data_type(bytes[off])?;
+            off += 1;
+
+            let transform = match bytes[off] {
+                0 => {
+                    off += 1;
+                    FeatureTransform::None
+                }
                 1 => {
-                    let decimal_scale = reader.read_u8()?;
+                    off += 1;
+                    let decimal_scale = bytes[off];
+                    off += 1;
                     FeatureTransform::ScaledSignedInt { decimal_scale }
                 }
                 2 => {
-                    let min_value = reader.read_u64()? as i64;
+                    off += 1;
+                    let min_value = i64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+                    off += 8;
                     FeatureTransform::OffsetSignedInt { min_value }
                 }
                 3 => {
-                    let min_value = reader.read_u64()?;
+                    off += 1;
+                    let min_value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+                    off += 8;
                     FeatureTransform::OffsetUnsignedInt { min_value }
                 }
                 4 => {
-                    let decimal_scale = reader.read_u8()?;
-                    let min_value = reader.read_u64()? as i64;
+                    off += 1;
+                    let decimal_scale = bytes[off];
+                    off += 1;
+                    let min_value = i64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+                    off += 8;
                     FeatureTransform::ScaledOffsetSignedInt {
                         decimal_scale,
                         min_value,
@@ -503,10 +651,21 @@ impl EgdFile {
                     });
                 }
             };
-            let bits = usize::from(reader.read_u16()?);
+
+            let bits = usize::from(u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap()));
+            off += 2;
             if bits == 0 {
                 return Err(EntroGdError::InvalidMetadata {
                     message: format!("feature {} has 0 bits", feature_idx),
+                });
+            }
+            let bit_states_bytes = (2 * bits).div_ceil(8);
+            if off + bit_states_bytes > bytes.len() {
+                return Err(EntroGdError::InvalidMetadata {
+                    message: format!(
+                        "unexpected end of EGD while reading bit states for feature {}",
+                        feature_idx
+                    ),
                 });
             }
 
@@ -518,7 +677,8 @@ impl EgdFile {
 
             for local_bit in 0..bits {
                 let global_bit = running_offset + local_bit;
-                match reader.read_usize_bits(2)? {
+                let state = ((bytes[off + local_bit / 4] >> ((local_bit % 4) * 2)) & 0b11) as usize;
+                match state {
                     0 => {
                         bit_states.push(BaseBitLayoutState::Deviation);
                     }
@@ -535,16 +695,17 @@ impl EgdFile {
                         bit_states.push(BaseBitLayoutState::ConstantOne);
                         base_bit_positions.push(global_bit);
                     }
-                    other => {
+                    _ => {
                         return Err(EntroGdError::InvalidMetadata {
                             message: format!(
                                 "invalid base bit-state {} at feature {} local bit {}",
-                                other, feature_idx, local_bit
+                                state, feature_idx, local_bit
                             ),
                         });
                     }
                 }
             }
+            off += bit_states_bytes;
             running_offset =
                 running_offset
                     .checked_add(bits)
@@ -553,26 +714,38 @@ impl EgdFile {
                     })?;
         }
 
-        // Align after feature metadata
-        reader.align_to_byte();
-
-        // Condensed sample weights
+        // ---- Section 3: Condensed sample weights ----
         let weight_bits = bits_needed_nonzero(n);
+        let weight_bytes = weight_bits.div_ceil(8);
+        let weights_size = m * weight_bytes;
+        if off + weights_size > bytes.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "unexpected end of EGD while reading condensed weights".to_string(),
+            });
+        }
         let mut weights = Vec::with_capacity(m);
         for _ in 0..m {
-            weights.push(reader.read_usize_bits(weight_bits)?);
+            let val = read_int_le(&bytes[off..off + weight_bytes], weight_bytes) as usize;
+            weights.push(val);
+            off += weight_bytes;
         }
 
-        // Align after weights
-        reader.align_to_byte();
-
+        // ---- Section 4: Base table ----
         let _timer = ScopedTimer::info("Loading base table");
-        // Base table
-        let base_table_tag = reader.read_u8()?;
-        let num_bases =
-            usize::try_from(reader.read_u64()?).map_err(|_| EntroGdError::InvalidMetadata {
-                message: "num_bases does not fit into usize".to_string(),
-            })?;
+        if off >= bytes.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "unexpected end of EGD before base table".to_string(),
+            });
+        }
+        let base_table_tag = bytes[off];
+        off += 1;
+        let num_bases = usize::try_from(u64::from_le_bytes(
+            bytes[off..off + 8].try_into().unwrap(),
+        ))
+        .map_err(|_| EntroGdError::InvalidMetadata {
+            message: "num_bases does not fit into usize".to_string(),
+        })?;
+        off += 8;
 
         let chunk_size = features.iter().map(|f| f.bits).sum::<usize>();
         if base_bit_positions.len() > chunk_size {
@@ -584,27 +757,48 @@ impl EgdFile {
         let mut entropy_sorted_column_order: Option<Vec<usize>> = None;
         let mut base_table = match base_table_tag {
             BASE_TABLE_TAG_RAW => {
+                let v = variable_base_bit_positions.len();
+                let base_entry_bytes = v.div_ceil(8);
+                let section_len = num_bases * base_entry_bytes;
+                if off + section_len > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading base table".to_string(),
+                    });
+                }
                 let mut rows = Vec::with_capacity(num_bases);
-                for _ in 0..num_bases {
-                    let mut base_bits = BitVec::with_capacity(variable_base_bit_positions.len());
-                    for _ in 0..variable_base_bit_positions.len() {
-                        base_bits.push(reader.read_bit()?);
+                for base_idx in 0..num_bases {
+                    let entry_start = off + base_idx * base_entry_bytes;
+                    let mut base_bits = BitVec::with_capacity(v);
+                    for local_bit in 0..v {
+                        let bit = (bytes[entry_start + local_bit / 8] >> (local_bit % 8)) & 1;
+                        base_bits.push(bit != 0);
                     }
                     rows.push((base_bits, 0usize));
                 }
+                off += section_len;
                 BaseTable::Raw(rows)
             }
             BASE_TABLE_TAG_DELTA_UNARY | BASE_TABLE_TAG_DELTA_FIXED => {
-                let order_len = usize::try_from(reader.read_u64()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "sort_column_order length does not fit into usize".to_string(),
-                    }
-                })?;
+                let order_len =
+                    usize::try_from(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "sort_column_order length does not fit into usize".to_string(),
+                        })?;
+                off += 8;
+
                 let lb = variable_base_bit_positions.len();
                 let index_bits = bits_needed_nonzero(lb.max(1));
+                let index_bytes = index_bits.div_ceil(8);
+                let order_section_len = order_len * index_bytes;
+                if off + order_section_len > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading delta order".to_string(),
+                    });
+                }
                 let mut order = Vec::with_capacity(order_len);
                 for _ in 0..order_len {
-                    let idx = reader.read_usize_bits(index_bits)?;
+                    let idx = read_int_le(&bytes[off..off + index_bytes], index_bytes) as usize;
+                    off += index_bytes;
                     if idx >= lb {
                         return Err(EntroGdError::InvalidMetadata {
                             message: format!("delta sort column index {} out of range {}", idx, lb),
@@ -612,24 +806,46 @@ impl EgdFile {
                     }
                     order.push(idx);
                 }
+
                 let mut first_sort_key = BitVec::with_capacity(lb);
                 if num_bases > 0 {
-                    for _ in 0..lb {
-                        first_sort_key.push(reader.read_bit()?);
+                    let fsk_bytes = lb.div_ceil(8);
+                    if off + fsk_bytes > bytes.len() {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: "unexpected end of EGD while reading delta first sort key"
+                                .to_string(),
+                        });
                     }
+                    for idx in 0..lb {
+                        let bit = (bytes[off + idx / 8] >> (idx % 8)) & 1;
+                        first_sort_key.push(bit != 0);
+                    }
+                    off += fsk_bytes;
                 }
 
-                let delta_count = usize::try_from(reader.read_u64()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "delta_count does not fit into usize".to_string(),
-                    }
-                })?;
-                let delta_bit_len = usize::try_from(reader.read_u64()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "delta bitstream length does not fit into usize".to_string(),
-                    }
-                })?;
-                let delta_bit_stream = reader.read_bits(delta_bit_len)?;
+                let delta_count =
+                    usize::try_from(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "delta_count does not fit into usize".to_string(),
+                        })?;
+                off += 8;
+
+                let delta_bit_len =
+                    usize::try_from(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "delta bitstream length does not fit into usize".to_string(),
+                        })?;
+                off += 8;
+
+                let delta_byte_len = delta_bit_len.div_ceil(8);
+                if off + delta_byte_len > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading delta bitstream".to_string(),
+                    });
+                }
+                let delta_bit_stream =
+                    read_bitvec_from_bytes(&bytes[off..off + delta_byte_len], delta_bit_len);
+                off += delta_byte_len;
 
                 entropy_sorted_column_order = Some(order.clone());
                 BaseTable::Delta(DeltaBaseTableData {
@@ -656,21 +872,29 @@ impl EgdFile {
             })?;
         let num_id_bits = bits_needed_nonzero(num_bases);
         let num_deviation_bits = chunk_size.saturating_sub(base_bit_positions.len());
-
         let bits_per_sample = num_deviation_bits + num_id_bits;
 
-        // Encoded data section (byte-aligned + tagged payload)
-        reader.align_to_byte();
-        let encoding_tag = reader.read_u8()?;
+        // ---- Section 5: Encoded data ----
+        if off >= bytes.len() {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "unexpected end of EGD before encoded data".to_string(),
+            });
+        }
+        let encoding_tag = bytes[off];
+        off += 1;
         let encoded_data = match encoding_tag {
             ENCODING_TAG_NORMAL => {
-                let expected_encoded_len =
-                    num_samples.checked_mul(bits_per_sample).ok_or_else(|| {
-                        EntroGdError::InvalidMetadata {
-                            message: "encoded stream expected length overflow".to_string(),
-                        }
-                    })?;
-                let encoded_stream = reader.read_bits(expected_encoded_len)?;
+                let expected_bit_len = num_samples * bits_per_sample;
+                let expected_byte_len = expected_bit_len.div_ceil(8);
+                if off + expected_byte_len > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading normal encoded stream"
+                            .to_string(),
+                    });
+                }
+                let encoded_stream =
+                    read_bitvec_from_bytes(&bytes[off..off + expected_byte_len], expected_bit_len);
+                off += expected_byte_len;
                 EncodedData::Normal(DeviationData::new(
                     encoded_stream,
                     num_samples,
@@ -679,36 +903,79 @@ impl EgdFile {
                 ))
             }
             ENCODING_TAG_RLE_OFFSET => {
-                let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "RLE row count does not fit into usize".to_string(),
-                    }
-                })?;
-                let row_width = usize::try_from(reader.read_u32()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "RLE row width does not fit into usize".to_string(),
-                    }
-                })?;
+                let row_count =
+                    usize::try_from(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "RLE row count does not fit into usize".to_string(),
+                        })?;
+                off += 4;
+                let row_width =
+                    usize::try_from(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "RLE row width does not fit into usize".to_string(),
+                        })?;
+                off += 4;
 
+                let row_offsets_section = row_count * 8;
+                if off + row_offsets_section > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading RLE row offsets".to_string(),
+                    });
+                }
                 let mut row_offsets = Vec::with_capacity(row_count);
                 for _ in 0..row_count {
-                    let rm_idx = reader.read_u32()?;
-                    let symbol_bit_idx = reader.read_u32()?;
+                    let rm_idx = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+                    off += 4;
+                    let symbol_bit_idx =
+                        u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+                    off += 4;
                     row_offsets.push((rm_idx, symbol_bit_idx));
                 }
 
-                let rm_values = decode_rle_rm_values(&mut reader, num_samples)?;
+                let rm_count =
+                    usize::try_from(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "RLE rm pair count does not fit into usize".to_string(),
+                        })?;
+                off += 4;
+                let rm_section = rm_count * 2;
+                if off + rm_section > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading RLE rm values".to_string(),
+                    });
+                }
+                let mut rm_values = Vec::with_capacity(rm_count);
+                for _ in 0..rm_count {
+                    let r = bytes[off];
+                    off += 1;
+                    let m_val = bytes[off];
+                    off += 1;
+                    if r > 0 && r.saturating_sub(1) as usize > RLE_LONG_MAX as usize {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: "invalid RLE r value".to_string(),
+                        });
+                    }
+                    if m_val > 0 && !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&m_val) {
+                        return Err(EntroGdError::InvalidMetadata {
+                            message: "invalid RLE m_val value".to_string(),
+                        });
+                    }
+                    rm_values.push((r, m_val));
+                }
+
                 let symbol_count = rle_symbol_count(&rm_values)?;
+                let sym_bit_len = symbol_count * bits_per_sample;
+                let sym_byte_len = sym_bit_len.div_ceil(8);
+                if off + sym_byte_len > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading RLE symbol stream"
+                            .to_string(),
+                    });
+                }
+                let symbol_stream =
+                    read_bitvec_from_bytes(&bytes[off..off + sym_byte_len], sym_bit_len);
+                off += sym_byte_len;
 
-                let expected_symbol_bits =
-                    symbol_count.checked_mul(bits_per_sample).ok_or_else(|| {
-                        EntroGdError::InvalidMetadata {
-                            message: "rle offset symbol stream expected length overflow"
-                                .to_string(),
-                        }
-                    })?;
-
-                let symbol_stream = reader.read_bits(expected_symbol_bits)?;
                 let rle = RleDeviationOffsetData::new(
                     symbol_stream,
                     rm_values,
@@ -733,18 +1000,22 @@ impl EgdFile {
                 EncodedData::RleOffset(rle)
             }
             ENCODING_TAG_HUFFMAN_BASE_ID_ONLY => {
-                let symbol_count = usize::try_from(reader.read_u32()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "Huffman symbol count does not fit into usize".to_string(),
-                    }
-                })?;
-                let huffman_num_id_bits = usize::from(reader.read_u8()?);
-                let huffman_num_deviation_bits = usize::from(reader.read_u8()?);
-                let row_count = usize::try_from(reader.read_u32()?).map_err(|_| {
-                    EntroGdError::InvalidMetadata {
-                        message: "Huffman row count does not fit into usize".to_string(),
-                    }
-                })?;
+                let symbol_count =
+                    usize::try_from(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "Huffman symbol count does not fit into usize".to_string(),
+                        })?;
+                off += 4;
+                let huffman_num_id_bits = usize::from(bytes[off]);
+                off += 1;
+                let huffman_num_deviation_bits = usize::from(bytes[off]);
+                off += 1;
+                let row_count =
+                    usize::try_from(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "Huffman row count does not fit into usize".to_string(),
+                        })?;
+                off += 4;
 
                 if huffman_num_id_bits != num_id_bits {
                     return Err(EntroGdError::InvalidMetadata {
@@ -764,17 +1035,36 @@ impl EgdFile {
                 }
 
                 let symbol_width = huffman_num_id_bits;
+                let symbol_bytes = symbol_width.div_ceil(8);
+
+                let canonical_section = symbol_count * (symbol_bytes + 1);
+                if off + canonical_section > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading Huffman canonical table"
+                            .to_string(),
+                    });
+                }
                 let mut canonical_symbols = Vec::with_capacity(symbol_count);
                 let mut canonical_code_lengths = Vec::with_capacity(symbol_count);
                 for _ in 0..symbol_count {
-                    canonical_symbols.push(reader.read_u64_bits(symbol_width)?);
-                    canonical_code_lengths
-                        .push(reader.read_usize_bits(HUFFMAN_CODE_LENGTH_BITS)? as u8 + 1);
+                    let symbol = read_int_le(&bytes[off..off + symbol_bytes], symbol_bytes);
+                    off += symbol_bytes;
+                    canonical_symbols.push(symbol);
+                    canonical_code_lengths.push(bytes[off]);
+                    off += 1;
                 }
 
+                let row_offsets_section = row_count * 4;
+                if off + row_offsets_section > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading Huffman row offsets"
+                            .to_string(),
+                    });
+                }
                 let mut row_offsets = Vec::with_capacity(row_count);
                 for _ in 0..row_count {
-                    row_offsets.push(reader.read_u32()?);
+                    row_offsets.push(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
+                    off += 4;
                 }
 
                 let row_width = if row_count == 0 {
@@ -791,16 +1081,34 @@ impl EgdFile {
                     n / row_count
                 };
 
-                let raw_deviation_len = num_samples
-                    .checked_mul(huffman_num_deviation_bits)
-                    .ok_or_else(|| EntroGdError::InvalidMetadata {
-                        message: "Huffman raw deviation stream expected length overflow"
+                let dev_bit_len = num_samples * huffman_num_deviation_bits;
+                let dev_byte_len = dev_bit_len.div_ceil(8);
+                if off + dev_byte_len > bytes.len() {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: "unexpected end of EGD while reading Huffman raw deviation stream"
                             .to_string(),
-                    })?;
-                let raw_deviation_stream = reader.read_bits(raw_deviation_len)?;
+                    });
+                }
+                let raw_deviation_stream =
+                    read_bitvec_from_bytes(&bytes[off..off + dev_byte_len], dev_bit_len);
+                off += dev_byte_len;
+
+                let pixel_bytes = &bytes[off..];
+                let pixel_word_size = std::mem::size_of::<usize>();
+                let pixel_word_count = pixel_bytes.len().div_ceil(pixel_word_size);
+                let mut pixel_words = vec![0usize; pixel_word_count];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        pixel_bytes.as_ptr(),
+                        pixel_words.as_mut_ptr() as *mut u8,
+                        pixel_bytes.len(),
+                    );
+                }
+                let pixel_bit_stream = BitVec::from_vec(pixel_words);
+                off = bytes.len();
 
                 EncodedData::Huffman(HuffmanDeviationData::new(
-                    reader.read_bits(reader.remaining_bits())?,
+                    pixel_bit_stream,
                     raw_deviation_stream,
                     canonical_symbols,
                     canonical_code_lengths,
@@ -819,47 +1127,46 @@ impl EgdFile {
             }
         };
 
-        // Any remaining bits must be zero-padding in the final byte.
+        // Verify trailing bytes are zero (for non-Huffman, which consumes rest)
         if encoding_tag != ENCODING_TAG_HUFFMAN_BASE_ID_ONLY {
-            while reader.remaining_bits() > 0 {
-                if reader.read_bit()? {
+            for &b in &bytes[off..] {
+                if b != 0 {
                     return Err(EntroGdError::InvalidMetadata {
-                        message: "non-zero trailing bits after encoded stream".to_string(),
+                        message: "non-zero trailing bytes after encoded stream".to_string(),
                     });
                 }
             }
         }
 
-        // Reconstruct base frequencies from encoded IDs (only for Raw tables;
-        // Delta tables decode lazily and counts are not needed for decompression).
-        if num_bases > 0 {
-            if let BaseTable::Raw(rows) = &mut base_table {
-                let mut counts = vec![0usize; num_bases];
-                for sample_idx in 0..num_samples {
-                    let sample = encoded_data.get_sample(sample_idx).ok_or_else(|| {
-                        EntroGdError::InvalidMetadata {
-                            message: format!(
-                                "failed to decode sample {} from encoded stream",
-                                sample_idx
-                            ),
-                        }
-                    })?;
-
-                    let base_id = sample.id.load_le::<usize>();
-
-                    if base_id >= num_bases {
-                        return Err(EntroGdError::InvalidMetadata {
-                            message: format!(
-                                "encoded base id {} out of range for {} bases",
-                                base_id, num_bases
-                            ),
-                        });
+        // Reconstruct base frequencies from encoded IDs
+        if num_bases > 0
+            && let BaseTable::Raw(rows) = &mut base_table
+        {
+            let mut counts = vec![0usize; num_bases];
+            for sample_idx in 0..num_samples {
+                let sample = encoded_data.get_sample(sample_idx).ok_or_else(|| {
+                    EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "failed to decode sample {} from encoded stream",
+                            sample_idx
+                        ),
                     }
-                    counts[base_id] += 1;
+                })?;
+
+                let base_id = sample.id.load_le::<usize>();
+
+                if base_id >= num_bases {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "encoded base id {} out of range for {} bases",
+                            base_id, num_bases
+                        ),
+                    });
                 }
-                for (idx, count) in counts.into_iter().enumerate() {
-                    rows[idx].1 = count;
-                }
+                counts[base_id] += 1;
+            }
+            for (idx, count) in counts.into_iter().enumerate() {
+                rows[idx].1 = count;
             }
         }
 
@@ -885,7 +1192,6 @@ impl EgdFile {
         &self.bytes
     }
 
-    /// Save to disk. If extension is not `.egd`, it is replaced with `.egd`.
     pub fn save<P: AsRef<Path>>(&self, output_path: P) -> Result<PathBuf, EntroGdError> {
         let target = ensure_egd_extension(output_path.as_ref());
         fs::write(&target, &self.bytes)?;
@@ -907,8 +1213,6 @@ impl Filter for SaveEgdFile {
     }
 }
 
-/// Convenience API requested by caller:
-/// input: `CompressedData`, effect: save an `.egd` file, output: `Result`.
 pub fn save_compressed_as_egd<P: AsRef<Path>>(
     compressed: &CompressedData,
     output_path: P,
@@ -927,9 +1231,6 @@ impl Filter for LoadEgdFile {
     }
 }
 
-/// Decode the delta-encoded base table inside a `CompressedData`, producing a `CompressedData`
-/// with a `BaseTable::Raw`. This is the inverse of `DeltaEncodeBaseTable` /
-/// `DeltaEncodeBaseTableFixed` and benchmarks only the delta-stream decode work.
 pub struct DecodeDeltaBaseTable {}
 
 impl Filter for DecodeDeltaBaseTable {
@@ -944,20 +1245,17 @@ impl Filter for DecodeDeltaBaseTable {
     }
 }
 
-/// Load an `.egd` file from disk and parse it into `CompressedData`.
 pub fn load_compressed_from_egd<P: AsRef<Path>>(
     input_path: P,
 ) -> Result<CompressedData, EntroGdError> {
     EgdFile::load(input_path)?.to_compressed_data()
 }
 
-/// Load an `.egd` file and fully decompress its payload into bit data.
 pub fn load_and_decompress_egd<P: AsRef<Path>>(input_path: P) -> Result<BitDataSet, EntroGdError> {
     let compressed = load_compressed_from_egd(input_path)?;
     decompress_file(compressed)
 }
 
-/// Load an `.egd` file, decompress it, and write a CSV file.
 pub fn decompress_egd_to_csv<P: AsRef<Path>, Q: AsRef<Path>>(
     input_path: P,
     output_path: Q,

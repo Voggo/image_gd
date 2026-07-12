@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 pub struct EncodingContext {
     pub row_to_id: Vec<usize>,
     pub base_table: Vec<(BitVec<usize, Lsb0>, usize)>,
+    pub sorted_column_order: Option<Vec<usize>>,
 }
 
 pub trait BaseBit {
@@ -186,10 +187,10 @@ fn compare_rows_by_column_order(
 fn sort_encoding_context(
     base_table: &mut Vec<(BitVec<usize, Lsb0>, usize)>,
     row_to_id: &mut Vec<usize>,
-) {
+) -> Vec<usize> {
     let base_count = base_table.len();
     if base_count <= 1 {
-        return;
+        return Vec::new();
     }
 
     let column_order = column_order_by_unweighted_entropy(base_table);
@@ -215,6 +216,8 @@ fn sort_encoding_context(
             *id = new_id;
         }
     }
+
+    column_order
 }
 
 #[derive(Clone)]
@@ -353,12 +356,15 @@ impl BaseBit for BaseBitGroups {
                 row_to_id[row] = id;
             }
         }
-        if sort {
-            sort_encoding_context(&mut base_table, &mut row_to_id);
-        }
+        let sorted_column_order = if sort {
+            Some(sort_encoding_context(&mut base_table, &mut row_to_id))
+        } else {
+            None
+        };
         EncodingContext {
             row_to_id,
             base_table,
+            sorted_column_order,
         }
     }
 
@@ -647,13 +653,16 @@ impl BaseBit for BaseBitHyperLogLogCount {
             row_to_id.push(id);
         }
 
-        if sort {
-            sort_encoding_context(&mut base_table, &mut row_to_id);
-        }
+        let sorted_column_order = if sort {
+            Some(sort_encoding_context(&mut base_table, &mut row_to_id))
+        } else {
+            None
+        };
 
         EncodingContext {
             row_to_id,
             base_table,
+            sorted_column_order,
         }
     }
 

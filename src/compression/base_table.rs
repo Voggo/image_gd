@@ -1,4 +1,4 @@
-use crate::compression::base_bits::{BaseBit, EncodingContext, column_order_by_unweighted_entropy};
+use crate::compression::base_bits::{BaseBit, EncodingContext};
 use crate::compression::base_selection::BaseSelectionContext;
 use crate::compression::entropy::ConstantBitPolarity;
 use crate::compression::preprocessor::BitDataSet;
@@ -6,6 +6,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
+use fxhash::FxHashMap;
 
 #[derive(Clone)]
 pub struct PreEncodeContext {
@@ -177,6 +178,7 @@ fn build_encode_context(
     let EncodingContext {
         row_to_id: row_to_base_id,
         base_table: selected_base_table,
+        sorted_column_order,
     } = base_bit_groups.get_encoding_context(&bit_data, sort_bases);
     drop(_timer);
 
@@ -194,11 +196,13 @@ fn build_encode_context(
         &selected_base_table,
     );
 
-    let entropy_sorted_column_order = if sort_bases {
-        Some(column_order_by_unweighted_entropy(&variable_base_table))
-    } else {
-        None
-    };
+    let entropy_sorted_column_order = sorted_column_order.map(|selected_order| {
+        map_selected_order_to_variable_order(
+            &base_bit_positions,
+            &variable_positions,
+            &selected_order,
+        )
+    });
 
     PreEncodeContext {
         bit_data,
@@ -207,6 +211,25 @@ fn build_encode_context(
         variable_base_table,
         entropy_sorted_column_order,
     }
+}
+
+fn map_selected_order_to_variable_order(
+    selected_positions: &[usize],
+    variable_positions: &[usize],
+    selected_order: &[usize],
+) -> Vec<usize> {
+    let mut pos_to_var_idx =
+        FxHashMap::with_capacity_and_hasher(variable_positions.len(), Default::default());
+    for (var_idx, &pos) in variable_positions.iter().enumerate() {
+        pos_to_var_idx.insert(pos, var_idx);
+    }
+    selected_order
+        .iter()
+        .filter_map(|&selected_idx| {
+            let global_pos = selected_positions[selected_idx];
+            pos_to_var_idx.get(&global_pos).copied()
+        })
+        .collect()
 }
 
 pub(crate) fn build_base_layout_from_constant_polarity(

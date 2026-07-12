@@ -1,4 +1,3 @@
-mod bit_io;
 mod egd;
 mod igd;
 mod path_utils;

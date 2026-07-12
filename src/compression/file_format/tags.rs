@@ -4,7 +4,6 @@ use crate::error::EntroGdError;
 pub(super) const ENCODING_TAG_NORMAL: u8 = 0;
 pub(super) const ENCODING_TAG_RLE_OFFSET: u8 = 2;
 pub(super) const ENCODING_TAG_HUFFMAN_BASE_ID_ONLY: u8 = 3;
-pub(super) const HUFFMAN_CODE_LENGTH_BITS: usize = 5;
 
 pub(super) const BASE_TABLE_TAG_RAW: u8 = 0;
 pub(crate) const BASE_TABLE_TAG_DELTA_UNARY: u8 = 1;

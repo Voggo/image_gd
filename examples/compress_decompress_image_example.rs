@@ -79,7 +79,7 @@ fn main() -> Result<(), EntroGdError> {
     let compression_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
-        pixel_grouping: PixelGrouping::new(2, 2),
+        pixel_grouping: PixelGrouping::new(3, 3),
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
@@ -87,10 +87,11 @@ fn main() -> Result<(), EntroGdError> {
     .then(SelectBasesAdaptive {
         width_decay: 0.45,
         patience: 5,
-        base_bit_impl: BaseBitImpl::Naive,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
     })
-    .then(BuildBaseTable {})
-    .then(EncodeData {});
+    .then(BuildSortedBaseTable {})
+    .then(EncodeDataHuffman {})
+    .then(DeltaEncodeBaseTableFixed {});
 
     let load_compressed_data = LoadIgdFile {};
 
