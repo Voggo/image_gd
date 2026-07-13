@@ -24,7 +24,7 @@ pub struct IgdFile {
 }
 
 impl IgdFile {
-    pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
+    pub fn from_compressed_data(compressed: CompressedData) -> Result<Self, EntroGdError> {
         let image_info = match compressed.metadata.reconstruction {
             BitDataReconstructionInfo::Image(info) => info,
             _ => {
@@ -191,7 +191,7 @@ impl Filter for SaveIgdFile {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Saving compressed data as IGD file");
-        let igd_file = IgdFile::from_compressed_data(&input)?;
+        let igd_file = IgdFile::from_compressed_data(input)?;
         igd_file.save(&self.output_path)
     }
 }
@@ -209,7 +209,7 @@ impl Filter for LoadIgdFile {
 }
 
 pub fn save_compressed_as_igd<P: AsRef<Path>>(
-    compressed: &CompressedData,
+    compressed: CompressedData,
     output_path: P,
 ) -> Result<PathBuf, EntroGdError> {
     IgdFile::from_compressed_data(compressed)?.save(output_path)

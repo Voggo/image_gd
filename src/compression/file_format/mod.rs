@@ -80,7 +80,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
         let pipeline = get_compression_pipeline();
         let compressed = pipeline.process(bit_data).unwrap();
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
 
         assert!(egd.as_bytes().len() >= 4);
         assert_eq!(&egd.as_bytes()[0..3], &MAGIC_BYTES);
@@ -110,7 +110,7 @@ mod tests {
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
         assert_eq!(loaded.metadata, compressed.metadata);
@@ -189,7 +189,7 @@ mod tests {
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
-        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let igd = IgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 
         assert_eq!(loaded.metadata.num_features(), 3);
@@ -235,7 +235,7 @@ mod tests {
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
-        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let igd = IgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 
         assert!(matches!(
@@ -265,7 +265,7 @@ mod tests {
         let bit_data = BitDataSet { data, info };
 
         let compressed = get_rle_compression_pipeline().process(bit_data).unwrap();
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
         match (&compressed.encoded_data, &loaded.encoded_data) {
@@ -308,7 +308,7 @@ mod tests {
         let compressed = get_huffman_compression_pipeline()
             .process(bit_data.clone())
             .unwrap();
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
         assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
@@ -358,7 +358,7 @@ mod tests {
         let compressed = get_huffman_compression_pipeline()
             .process(bit_data.clone())
             .unwrap();
-        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let igd = IgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 
         assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));

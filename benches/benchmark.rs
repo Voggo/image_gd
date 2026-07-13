@@ -268,7 +268,7 @@ struct CompressionSizes {
 }
 
 fn compute_sizes(compressed: &CompressedData) -> Result<CompressionSizes, EntroGdError> {
-    let igd = IgdFile::from_compressed_data(compressed)?;
+    let igd = IgdFile::from_compressed_data(compressed.clone())?;
     let total = igd.as_bytes().len() as u64;
 
     let base_table_bits = match &compressed.base_table {

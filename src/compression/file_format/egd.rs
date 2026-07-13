@@ -51,14 +51,16 @@ fn read_int_le(buf: &[u8], num_bytes: usize) -> u64 {
 
 fn write_bitvec_as_bytes(out: &mut [u8], bv: &BitVec<usize, Lsb0>, bit_len: usize) {
     let byte_len = bit_len.div_ceil(8);
+    let word_size = std::mem::size_of::<usize>();
     let words = bv.as_raw_slice();
-    let available = std::mem::size_of_val(words);
-    let copy_len = byte_len.min(available);
-    unsafe {
-        std::ptr::copy_nonoverlapping(words.as_ptr() as *const u8, out.as_mut_ptr(), copy_len);
-    }
-    for b in &mut out[copy_len..byte_len] {
-        *b = 0;
+    for (word_idx, &word) in words.iter().enumerate() {
+        let start = word_idx * word_size;
+        if start >= byte_len {
+            break;
+        }
+        let end = (start + word_size).min(byte_len);
+        let copy_len = end - start;
+        out[start..end].copy_from_slice(&word.to_ne_bytes()[..copy_len]);
     }
     if !bit_len.is_multiple_of(8) && byte_len > 0 {
         out[byte_len - 1] &= (1u8 << (bit_len % 8)) - 1;
@@ -76,8 +78,12 @@ fn read_bitvec_from_bytes(bytes: &[u8], bit_len: usize) -> BitVec<usize, Lsb0> {
     let word_size = std::mem::size_of::<usize>();
     let word_count = byte_len.div_ceil(word_size);
     let mut words = vec![0usize; word_count];
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), words.as_mut_ptr() as *mut u8, byte_len);
+    for (word_idx, word) in words.iter_mut().enumerate() {
+        let start = word_idx * word_size;
+        let end = (start + word_size).min(byte_len);
+        let mut buf = [0u8; std::mem::size_of::<usize>()];
+        buf[..end - start].copy_from_slice(&bytes[start..end]);
+        *word = usize::from_ne_bytes(buf);
     }
     let mut bv = BitVec::from_vec(words);
     bv.truncate(bit_len);
@@ -91,7 +97,7 @@ pub struct EgdFile {
 }
 
 impl EgdFile {
-    pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
+    pub fn from_compressed_data(compressed: CompressedData) -> Result<Self, EntroGdError> {
         let data_info = &compressed.metadata;
         let num_features = data_info.num_features();
         if num_features == 0 {
@@ -1093,18 +1099,8 @@ impl EgdFile {
                     read_bitvec_from_bytes(&bytes[off..off + dev_byte_len], dev_bit_len);
                 off += dev_byte_len;
 
-                let pixel_bytes = &bytes[off..];
-                let pixel_word_size = std::mem::size_of::<usize>();
-                let pixel_word_count = pixel_bytes.len().div_ceil(pixel_word_size);
-                let mut pixel_words = vec![0usize; pixel_word_count];
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        pixel_bytes.as_ptr(),
-                        pixel_words.as_mut_ptr() as *mut u8,
-                        pixel_bytes.len(),
-                    );
-                }
-                let pixel_bit_stream = BitVec::from_vec(pixel_words);
+                let pixel_bit_stream =
+                    read_bitvec_from_bytes(&bytes[off..], (bytes.len() - off) * 8);
                 off = bytes.len();
 
                 EncodedData::Huffman(HuffmanDeviationData::new(
@@ -1208,13 +1204,13 @@ impl Filter for SaveEgdFile {
     type Output = PathBuf;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let egd_file = EgdFile::from_compressed_data(&input)?;
+        let egd_file = EgdFile::from_compressed_data(input)?;
         egd_file.save(&self.output_path)
     }
 }
 
 pub fn save_compressed_as_egd<P: AsRef<Path>>(
-    compressed: &CompressedData,
+    compressed: CompressedData,
     output_path: P,
 ) -> Result<PathBuf, EntroGdError> {
     EgdFile::from_compressed_data(compressed)?.save(output_path)
