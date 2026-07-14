@@ -18,7 +18,7 @@ pub use igd::{
 mod tests {
     use super::*;
     use crate::EncodeDataOffsetRLE;
-    use crate::compression::base_selection::{BaseBitImpl, SelectBases};
+    use crate::compression::base_selection::SelectBases;
     use crate::compression::base_table::BuildBaseTable;
     use crate::compression::condensed_samples::GenCondensedSamples;
     use crate::compression::decompression::decompress_file;
@@ -35,10 +35,7 @@ mod tests {
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         Entropy {}
-            .then(GenCondensedSamples {
-                m_max: 50,
-                base_bit_impl: BaseBitImpl::Naive,
-            })
+            .then(GenCondensedSamples { m_max: 50 })
             .then(SelectBases { patience: 10 })
             .then(BuildBaseTable {})
             .then(EncodeData {})
@@ -46,10 +43,7 @@ mod tests {
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         Entropy {}
-            .then(GenCondensedSamples {
-                m_max: 100,
-                base_bit_impl: BaseBitImpl::Naive,
-            })
+            .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
             .then(EncodeDataOffsetRLE {})
@@ -58,10 +52,7 @@ mod tests {
     fn get_huffman_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData>
     {
         Entropy {}
-            .then(GenCondensedSamples {
-                m_max: 100,
-                base_bit_impl: BaseBitImpl::Naive,
-            })
+            .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
             .then(EncodeDataHuffman {})

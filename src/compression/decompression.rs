@@ -397,19 +397,37 @@ impl Filter for DecompressAnalytics {
     type Input = CompressedData;
     type Output = Option<CondensedSamples>;
 
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+    fn process(&self, mut input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Decompressing condensed samples for analytics");
+        if let BaseTable::Delta(delta) = input.base_table {
+            input.base_table = BaseTable::Raw(delta.decode_rows()?);
+        }
         Ok(decompress_analytics(&input))
     }
 }
 
 pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamples> {
     if let Some(weights) = &compressed.condensed_sample_weights {
+        let chunk_size = compressed.layout.chunk_size();
+        let variable_positions = compressed.layout.variable_base_bit_positions();
+        let constant_one_positions = compressed.layout.constant_one_bit_positions();
+
         let samples: Vec<BitVec<usize, Lsb0>> = compressed
             .base_table
             .as_raw()
             .iter()
-            .map(|(bv, _)| bv.clone())
+            .map(|(bv, _)| {
+                let mut reconstructed = bitvec![usize, Lsb0; 0; chunk_size];
+                for &pos in &constant_one_positions {
+                    reconstructed.set(pos, true);
+                }
+                for (i, &pos) in variable_positions.iter().enumerate() {
+                    if let Some(bit) = bv.get(i) {
+                        reconstructed.set(pos, *bit);
+                    }
+                }
+                reconstructed
+            })
             .collect();
         Some(CondensedSamples {
             samples,
@@ -1060,13 +1078,29 @@ mod tests {
             create_compressed_data_with_analytics(chunk_size, num_rows, num_bases, 4, 4);
 
         let result = decompress_analytics(&compressed).unwrap();
+        let variable_positions = compressed.layout.variable_base_bit_positions();
+        let constant_one_positions = compressed.layout.constant_one_bit_positions();
 
-        // Verify that each sample matches the base table
+        // Verify that each sample is full chunk_size and base bits map correctly
         for (i, sample) in result.samples.iter().enumerate() {
-            let base_table = compressed.base_table.as_raw();
-            assert_eq!(sample.len(), base_table[i].0.len());
-            for bit_idx in 0..sample.len() {
-                assert_eq!(sample[bit_idx], base_table[i].0[bit_idx]);
+            let base_row = &compressed.base_table.as_raw()[i].0;
+            assert_eq!(sample.len(), chunk_size);
+
+            // Base bits at variable positions match the base table row
+            for (j, &pos) in variable_positions.iter().enumerate() {
+                assert_eq!(sample[pos], base_row[j]);
+            }
+
+            // Constant-one bits are set
+            for &pos in &constant_one_positions {
+                assert!(sample[pos]);
+            }
+
+            // Deviation positions are false (no per-sample deviation data available)
+            for pos in 0..chunk_size {
+                if !variable_positions.contains(&pos) && !constant_one_positions.contains(&pos) {
+                    assert!(!sample[pos]);
+                }
             }
         }
     }
