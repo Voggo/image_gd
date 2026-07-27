@@ -4,78 +4,26 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug)]
 pub enum EntroGdError {
     Io(std::io::Error),
-    Csv(csv::Error),
+    Polars(polars::prelude::PolarsError),
+    DataLoad { message: String },
     Image(image::ImageError),
-    InvalidCsvConfiguration {
-        message: String,
-    },
-    MissingCsvValue {
-        row: usize,
-        column: usize,
-    },
-    ParseValue {
-        value: String,
-        row: usize,
-        column: usize,
-        source: std::num::ParseIntError,
-    },
-    ParseFloatValue {
-        value: String,
-        row: usize,
-        column: usize,
-        source: std::num::ParseFloatError,
-    },
-    BitSliceLengthMismatch {
-        expected: usize,
-        actual: usize,
-    },
-    DecompressionSampleMissing {
-        sample_idx: usize,
-    },
-    InvalidBaseId {
-        base_id: usize,
-        table_len: usize,
-    },
-    InvalidMetadata {
-        message: String,
-    },
-    InvalidFeatureSpec {
-        message: String,
-    },
+    BitSliceLengthMismatch { expected: usize, actual: usize },
+    DecompressionSampleMissing { sample_idx: usize },
+    InvalidBaseId { base_id: usize, table_len: usize },
+    InvalidMetadata { message: String },
+    InvalidFeatureSpec { message: String },
+    InvalidDataType { message: String },
 }
 
 impl Display for EntroGdError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             EntroGdError::Io(err) => write!(f, "IO error: {}", err),
-            EntroGdError::Csv(err) => write!(f, "CSV error: {}", err),
+            EntroGdError::Polars(err) => write!(f, "Polars error: {}", err),
+            EntroGdError::DataLoad { message } => {
+                write!(f, "Data load error: {}", message)
+            }
             EntroGdError::Image(err) => write!(f, "Image error: {}", err),
-            EntroGdError::InvalidCsvConfiguration { message } => {
-                write!(f, "Invalid CSV loader configuration: {}", message)
-            }
-            EntroGdError::MissingCsvValue { row, column } => {
-                write!(f, "Missing CSV value at row {}, column {}", row, column)
-            }
-            EntroGdError::ParseValue {
-                value,
-                row,
-                column,
-                source,
-            } => write!(
-                f,
-                "Failed to parse value '{}' at row {}, column {}: {}",
-                value, row, column, source
-            ),
-            EntroGdError::ParseFloatValue {
-                value,
-                row,
-                column,
-                source,
-            } => write!(
-                f,
-                "Failed to parse float value '{}' at row {}, column {}: {}",
-                value, row, column, source
-            ),
             EntroGdError::BitSliceLengthMismatch { expected, actual } => write!(
                 f,
                 "Bit slice length mismatch (expected {}, got {})",
@@ -95,6 +43,9 @@ impl Display for EntroGdError {
             EntroGdError::InvalidFeatureSpec { message } => {
                 write!(f, "Invalid feature specification: {}", message)
             }
+            EntroGdError::InvalidDataType { message } => {
+                write!(f, "Invalid data type: {}", message)
+            }
         }
     }
 }
@@ -103,10 +54,8 @@ impl Error for EntroGdError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             EntroGdError::Io(err) => Some(err),
-            EntroGdError::Csv(err) => Some(err),
+            EntroGdError::Polars(err) => Some(err),
             EntroGdError::Image(err) => Some(err),
-            EntroGdError::ParseValue { source, .. } => Some(source),
-            EntroGdError::ParseFloatValue { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -118,9 +67,9 @@ impl From<std::io::Error> for EntroGdError {
     }
 }
 
-impl From<csv::Error> for EntroGdError {
-    fn from(err: csv::Error) -> Self {
-        EntroGdError::Csv(err)
+impl From<polars::prelude::PolarsError> for EntroGdError {
+    fn from(err: polars::prelude::PolarsError) -> Self {
+        EntroGdError::Polars(err)
     }
 }
 

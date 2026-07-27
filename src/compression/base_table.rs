@@ -313,8 +313,7 @@ mod tests {
         };
 
         let features = vec![FeatureSpec {
-            data_type: FeatureDataType::UnsignedInt,
-            bits: chunk_size,
+            data_type: FeatureDataType::UInt(chunk_size as u16),
             transform: FeatureTransform::None,
         }];
 

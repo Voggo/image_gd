@@ -16,7 +16,9 @@ use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
     HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationOffsetData,
 };
-use crate::compression::preprocessor::{BitDataInfo, BitDataSet, FeatureSpec, FeatureTransform};
+use crate::compression::preprocessor::{
+    BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
+};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::utils::bits_needed_nonzero;
@@ -675,9 +677,14 @@ impl EgdFile {
                 });
             }
 
+            let data_type = if data_type == FeatureDataType::UInt(0) {
+                FeatureDataType::UInt(bits as u16)
+            } else {
+                data_type
+            };
+
             features.push(FeatureSpec {
                 data_type,
-                bits,
                 transform,
             });
 
@@ -753,7 +760,7 @@ impl EgdFile {
         })?;
         off += 8;
 
-        let chunk_size = features.iter().map(|f| f.bits).sum::<usize>();
+        let chunk_size = features.iter().map(|f| f.data_type.bits()).sum::<usize>();
         if base_bit_positions.len() > chunk_size {
             return Err(EntroGdError::InvalidMetadata {
                 message: "base bit positions exceed chunk size".to_string(),

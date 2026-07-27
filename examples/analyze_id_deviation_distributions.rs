@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use bitvec::prelude::*;
-use csv::Writer;
 use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{EntroGdError, ImageColorModel, init_logging};
@@ -225,40 +225,35 @@ fn write_frequency_csv(output_path: &Path, counts: &HashMap<u64, u64>) -> Result
     let mut sorted: Vec<(u64, u64)> = counts.iter().map(|(&k, &v)| (k, v)).collect();
     sorted.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-    let mut writer = Writer::from_path(output_path)?;
-    writer.write_record(["value", "count"])?;
+    let mut writer = BufWriter::new(std::fs::File::create(output_path)?);
+    writeln!(writer, "value,count")?;
     for (value, count) in &sorted {
-        writer.write_record([value.to_string(), count.to_string()])?;
+        writeln!(writer, "{},{}", value, count)?;
     }
     writer.flush()?;
     Ok(())
 }
 
 fn write_summary_csv(output_path: &Path, rows: &[SummaryRow]) -> Result<(), EntroGdError> {
-    let mut writer = Writer::from_path(output_path)?;
-    writer.write_record([
-        "image",
-        "num_samples",
-        "num_bases",
-        "num_unique_base_ids",
-        "base_id_entropy_bits",
-        "max_base_id_entropy_bits",
-        "num_deviation_bits",
-        "num_unique_deviations",
-        "deviation_entropy_bits",
-    ])?;
+    let mut writer = BufWriter::new(std::fs::File::create(output_path)?);
+    writeln!(
+        writer,
+        "image,num_samples,num_bases,num_unique_base_ids,base_id_entropy_bits,max_base_id_entropy_bits,num_deviation_bits,num_unique_deviations,deviation_entropy_bits"
+    )?;
     for row in rows {
-        writer.write_record([
-            row.image.clone(),
-            row.num_samples.to_string(),
-            row.num_bases.to_string(),
-            row.num_unique_base_ids.to_string(),
-            format!("{:.4}", row.base_id_entropy_bits),
-            format!("{:.4}", row.max_base_id_entropy_bits),
-            row.num_deviation_bits.to_string(),
-            row.num_unique_deviations.to_string(),
-            format!("{:.4}", row.deviation_entropy_bits),
-        ])?;
+        writeln!(
+            writer,
+            "{},{},{},{},{:.4},{:.4},{},{},{:.4}",
+            row.image,
+            row.num_samples,
+            row.num_bases,
+            row.num_unique_base_ids,
+            row.base_id_entropy_bits,
+            row.max_base_id_entropy_bits,
+            row.num_deviation_bits,
+            row.num_unique_deviations,
+            row.deviation_entropy_bits,
+        )?;
     }
     writer.flush()?;
     Ok(())

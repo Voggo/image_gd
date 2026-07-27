@@ -686,8 +686,9 @@ impl BaseBit for BaseBitHyperLogLogCount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
-    use crate::data_loader::FeatureDataType;
+    use crate::compression::preprocessor::{
+        BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
+    };
 
     fn create_test_bit_data() -> BitDataSet {
         let num_rows = 6;
@@ -711,8 +712,13 @@ mod tests {
             num_rows,
         };
 
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(bits_per_feature as u16),
+                transform: FeatureTransform::None
+            };
+            num_features
+        ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
 
         BitDataSet {

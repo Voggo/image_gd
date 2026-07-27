@@ -1,8 +1,8 @@
-use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::load_csv;
 use image_gd::prelude::*;
 use image_gd::{
-    BitDataSet, DecompressFileData, EncodedData, ImageColorModel, LoadEgdFile, SaveEgdFile,
-    SaveIgdFile, decompress_igd_to_image,
+    BitDataSet, DecompressFileData, EncodedData, ImageColorModel, LoadEgdFile, PreprocessOptions,
+    SaveEgdFile, SaveIgdFile, decompress_igd_to_image,
 };
 use std::env;
 
@@ -59,10 +59,10 @@ fn assert_chunk_data_eq(expected: &BitDataSet, actual: &BitDataSet, context: &st
 #[test]
 fn test_csv_roundtrip_compression() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
     let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
@@ -124,10 +124,10 @@ fn test_csv_roundtrip_compression() {
 #[test]
 fn test_csv_roundtrip_compression_rle() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
     let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })

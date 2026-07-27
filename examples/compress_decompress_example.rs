@@ -1,8 +1,7 @@
-use image_gd::data_loader::{CsvDataLoader, DataLoader, DataValue, FloatStorage};
 use image_gd::prelude::*;
 use image_gd::{
-    BitDataSet, EntroGdError, ScopedTimer, decode_value_from_bits, init_logging,
-    write_bitdata_as_csv,
+    EntroGdError, PreprocessOptions, ScopedTimer, init_logging, load_csv,
+    reconstruct_feature_value, write_bitdata_as_csv,
 };
 use std::env;
 use std::fs;
@@ -34,18 +33,25 @@ fn main() -> Result<(), EntroGdError> {
     let decompressed_path = parent.join(format!("{}-decompressed.csv", stem));
 
     tracing::info!("Loading CSV: {}", input.display());
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(&input_path)?;
-    let dataset = loaded.dataset;
-    let metadata = loaded.metadata;
 
-    tracing::info!(
-        "Loaded: {} rows, {} columns",
-        dataset.num_rows(),
-        dataset.num_columns()
-    );
+    let df = load_csv(input_path, true, None).map_err(|e| EntroGdError::DataLoad {
+        message: format!("failed to load CSV: {}", e),
+    })?;
 
-    let bit_data = BitDataSet::from_dataset(&dataset)?;
+    tracing::info!("Loaded: {} rows, {} columns", df.height(), df.width());
+
+    let column_names: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+
+    // let bit_data = BitDataSet::from_dataframe(df, PreprocessOptions::default(), false)?;
+    let bit_data = BuildBitDataSet {
+        options: PreprocessOptions::default(),
+        pad_rows_to_word: false,
+    }
+    .process(df)?;
     let original_size_bits = bit_data.data.total_bits();
 
     let compression_pipeline = Entropy {}
@@ -55,9 +61,8 @@ fn main() -> Result<(), EntroGdError> {
             patience: 5,
             base_bit_impl: BaseBitImpl::HyperLogLogCount,
         })
-        .then(BuildSortedBaseTable {})
-        .then(EncodeData {})
-        .then(DeltaEncodeBaseTableFixed {});
+        .then(BuildBaseTable {})
+        .then(EncodeData {});
 
     tracing::info!("Compressing...");
     let compressed = compression_pipeline.process(bit_data)?;
@@ -122,23 +127,14 @@ fn main() -> Result<(), EntroGdError> {
                 let feature_bits = &sample[feature_start..feature_end];
                 let spec = compressed_data.metadata.feature_spec(feature_idx);
 
-                let formatted = match decode_value_from_bits(feature_bits, spec) {
-                    DataValue::Unsigned(v) => v.to_string(),
-                    DataValue::Signed(v) => v.to_string(),
-                    DataValue::F32(v) => v.to_string(),
-                    DataValue::F64(v) => v.to_string(),
-                };
+                let formatted = reconstruct_feature_value(feature_bits, spec).to_string();
                 tracing::trace!("    Feature {}: {}", feature_idx, formatted);
             }
         }
     }
 
     tracing::info!("Writing CSV: {}", decompressed_path.display());
-    write_bitdata_as_csv(
-        &decompressed,
-        &decompressed_path,
-        metadata.headers.as_deref(),
-    )?;
+    write_bitdata_as_csv(&decompressed, &decompressed_path, Some(&column_names))?;
 
     tracing::info!("Done.");
     Ok(())

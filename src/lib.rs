@@ -12,20 +12,17 @@ pub use compression::{
     DecodeDeltaBaseTable, DecompressAnalytics, DecompressFileData, DecompressRandomAccessHandle,
     DeltaBaseTableData, DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, DeviationData,
     DeviationSample, EgdFile, EncodeData, EncodeDataHuffman, EncodeDataOffsetRLE, EncodedData,
-    Entropy, EntropyBitScore, EntropyScoredContext, FORMAT_VERSION, FeatureSpec, FeatureTransform,
-    FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile,
-    ImageColorModel, ImageColorSpace, ImageGroupingTransform, ImageReconstructionInfo,
-    InferFeatureSpecs, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, OpenImage, PixelGrouping,
+    Entropy, EntropyBitScore, EntropyScoredContext, FORMAT_VERSION, FeatureDataType, FeatureSpec,
+    FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
+    IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
+    ImageReconstructionInfo, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, OpenImage, PixelGrouping,
     PreEncodeContext, PreprocessOptions, RleDeviationOffsetData, SaveEgdFile, SaveIgdFile,
     SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
-    SelectBasesThreshold, calculate_entropy, decode_value_from_bits, decompress_egd_to_csv,
-    decompress_igd_to_image, load_and_decompress_egd, load_and_decompress_igd,
+    SelectBasesThreshold, calculate_entropy, decompress_egd_to_csv, decompress_igd_to_image,
+    load_and_decompress_egd, load_and_decompress_igd, reconstruct_feature_value,
     write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
 };
-pub use data_loader::{
-    ColumnData, CsvDataLoader, DataLoader, DataValue, Dataset, DatasetMetadata, FeatureDataType,
-    FloatStorage, LoadedDataset, MissingValuePolicy,
-};
+pub use data_loader::load_csv;
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
 pub use timing::ScopedTimer;
@@ -36,10 +33,10 @@ pub mod prelude {
         DecodeDeltaBaseTable, DecompressAnalytics, DecompressFileData,
         DecompressRandomAccessHandle, DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData,
         EncodeDataHuffman, EncodeDataOffsetRLE, Entropy, Filter, FilterExt, FloatScalingMode,
-        GenCondensedSamples, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
-        InferFeatureSpecs, LoadEgdFile, LoadIgdFile, OpenImage, PixelGrouping, PreprocessOptions,
-        SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesAdaptive, SelectBasesDebug,
-        SelectBasesProfileAllBits, SelectBasesThreshold,
+        GenCondensedSamples, ImageColorModel, ImageColorSpace, ImageGroupingTransform, LoadEgdFile,
+        LoadIgdFile, OpenImage, PixelGrouping, PreprocessOptions, SaveEgdFile, SaveIgdFile,
+        SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
+        SelectBasesThreshold,
     };
 }
 

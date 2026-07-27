@@ -3,14 +3,15 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use csv::Writer;
-use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::load_csv;
 use image_gd::prelude::*;
 use image_gd::{
     BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet, BuildSortedBaseTable,
-    EntroGdError, InferFeatureSpecs, PreprocessOptions,
+    EntroGdError, PreprocessOptions,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,17 +437,15 @@ fn write_delta_distribution_csv(
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut writer = Writer::from_path(output_path)?;
-    writer.write_record(["bit_len", "count", "cum_count", "cum<=len%", "cum_bits%"])?;
+    let mut writer = BufWriter::new(File::create(output_path)?);
+    writeln!(writer, "bit_len,count,cum_count,cum<=len%,cum_bits%")?;
 
     for row in rows {
-        writer.write_record([
-            row.bit_len.to_string(),
-            row.count.to_string(),
-            row.cum_count.to_string(),
-            format!("{:.2}", row.cum_len_pct),
-            format!("{:.2}", row.cum_bits_pct),
-        ])?;
+        writeln!(
+            writer,
+            "{},{},{},{:.2},{:.2}",
+            row.bit_len, row.count, row.cum_count, row.cum_len_pct, row.cum_bits_pct
+        )?;
     }
 
     writer.flush()?;
@@ -459,14 +458,8 @@ fn load_bit_data(input_path: &Path) -> Result<BitDataSet, EntroGdError> {
             .then(image_build_options())
             .process(input_path.to_path_buf())
     } else {
-        let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-        let loaded = loader.load(input_path)?;
-
-        InferFeatureSpecs {
-            options: PreprocessOptions::default(),
-        }
-        .then(BuildBitDataSet::default())
-        .process(loaded.dataset)
+        let df = load_csv(input_path, true, None)?;
+        BuildBitDataSet::default().process(df)
     }
 }
 

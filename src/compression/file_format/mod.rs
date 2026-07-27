@@ -26,10 +26,10 @@ mod tests {
     use crate::compression::encoding::{EncodeData, EncodeDataHuffman};
     use crate::compression::entropy::Entropy;
     use crate::compression::preprocessor::{
-        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
-        ImageGroupingTransform, ImageReconstructionInfo, PixelGrouping,
+        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureDataType, FeatureSpec,
+        FeatureTransform, ImageColorModel, ImageGroupingTransform, ImageReconstructionInfo,
+        PixelGrouping,
     };
-    use crate::data_loader::FeatureDataType;
     use crate::filter_pipeline::{Filter, FilterExt};
     use bitvec::prelude::*;
 
@@ -66,7 +66,13 @@ mod tests {
             stride: 64,
             chunk_size: 64,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(8),
+                transform: FeatureTransform::None
+            };
+            8
+        ];
         let info = BitDataInfo::new(features, 64).unwrap();
         let bit_data = BitDataSet { data, info };
         let pipeline = get_compression_pipeline();
@@ -93,8 +99,14 @@ mod tests {
             chunk_size: 64,
         };
         let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 32),
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 32),
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(32),
+                transform: FeatureTransform::None,
+            },
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(32),
+                transform: FeatureTransform::None,
+            },
         ];
         let info = BitDataInfo::new(features, 320).unwrap();
         let bit_data = BitDataSet { data, info };
@@ -161,7 +173,13 @@ mod tests {
             stride: 24,
             chunk_size: 24,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 3];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(8),
+                transform: FeatureTransform::None
+            };
+            3
+        ];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
             96,
@@ -207,7 +225,13 @@ mod tests {
             stride: 111,
             chunk_size: 111,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 37); 3];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(37),
+                transform: FeatureTransform::None
+            };
+            3
+        ];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
             111,
@@ -251,7 +275,13 @@ mod tests {
             stride: 64,
             chunk_size: 64,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(8),
+                transform: FeatureTransform::None
+            };
+            8
+        ];
         let info = BitDataInfo::new(features, 512).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -292,7 +322,10 @@ mod tests {
             stride: 8,
             chunk_size: 8,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UInt(8),
+            transform: FeatureTransform::None,
+        }];
         let info = BitDataInfo::new(features, 32).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -329,7 +362,13 @@ mod tests {
             stride: 12,
             chunk_size: 12,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 4); 3];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(4),
+                transform: FeatureTransform::None
+            };
+            3
+        ];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
             24,

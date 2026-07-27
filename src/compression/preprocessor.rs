@@ -1,10 +1,10 @@
+use bitvec::field::BitField;
 use bitvec::prelude::*;
+use polars::prelude::*;
 use std::fmt::{self, Display};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace};
 
-pub use crate::data_loader::FeatureDataType;
-use crate::data_loader::{DataLoader, DataValue, Dataset, DatasetMetadata};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -45,17 +45,91 @@ impl Display for PixelGrouping {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tabular ingestion
+// ---------------------------------------------------------------------------
+
+/// Where a tabular [`DataFrame`] comes from. Every variant just needs to be
+/// able to produce a `DataFrame`; everything downstream (transforms, bit
+/// packing) only ever operates on that `DataFrame`, so adding a new source
+/// format (Parquet, JSON, Arrow IPC, ...) later is purely additive.
+#[derive(Debug, Clone)]
+pub enum TabularSource {
+    Csv { path: PathBuf },
+}
+
+impl TabularSource {
+    pub fn csv(path: impl Into<PathBuf>) -> Self {
+        TabularSource::Csv { path: path.into() }
+    }
+
+    pub fn load(&self) -> Result<DataFrame, EntroGdError> {
+        match self {
+            TabularSource::Csv { path } => load_csv(path),
+        }
+    }
+}
+
+/// Load a CSV file into a Polars [`DataFrame`] using Polars' own reader
+/// rather than a hand-rolled parser, so column typing, quoting, and encoding
+/// edge cases are handled for us.
+pub fn load_csv<P: AsRef<Path>>(path: P) -> Result<DataFrame, EntroGdError> {
+    let path = path.as_ref();
+    trace!("Loading CSV dataset from {}", path.display());
+
+    let df = CsvReadOptions::default()
+        .with_has_header(true)
+        .try_into_reader_with_file_path(Some(path.to_path_buf()))
+        .map_err(|e| EntroGdError::InvalidDataType {
+            message: format!("failed to open CSV '{}': {}", path.display(), e),
+        })?
+        .finish()
+        .map_err(|e| EntroGdError::InvalidDataType {
+            message: format!("failed to parse CSV '{}': {}", path.display(), e),
+        })?;
+
+    info!(
+        "Loaded CSV '{}': {} row(s) x {} column(s)",
+        path.display(),
+        df.height(),
+        df.width()
+    );
+
+    Ok(df)
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessing options
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatScalingMode {
+    /// Store the raw IEEE-754 bits of the original float, unmodified.
     Disabled,
+    /// Scale to an integer, then bias by a fixed, data-independent offset
+    /// (derived from the integer type's range) instead of scanning the
+    /// column for its true minimum. Faster, but does not shrink the bit
+    /// width beyond the scaled type's natural size.
     ScaledSignedInt,
+    /// Scale to an integer, then zero-normalize using the column's actual
+    /// minimum so the value range fits the smallest possible unsigned
+    /// integer. This is the default: best compression, small extra scan.
     ScaledOffsetSignedInt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreprocessOptions {
+    /// How (or whether) floating point columns are converted to integers.
     pub float_scaling: FloatScalingMode,
-    pub max_decimal_scale: u8,
+    /// Number of decimal places to preserve when scaling floats to
+    /// integers, e.g. `decimal_scale = 2` multiplies by 100 before
+    /// rounding. This is a fixed, user-supplied precision rather than
+    /// something searched for per-column, which keeps preprocessing fast.
+    pub decimal_scale: u8,
+    /// Whether integer columns (signed or unsigned) are zero-normalized
+    /// against their actual observed minimum. When disabled, signed
+    /// columns still have to become unsigned to be bit-packed, but do so
+    /// via a fixed type-range bias instead of a data scan.
     pub integer_zero_normalization: bool,
 }
 
@@ -63,52 +137,35 @@ impl Default for PreprocessOptions {
     fn default() -> Self {
         PreprocessOptions {
             float_scaling: FloatScalingMode::ScaledOffsetSignedInt,
-            max_decimal_scale: MAX_DECIMAL_SCALE,
+            decimal_scale: MAX_DECIMAL_SCALE,
             integer_zero_normalization: true,
         }
     }
 }
 
-/// Filter for inferring feature specifications from a tabular dataset.
-pub struct InferFeatureSpecs {
-    pub options: PreprocessOptions,
-}
-
-impl Filter for InferFeatureSpecs {
-    type Input = Dataset;
-    type Output = (Dataset, Vec<FeatureSpec>);
-
-    fn process(&self, dataset: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let specs = infer_feature_specs(&dataset, self.options);
-        Ok((dataset, specs))
-    }
-}
-
-/// Filter for building BitDataSet from a Dataset with feature specifications.
+/// Filter for building a [`BitDataSet`] from a [`DataFrame`].
 #[derive(Debug, Clone, Copy)]
 pub struct BuildBitDataSet {
+    pub options: PreprocessOptions,
     pub pad_rows_to_word: bool,
 }
 
 impl Default for BuildBitDataSet {
     fn default() -> Self {
         Self {
+            options: PreprocessOptions::default(),
             pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
         }
     }
 }
 
 impl Filter for BuildBitDataSet {
-    type Input = (Dataset, Vec<FeatureSpec>);
+    type Input = DataFrame;
     type Output = BitDataSet;
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let (dataset, features) = input;
-        BitDataSet::from_dataset_with_schema_and_row_padding(
-            &dataset,
-            features,
-            self.pad_rows_to_word,
-        )
+        let _timer = ScopedTimer::info("Building BitDataSet");
+        BitDataSet::from_dataframe(input, self.options, self.pad_rows_to_word)
     }
 }
 
@@ -120,362 +177,112 @@ pub(crate) fn aligned_stride(chunk_size: usize, pad_rows_to_word: bool) -> usize
     }
 }
 
-#[inline]
-pub(crate) fn append_row_padding(stream: &mut BitVec<usize, Lsb0>, padding_bits: usize) {
-    stream.resize(stream.len() + padding_bits, false);
-}
+// ---------------------------------------------------------------------------
+// Feature schema / metadata
+// ---------------------------------------------------------------------------
 
-fn infer_feature_specs(dataset: &Dataset, options: PreprocessOptions) -> Vec<FeatureSpec> {
-    let num_features = dataset.num_columns();
-    let mut features = Vec::with_capacity(num_features);
-    for feature_idx in 0..num_features {
-        let data_type = dataset
-            .column_type(feature_idx)
-            .expect("feature index should be in bounds while inferring schema");
-        let spec = match data_type {
-            FeatureDataType::F32 | FeatureDataType::F64 => {
-                infer_float_feature_spec(dataset, feature_idx, data_type, options)
-            }
-            FeatureDataType::SignedInt | FeatureDataType::UnsignedInt => {
-                infer_integer_feature_spec(dataset, feature_idx, data_type, options)
-            }
-        };
-        debug!(
-            "Inferred feature {} schema: type={:?}, bits={}, transform={:?}",
-            feature_idx, spec.data_type, spec.bits, spec.transform
-        );
-        features.push(spec);
-    }
-    features
-}
-
-fn infer_float_feature_spec(
-    dataset: &Dataset,
-    column: usize,
-    data_type: FeatureDataType,
-    options: PreprocessOptions,
-) -> FeatureSpec {
-    let fallback_bits = match data_type {
-        FeatureDataType::F32 => 32,
-        FeatureDataType::F64 => 64,
-        _ => unreachable!("infer_float_feature_spec called with non-float type"),
-    };
-
-    if matches!(options.float_scaling, FloatScalingMode::Disabled) {
-        return FeatureSpec::new(data_type, fallback_bits);
-    }
-
-    debug!(
-        "Inferring float feature spec for column {} with type {:?} and fallback_bits={}",
-        column, data_type, fallback_bits
-    );
-
-    let mut best_scale: Option<u8> = None;
-    for decimal_scale in 0..=options.max_decimal_scale.min(MAX_DECIMAL_SCALE) {
-        trace!(
-            "Trying decimal_scale={} for float column {}",
-            decimal_scale, column
-        );
-        if scaled_int_range(dataset, column, data_type, decimal_scale).is_some() {
-            best_scale = Some(decimal_scale);
-            break;
-        }
-    }
-
-    if let Some(decimal_scale) = best_scale {
-        let (min_value, max_value) = scaled_int_range(dataset, column, data_type, decimal_scale)
-            .expect("scale should have a valid integer range");
-        match options.float_scaling {
-            FloatScalingMode::ScaledOffsetSignedInt => {
-                let shifted_max = shifted_max_signed(min_value, max_value);
-                let bits = storage_bucket_bits(shifted_max);
-                debug!(
-                    "Selected scaled+offset transform for column {}: decimal_scale={}, min={}, max={}, shifted_max={}, bits={}",
-                    column, decimal_scale, min_value, max_value, shifted_max, bits
-                );
-                FeatureSpec {
-                    data_type,
-                    bits,
-                    transform: FeatureTransform::ScaledOffsetSignedInt {
-                        decimal_scale,
-                        min_value,
-                    },
-                }
-            }
-            FloatScalingMode::ScaledSignedInt => {
-                let bits = signed_storage_bucket_bits(min_value, max_value);
-                debug!(
-                    "Selected scaled signed transform for column {}: decimal_scale={}, min={}, max={}, bits={}",
-                    column, decimal_scale, min_value, max_value, bits
-                );
-                FeatureSpec {
-                    data_type,
-                    bits,
-                    transform: FeatureTransform::ScaledSignedInt { decimal_scale },
-                }
-            }
-            FloatScalingMode::Disabled => FeatureSpec::new(data_type, fallback_bits),
-        }
-    } else {
-        debug!(
-            "No lossless scaled-int transform found for column {}; using raw float bits",
-            column
-        );
-        FeatureSpec::new(data_type, fallback_bits)
-    }
-}
-
-fn infer_integer_feature_spec(
-    dataset: &Dataset,
-    column: usize,
-    data_type: FeatureDataType,
-    options: PreprocessOptions,
-) -> FeatureSpec {
-    match data_type {
-        FeatureDataType::SignedInt => {
-            let mut min_value = i64::MAX;
-            let mut max_value = i64::MIN;
-
-            for row in 0..dataset.num_rows() {
-                let value = match dataset
-                    .value_at(row, column)
-                    .expect("row/column should be valid")
-                {
-                    DataValue::Signed(v) => v,
-                    _ => unreachable!("signed column type mismatch while inferring schema"),
-                };
-                min_value = min_value.min(value);
-                max_value = max_value.max(value);
-            }
-
-            if dataset.num_rows() == 0 {
-                min_value = 0;
-                max_value = 0;
-            }
-
-            if options.integer_zero_normalization {
-                let shifted_max = shifted_max_signed(min_value, max_value);
-                let bits = storage_bucket_bits(shifted_max);
-
-                debug!(
-                    "Inferred signed integer column {} (offset): min={}, max={}, shifted_max={}, bits={}",
-                    column, min_value, max_value, shifted_max, bits
-                );
-
-                FeatureSpec {
-                    data_type,
-                    bits,
-                    transform: FeatureTransform::OffsetSignedInt { min_value },
-                }
-            } else {
-                let bits = signed_storage_bucket_bits(min_value, max_value);
-                debug!(
-                    "Inferred signed integer column {} (no offset): min={}, max={}, bits={}",
-                    column, min_value, max_value, bits
-                );
-                FeatureSpec {
-                    data_type,
-                    bits,
-                    transform: FeatureTransform::None,
-                }
-            }
-        }
-        FeatureDataType::UnsignedInt => {
-            let mut min_value = u64::MAX;
-            let mut max_value = u64::MIN;
-
-            for row in 0..dataset.num_rows() {
-                let value = match dataset
-                    .value_at(row, column)
-                    .expect("row/column should be valid")
-                {
-                    DataValue::Unsigned(v) => v,
-                    _ => unreachable!("unsigned column type mismatch while inferring schema"),
-                };
-                min_value = min_value.min(value);
-                max_value = max_value.max(value);
-            }
-
-            if dataset.num_rows() == 0 {
-                min_value = 0;
-                max_value = 0;
-            }
-
-            if options.integer_zero_normalization {
-                let shifted_max = max_value.saturating_sub(min_value);
-                let bits = storage_bucket_bits(shifted_max);
-
-                debug!(
-                    "Inferred unsigned integer column {} (offset): min={}, max={}, shifted_max={}, bits={}",
-                    column, min_value, max_value, shifted_max, bits
-                );
-
-                FeatureSpec {
-                    data_type,
-                    bits,
-                    transform: FeatureTransform::OffsetUnsignedInt { min_value },
-                }
-            } else {
-                let bits = storage_bucket_bits(max_value);
-                debug!(
-                    "Inferred unsigned integer column {} (no offset): min={}, max={}, bits={}",
-                    column, min_value, max_value, bits
-                );
-                FeatureSpec {
-                    data_type,
-                    bits,
-                    transform: FeatureTransform::None,
-                }
-            }
-        }
-        _ => unreachable!("infer_integer_feature_spec called with non-integer type"),
-    }
-}
-
-fn shifted_max_signed(min_value: i64, max_value: i64) -> u64 {
-    ((max_value as i128) - (min_value as i128)) as u64
-}
-
-fn storage_bucket_bits(max_value: u64) -> usize {
-    if max_value <= u8::MAX as u64 {
-        8
-    } else if max_value <= u16::MAX as u64 {
-        16
-    } else if max_value <= u32::MAX as u64 {
-        32
-    } else {
-        64
-    }
-}
-
-fn signed_storage_bucket_bits(min_value: i64, max_value: i64) -> usize {
-    if min_value >= i8::MIN as i64 && max_value <= i8::MAX as i64 {
-        8
-    } else if min_value >= i16::MIN as i64 && max_value <= i16::MAX as i64 {
-        16
-    } else if min_value >= i32::MIN as i64 && max_value <= i32::MAX as i64 {
-        32
-    } else {
-        64
-    }
-}
-
-fn scaled_int_range(
-    dataset: &Dataset,
-    column: usize,
-    data_type: FeatureDataType,
-    decimal_scale: u8,
-) -> Option<(i64, i64)> {
-    if dataset.num_rows() == 0 {
-        trace!(
-            "Column {} has zero rows, treating scaled range as [0,0]",
-            column
-        );
-        return Some((0, 0));
-    }
-
-    let factor = 10f64.powi(decimal_scale as i32);
-    if !matches!(data_type, FeatureDataType::F32 | FeatureDataType::F64) {
-        trace!(
-            "Column {} has non-float type {:?}; cannot scale",
-            column, data_type
-        );
-        return None;
-    }
-
-    let mut min_value = i64::MAX;
-    let mut max_value = i64::MIN;
-
-    for row in 0..dataset.num_rows() {
-        let value = match dataset
-            .value_at(row, column)
-            .expect("row/column should be valid")
-        {
-            DataValue::F32(v) => v as f64,
-            DataValue::F64(v) => v,
-            _ => {
-                trace!(
-                    "Column {} row {} type mismatch while computing scaled range",
-                    column, row
-                );
-                return None;
-            }
-        };
-        if !value.is_finite() {
-            trace!(
-                "Column {} row {} is non-finite ({}), cannot apply scaling",
-                column, row, value
-            );
-            return None;
-        }
-
-        let scaled = value * factor;
-        let rounded = scaled.round();
-        if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
-            trace!(
-                "Column {} row {} overflows i64 after scaling (value={}, scale={})",
-                column, row, value, decimal_scale
-            );
-            return None;
-        }
-
-        let reconstructed_ok = match data_type {
-            FeatureDataType::F32 => {
-                let original = value as f32;
-                let reconstructed = (rounded / factor) as f32;
-                reconstructed.to_bits() == original.to_bits()
-            }
-            FeatureDataType::F64 => {
-                let original = value;
-                let reconstructed = rounded / factor;
-                reconstructed.to_bits() == original.to_bits()
-            }
-            _ => false,
-        };
-        if !reconstructed_ok {
-            trace!(
-                "Column {} row {} failed lossless reconstruction at scale {}",
-                column, row, decimal_scale
-            );
-            return None;
-        }
-
-        let int_value = rounded as i64;
-        min_value = min_value.min(int_value);
-        max_value = max_value.max(int_value);
-    }
-
-    trace!(
-        "Column {} scale {} accepted with integer range [{}, {}]",
-        column, decimal_scale, min_value, max_value
-    );
-
-    Some((min_value, max_value))
-}
-
-/// Optional transform metadata used for a feature.
+/// Transform metadata used to recover the original value of a feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeatureTransform {
+    /// Stored verbatim (or, for floats, as raw IEEE-754 bits).
     None,
+    /// Float scaled by `10^decimal_scale`, then biased by a fixed,
+    /// data-independent offset (see [`FloatScalingMode::ScaledSignedInt`]).
     ScaledSignedInt { decimal_scale: u8 },
+    /// Signed integer, zero-normalized by subtracting `min_value`
+    /// (`min_value` may itself be negative).
     OffsetSignedInt { min_value: i64 },
+    /// Unsigned integer, zero-normalized by subtracting `min_value`.
     OffsetUnsignedInt { min_value: u64 },
+    /// Float scaled by `10^decimal_scale`, then zero-normalized against the
+    /// column's actual (scaled) minimum.
     ScaledOffsetSignedInt { decimal_scale: u8, min_value: i64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureDataType {
+    Float16,
+    Float32,
+    Float64,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    UInt(u16),
+}
+
+impl TryFrom<DataType> for FeatureDataType {
+    type Error = EntroGdError;
+
+    fn try_from(data_type: DataType) -> Result<Self, Self::Error> {
+        match data_type {
+            DataType::Float16 => Ok(FeatureDataType::Float16),
+            DataType::Float32 => Ok(FeatureDataType::Float32),
+            DataType::Float64 => Ok(FeatureDataType::Float64),
+            DataType::Int8 => Ok(FeatureDataType::Int8),
+            DataType::Int16 => Ok(FeatureDataType::Int16),
+            DataType::Int32 => Ok(FeatureDataType::Int32),
+            DataType::Int64 => Ok(FeatureDataType::Int64),
+            DataType::UInt8 => Ok(FeatureDataType::UInt8),
+            DataType::UInt16 => Ok(FeatureDataType::UInt16),
+            DataType::UInt32 => Ok(FeatureDataType::UInt32),
+            DataType::UInt64 => Ok(FeatureDataType::UInt64),
+            other => Err(EntroGdError::InvalidDataType {
+                message: format!("data type {:?} is not yet supported", other),
+            }),
+        }
+    }
+}
+
+impl FeatureDataType {
+    pub fn bits(&self) -> usize {
+        match self {
+            FeatureDataType::Float16 => 16,
+            FeatureDataType::Float32 => 32,
+            FeatureDataType::Float64 => 64,
+            FeatureDataType::Int8 => 8,
+            FeatureDataType::Int16 => 16,
+            FeatureDataType::Int32 => 32,
+            FeatureDataType::Int64 => 64,
+            FeatureDataType::UInt8 => 8,
+            FeatureDataType::UInt16 => 16,
+            FeatureDataType::UInt32 => 32,
+            FeatureDataType::UInt64 => 64,
+            FeatureDataType::UInt(bits) => *bits as usize,
+        }
+    }
+
+    /// Smallest unsigned integer type that can hold every value in
+    /// `0..=max_value`.
+    fn smallest_unsigned_for(max_value: u64) -> FeatureDataType {
+        if max_value <= u8::MAX as u64 {
+            FeatureDataType::UInt8
+        } else if max_value <= u16::MAX as u64 {
+            FeatureDataType::UInt16
+        } else if max_value <= u32::MAX as u64 {
+            FeatureDataType::UInt32
+        } else {
+            let bits = usize::BITS as usize - max_value.leading_zeros() as usize;
+            FeatureDataType::UInt(bits.max(1) as u16)
+        }
+    }
 }
 
 /// Per-feature schema entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeatureSpec {
     pub data_type: FeatureDataType,
-    pub bits: usize,
     pub transform: FeatureTransform,
 }
 
 impl FeatureSpec {
-    pub fn new(data_type: FeatureDataType, bits: usize) -> Self {
+    pub fn new(data_type: FeatureDataType) -> Self {
         FeatureSpec {
             data_type,
-            bits,
             transform: FeatureTransform::None,
         }
     }
@@ -492,84 +299,6 @@ pub struct BitDataCompressionInfo {
     feature_offsets: Vec<usize>,
     chunk_size: usize,
     row_stride_bits: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageGroupingTransform {
-    /// Store grouped channel bytes directly.
-    Raw = 0,
-    /// Store the first byte, then zig-zag encoded residuals relative to it.
-    ForFirstPixel = 1,
-    /// Store the minimum byte, then zig-zag encoded residuals relative to it.
-    ForMin = 2,
-}
-
-impl ImageGroupingTransform {
-    pub fn as_u8(self) -> u8 {
-        self as u8
-    }
-
-    pub fn from_u8(value: u8) -> Result<Self, EntroGdError> {
-        match value {
-            0 => Ok(Self::Raw),
-            1 => Ok(Self::ForFirstPixel),
-            2 => Ok(Self::ForMin),
-            _ => Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "unsupported image grouping transform {} (expected 0, 1, or 2)",
-                    value
-                ),
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageColorModel {
-    /// Store channels as RGB(A).
-    Rgb = 0,
-    /// Store channels as YCoCg(A), where Co/Cg are biased into byte range.
-    YCoCg = 1,
-    /// Store channels as reversible YCoCg-R(A), where Co/Cg are wrapped to 8-bit and biased.
-    YCoCgR = 2,
-}
-
-impl ImageColorModel {
-    pub fn as_u8(self) -> u8 {
-        self as u8
-    }
-
-    pub fn from_u8(value: u8) -> Result<Self, EntroGdError> {
-        match value {
-            0 => Ok(Self::Rgb),
-            1 => Ok(Self::YCoCg),
-            2 => Ok(Self::YCoCgR),
-            _ => Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "unsupported image color model {} (expected 0, 1, or 2)",
-                    value
-                ),
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImageReconstructionInfo {
-    pub width: u32,
-    pub height: u32,
-    pub channels: u8,
-    pub color_model: ImageColorModel,
-    pub pixel_grouping: PixelGrouping,
-    pub grouping_transform: ImageGroupingTransform,
-    /// 0 = sRGB + linear alpha, 1 = all linear
-    pub colorspace: u8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BitDataReconstructionInfo {
-    Tabular,
-    Image(ImageReconstructionInfo),
 }
 
 /// High-level metadata describing a bit-packed dataset.
@@ -609,86 +338,9 @@ impl BitDataInfo {
 
         let mut offsets = Vec::with_capacity(features.len());
         let mut running = 0usize;
-        for (idx, spec) in features.iter().enumerate() {
-            trace!(
-                "Feature spec {} => type={:?}, bits={}, transform={:?}, offset={}",
-                idx, spec.data_type, spec.bits, spec.transform, running
-            );
-            if spec.bits == 0 {
-                return Err(EntroGdError::InvalidFeatureSpec {
-                    message: "feature bits must be > 0".to_string(),
-                });
-            }
-            match spec.data_type {
-                FeatureDataType::F32 => match spec.transform {
-                    FeatureTransform::None if spec.bits != 32 => {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message: "f32 features without transform must use 32 bits".to_string(),
-                        });
-                    }
-                    FeatureTransform::ScaledSignedInt { .. }
-                    | FeatureTransform::ScaledOffsetSignedInt { .. }
-                        if spec.bits > 64 =>
-                    {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message: "scaled f32 features must use <= 64 bits".to_string(),
-                        });
-                    }
-                    FeatureTransform::OffsetSignedInt { .. }
-                    | FeatureTransform::OffsetUnsignedInt { .. } => {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message: "f32 features cannot use integer offset transforms"
-                                .to_string(),
-                        });
-                    }
-                    _ => {}
-                },
-                FeatureDataType::F64 => match spec.transform {
-                    FeatureTransform::None if spec.bits != 64 => {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message: "f64 features without transform must use 64 bits".to_string(),
-                        });
-                    }
-                    FeatureTransform::ScaledSignedInt { .. }
-                    | FeatureTransform::ScaledOffsetSignedInt { .. }
-                        if spec.bits > 64 =>
-                    {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message: "scaled f64 features must use <= 64 bits".to_string(),
-                        });
-                    }
-                    FeatureTransform::OffsetSignedInt { .. }
-                    | FeatureTransform::OffsetUnsignedInt { .. } => {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message: "f64 features cannot use integer offset transforms"
-                                .to_string(),
-                        });
-                    }
-                    _ => {}
-                },
-                FeatureDataType::SignedInt => match spec.transform {
-                    FeatureTransform::None | FeatureTransform::OffsetSignedInt { .. } => {}
-                    _ => {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message:
-                                "signed integer features can only use signed offset transforms"
-                                    .to_string(),
-                        });
-                    }
-                },
-                FeatureDataType::UnsignedInt => match spec.transform {
-                    FeatureTransform::None | FeatureTransform::OffsetUnsignedInt { .. } => {}
-                    _ => {
-                        return Err(EntroGdError::InvalidFeatureSpec {
-                            message:
-                                "unsigned integer features can only use unsigned offset transforms"
-                                    .to_string(),
-                        });
-                    }
-                },
-            }
+        for spec in features.iter() {
             offsets.push(running);
-            running += spec.bits;
+            running += spec.data_type.bits();
         }
 
         let compression = BitDataCompressionInfo {
@@ -762,7 +414,7 @@ impl BitDataInfo {
     }
 
     pub fn feature_bits(&self, feature_idx: usize) -> usize {
-        self.compression.features[feature_idx].bits
+        self.compression.features[feature_idx].data_type.bits()
     }
 
     pub fn feature_offset(&self, feature_idx: usize) -> usize {
@@ -888,6 +540,12 @@ impl BitData {
     }
 }
 
+pub(crate) fn append_row_padding(data: &mut BitVec<usize, Lsb0>, padding_bits: usize) {
+    if padding_bits > 0 {
+        data.resize(data.len() + padding_bits, false);
+    }
+}
+
 /// Combines BitData with its metadata for algorithms that need both.
 #[derive(Debug, Clone)]
 pub struct BitDataSet {
@@ -896,196 +554,93 @@ pub struct BitDataSet {
 }
 
 impl BitDataSet {
-    /// Create BitDataSet from a Dataset using column data types to derive the schema.
-    pub fn from_dataset(dataset: &Dataset) -> Result<Self, EntroGdError> {
-        Self::from_dataset_with_options_and_row_padding(
-            dataset,
-            PreprocessOptions::default(),
-            DEFAULT_ALIGN_ROWS_TO_WORD,
-        )
-    }
-
-    /// Create BitDataSet from a Dataset with configurable row/chunk padding behavior.
-    pub fn from_dataset_with_row_padding(
-        dataset: &Dataset,
-        pad_rows_to_word: bool,
-    ) -> Result<Self, EntroGdError> {
-        Self::from_dataset_with_options_and_row_padding(
-            dataset,
-            PreprocessOptions::default(),
-            pad_rows_to_word,
-        )
-    }
-
-    /// Create BitDataSet from a Dataset using configurable preprocessing options.
-    pub fn from_dataset_with_options(
-        dataset: &Dataset,
-        options: PreprocessOptions,
-    ) -> Result<Self, EntroGdError> {
-        Self::from_dataset_with_options_and_row_padding(
-            dataset,
-            options,
-            DEFAULT_ALIGN_ROWS_TO_WORD,
-        )
-    }
-
-    /// Create BitDataSet from a Dataset using configurable preprocessing options and row/chunk padding behavior.
-    pub fn from_dataset_with_options_and_row_padding(
-        dataset: &Dataset,
+    /// Build a [`BitDataSet`] directly from a [`TabularSource`] (loads then transforms).
+    pub fn from_source(
+        source: &TabularSource,
         options: PreprocessOptions,
         pad_rows_to_word: bool,
     ) -> Result<Self, EntroGdError> {
-        let _timer = ScopedTimer::info("Converting Dataset to BitDataSet");
-        let num_features = dataset.num_columns();
-        info!(
-            rows = dataset.num_rows(),
-            columns = num_features,
-            "starting dataset preprocessing"
-        );
-        let features = infer_feature_specs(dataset, options);
-        Self::from_dataset_with_schema_and_row_padding(dataset, features, pad_rows_to_word)
+        let dataframe = source.load()?;
+        Self::from_dataframe(dataframe, options, pad_rows_to_word)
     }
 
-    /// Load data via a DataLoader and build BitDataSet using column data types.
-    pub fn from_loader<L: DataLoader, P: AsRef<Path>>(
-        loader: &L,
-        path: P,
-    ) -> Result<(Self, DatasetMetadata), EntroGdError> {
-        info!(path = %path.as_ref().display(), "loading dataset from path");
-        let loaded = loader.load(path)?;
-        debug!(
-            rows = loaded.dataset.num_rows(),
-            columns = loaded.dataset.num_columns(),
-            "loaded dataset metadata"
-        );
-        let bit_data = Self::from_dataset(&loaded.dataset)?;
-        Ok((bit_data, loaded.metadata))
-    }
-
-    /// Load data via a DataLoader and build BitDataSet using a provided schema.
-    pub fn from_loader_with_schema<L: DataLoader, P: AsRef<Path>>(
-        loader: &L,
-        path: P,
-        features: Vec<FeatureSpec>,
-    ) -> Result<(Self, DatasetMetadata), EntroGdError> {
-        info!(
-            path = %path.as_ref().display(),
-            schema_features = features.len(),
-            "loading dataset from path with user-provided schema"
-        );
-        let loaded = loader.load(path)?;
-        debug!(
-            rows = loaded.dataset.num_rows(),
-            columns = loaded.dataset.num_columns(),
-            "loaded dataset metadata"
-        );
-        let bit_data = Self::from_dataset_with_schema(&loaded.dataset, features)?;
-        Ok((bit_data, loaded.metadata))
-    }
-
-    /// Create BitDataSet from a Dataset using per-feature schema.
-    /// This is the core method used by tabular preprocessing.
-    pub fn from_dataset_with_schema(
-        dataset: &Dataset,
-        features: Vec<FeatureSpec>,
-    ) -> Result<Self, EntroGdError> {
-        Self::from_dataset_with_schema_and_row_padding(
-            dataset,
-            features,
-            DEFAULT_ALIGN_ROWS_TO_WORD,
-        )
-    }
-
-    /// Create BitDataSet from a Dataset using per-feature schema and configurable row/chunk padding behavior.
-    pub fn from_dataset_with_schema_and_row_padding(
-        dataset: &Dataset,
-        features: Vec<FeatureSpec>,
+    /// Create a `BitDataSet` from a `DataFrame`:
+    ///   1. Transform every column (zero-normalize integers, scale + zero-normalize
+    ///      floats) and pick the smallest unsigned integer type that fits it.
+    ///   2. Preallocate the destination bit buffer to its final size
+    ///      (`row_stride_bits * num_rows`) up front.
+    ///   3. Fill the buffer one column (feature) at a time, which keeps memory
+    ///      access to the source data sequential even though writes into the
+    ///      row-major bit buffer are strided.
+    pub fn from_dataframe(
+        dataframe: DataFrame,
+        options: PreprocessOptions,
         pad_rows_to_word: bool,
     ) -> Result<Self, EntroGdError> {
-        let num_features = dataset.num_columns();
-        debug!(
-            rows = dataset.num_rows(),
-            columns = num_features,
-            schema_features = features.len(),
-            "building BitDataSet with explicit schema"
-        );
-        if features.len() != num_features {
+        let num_rows = dataframe.height();
+        if num_rows == 0 {
             return Err(EntroGdError::InvalidFeatureSpec {
-                message: format!(
-                    "feature spec count {} does not match dataset columns {}",
-                    features.len(),
-                    num_features
-                ),
+                message: "cannot build a BitDataSet from an empty dataframe".to_string(),
             });
         }
 
-        for (idx, spec) in features.iter().enumerate() {
-            let col_type =
-                dataset
-                    .column_type(idx)
-                    .ok_or_else(|| EntroGdError::InvalidFeatureSpec {
-                        message: format!("dataset column {} is missing", idx),
-                    })?;
-            debug!(
-                feature_idx = idx,
-                expected_column_type = ?col_type,
-                spec_type = ?spec.data_type,
-                bits = spec.bits,
-                transform = ?spec.transform,
-                "loaded feature spec"
-            );
-            if col_type != spec.data_type {
-                return Err(EntroGdError::InvalidFeatureSpec {
-                    message: format!(
-                        "feature {} type {:?} does not match dataset column type {:?}",
-                        idx, spec.data_type, col_type
-                    ),
-                });
-            }
+        let columns = dataframe.columns();
+        if columns.is_empty() {
+            return Err(EntroGdError::InvalidFeatureSpec {
+                message: "dataframe has no columns".to_string(),
+            });
         }
-        let info = BitDataInfo::new(features, 0)?;
-        let chunk_size = info.chunk_size();
-        let stride = aligned_stride(chunk_size, pad_rows_to_word);
-        let num_rows = dataset.num_rows();
-        let total_bits = stride * num_rows;
-        let row_padding_bits = stride.saturating_sub(chunk_size);
 
-        debug!(
-            chunk_size_bits = chunk_size,
-            rows = num_rows,
-            total_bits,
-            "packing rows into bitstream"
+        info!(
+            "Preprocessing {} column(s) x {} row(s) into a BitDataSet",
+            columns.len(),
+            num_rows
         );
 
-        let mut data = BitVec::with_capacity(total_bits);
-        if row_padding_bits == 0 {
-            for row_idx in 0..num_rows {
-                append_dataset_row_bits(&mut data, dataset, &info, row_idx, num_features)?;
-            }
-        } else {
-            for row_idx in 0..num_rows {
-                append_dataset_row_bits(&mut data, dataset, &info, row_idx, num_features)?;
-                append_row_padding(&mut data, row_padding_bits);
+        let transformed: Vec<TransformedColumn> = columns
+            .iter()
+            .map(|col| {
+                let series = col.as_materialized_series();
+                transform_column(&series, &options)
+            })
+            .collect::<Result<_, _>>()?;
+
+        let features: Vec<FeatureSpec> = transformed.iter().map(|t| t.spec.clone()).collect();
+        let chunk_size: usize = features.iter().map(|f| f.data_type.bits()).sum();
+        let stride = aligned_stride(chunk_size, pad_rows_to_word);
+        let original_size_bits = num_rows * chunk_size;
+
+        let mut info = BitDataInfo::new(features, original_size_bits)?;
+        if stride != chunk_size {
+            info = info.with_original_size_bits_and_row_stride(original_size_bits, stride);
+        }
+
+        debug!(
+            "BitDataSet layout: chunk_size={} bits, stride={} bits, num_rows={}",
+            chunk_size, stride, num_rows
+        );
+
+        // Preallocate the whole buffer up front rather than growing it row by row.
+        let mut bits: BitVec<usize, Lsb0> = BitVec::repeat(false, stride * num_rows);
+
+        // Fill column-by-column: for each feature, walk its already-transformed
+        // values (a contiguous Vec<u64>) and store each one into its row slot.
+        for (feature_idx, column) in transformed.iter().enumerate() {
+            let bit_width = info.feature_bits(feature_idx);
+            let base_offset = info.feature_offset(feature_idx);
+            for (row, &value) in column.values.iter().enumerate() {
+                let start = row * stride + base_offset;
+                let end = start + bit_width;
+                bits[start..end].store_le::<u64>(value);
             }
         }
 
         let data = BitData {
-            data,
+            data: bits,
             chunk_size,
             stride,
             num_rows,
         };
-        let info = info.with_original_size_bits_and_row_stride(chunk_size * num_rows, stride);
-
-        debug!(
-            rows = num_rows,
-            features = info.num_features(),
-            chunk_size_bits = chunk_size,
-            stride_bits = stride,
-            pad_rows_to_word,
-            total_logical_bits = chunk_size * num_rows,
-            "BitDataSet preprocessing complete"
-        );
 
         Ok(BitDataSet { data, info })
     }
@@ -1209,448 +764,490 @@ impl Display for BitDataSet {
     }
 }
 
-fn value_to_bits(value: DataValue, spec: &FeatureSpec) -> u64 {
-    match (value, spec.data_type) {
-        (DataValue::Unsigned(v), FeatureDataType::UnsignedInt) => match spec.transform {
-            FeatureTransform::None => v,
-            FeatureTransform::OffsetUnsignedInt { min_value } => v.saturating_sub(min_value),
-            _ => unreachable!("invalid transform for unsigned feature"),
-        },
-        (DataValue::Signed(v), FeatureDataType::SignedInt) => match spec.transform {
-            FeatureTransform::OffsetSignedInt { min_value } => {
-                let shifted = (v as i128) - (min_value as i128);
-                shifted as u64
-            }
-            FeatureTransform::None => {
-                if spec.bits == 64 {
-                    v as u64
-                } else {
-                    let mask = (1u128 << spec.bits) - 1;
-                    (v as i128 as u128 & mask) as u64
-                }
-            }
-            _ => unreachable!("invalid transform for signed feature"),
-        },
-        (DataValue::F32(v), FeatureDataType::F32) => match spec.transform {
-            FeatureTransform::None => v.to_bits() as u64,
-            FeatureTransform::ScaledSignedInt { decimal_scale } => {
-                let scaled = scale_float_to_i64(v as f64, decimal_scale);
-                value_to_bits(
-                    DataValue::Signed(scaled),
-                    &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits),
-                )
-            }
-            FeatureTransform::ScaledOffsetSignedInt {
-                decimal_scale,
-                min_value,
-            } => {
-                let scaled = scale_float_to_i64(v as f64, decimal_scale);
-                ((scaled as i128) - (min_value as i128)) as u64
-            }
-            _ => unreachable!("invalid transform for f32 feature"),
-        },
-        (DataValue::F64(v), FeatureDataType::F64) => match spec.transform {
-            FeatureTransform::None => v.to_bits(),
-            FeatureTransform::ScaledSignedInt { decimal_scale } => {
-                let scaled = scale_float_to_i64(v, decimal_scale);
-                value_to_bits(
-                    DataValue::Signed(scaled),
-                    &FeatureSpec::new(FeatureDataType::SignedInt, spec.bits),
-                )
-            }
-            FeatureTransform::ScaledOffsetSignedInt {
-                decimal_scale,
-                min_value,
-            } => {
-                let scaled = scale_float_to_i64(v, decimal_scale);
-                ((scaled as i128) - (min_value as i128)) as u64
-            }
-            _ => unreachable!("invalid transform for f64 feature"),
-        },
-        _ => unreachable!("feature type mismatch when packing bits"),
-    }
+// ---------------------------------------------------------------------------
+// Column transforms
+// ---------------------------------------------------------------------------
+
+/// A column after transformation: its final schema entry, plus the
+/// already-zero-normalized, packable `u64` value for every row (row order
+/// matches the source column).
+struct TransformedColumn {
+    spec: FeatureSpec,
+    values: Vec<u64>,
 }
 
-fn append_dataset_row_bits(
-    out: &mut BitVec<usize, Lsb0>,
-    dataset: &Dataset,
-    info: &BitDataInfo,
-    row_idx: usize,
-    num_features: usize,
-) -> Result<(), EntroGdError> {
-    for col_idx in 0..num_features {
-        let spec = info.feature_spec(col_idx);
-        let value =
-            dataset
-                .value_at(row_idx, col_idx)
-                .ok_or_else(|| EntroGdError::InvalidFeatureSpec {
-                    message: format!(
-                        "dataset value missing at row {}, column {}",
-                        row_idx, col_idx
-                    ),
-                })?;
-        let bits = value_to_bits(value, spec);
-        if row_idx < 2 {
-            trace!(
-                row_idx,
-                feature_idx = col_idx,
-                value = ?value,
-                bits = spec.bits,
-                transform = ?spec.transform,
-                "packed feature value into bitstream"
-            );
+fn transform_column(
+    series: &Series,
+    options: &PreprocessOptions,
+) -> Result<TransformedColumn, EntroGdError> {
+    if series.null_count() > 0 {
+        return Err(EntroGdError::InvalidDataType {
+            message: format!(
+                "column '{}' contains null values, which are not yet supported",
+                series.name()
+            ),
+        });
+    }
+
+    match series.dtype() {
+        DataType::Float16 | DataType::Float32 | DataType::Float64 => {
+            transform_float_column(series, options)
         }
-        push_bits(out, bits, spec.bits);
-    }
-
-    Ok(())
-}
-
-pub fn decode_value_from_bits(bits: &BitSlice<usize, Lsb0>, spec: &FeatureSpec) -> DataValue {
-    let value = bits_to_u64(bits);
-    match spec.data_type {
-        FeatureDataType::UnsignedInt => match spec.transform {
-            FeatureTransform::None => DataValue::Unsigned(value),
-            FeatureTransform::OffsetUnsignedInt { min_value } => {
-                DataValue::Unsigned(value.wrapping_add(min_value))
-            }
-            _ => unreachable!("invalid transform for unsigned feature"),
-        },
-        FeatureDataType::SignedInt => match spec.transform {
-            FeatureTransform::None => DataValue::Signed(decode_signed(value, spec.bits)),
-            FeatureTransform::OffsetSignedInt { min_value } => {
-                DataValue::Signed((value as i128 + min_value as i128) as i64)
-            }
-            _ => unreachable!("invalid transform for signed feature"),
-        },
-        FeatureDataType::F32 => match spec.transform {
-            FeatureTransform::None => DataValue::F32(f32::from_bits(value as u32)),
-            FeatureTransform::ScaledSignedInt { decimal_scale } => {
-                let scaled = decode_signed(value, spec.bits);
-                let factor = 10f64.powi(decimal_scale as i32);
-                DataValue::F32((scaled as f64 / factor) as f32)
-            }
-            FeatureTransform::ScaledOffsetSignedInt {
-                decimal_scale,
-                min_value,
-            } => {
-                let scaled = value as i128 + min_value as i128;
-                let factor = 10f64.powi(decimal_scale as i32);
-                DataValue::F32((scaled as f64 / factor) as f32)
-            }
-            _ => unreachable!("invalid transform for f32 feature"),
-        },
-        FeatureDataType::F64 => match spec.transform {
-            FeatureTransform::None => DataValue::F64(f64::from_bits(value)),
-            FeatureTransform::ScaledSignedInt { decimal_scale } => {
-                let scaled = decode_signed(value, spec.bits);
-                let factor = 10f64.powi(decimal_scale as i32);
-                DataValue::F64(scaled as f64 / factor)
-            }
-            FeatureTransform::ScaledOffsetSignedInt {
-                decimal_scale,
-                min_value,
-            } => {
-                let scaled = value as i128 + min_value as i128;
-                let factor = 10f64.powi(decimal_scale as i32);
-                DataValue::F64(scaled as f64 / factor)
-            }
-            _ => unreachable!("invalid transform for f64 feature"),
-        },
+        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
+            transform_signed_column(series, options)
+        }
+        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+            transform_unsigned_column(series, options)
+        }
+        other => Err(EntroGdError::InvalidDataType {
+            message: format!(
+                "column '{}' has unsupported dtype {:?}",
+                series.name(),
+                other
+            ),
+        }),
     }
 }
 
-fn bits_to_u64(bits: &BitSlice<usize, Lsb0>) -> u64 {
-    if bits.is_empty() {
-        0
+fn cast_err(column: &str, e: PolarsError) -> EntroGdError {
+    EntroGdError::InvalidDataType {
+        message: format!("failed to cast column '{}': {}", column, e),
+    }
+}
+
+fn empty_column_err(column: &str) -> EntroGdError {
+    EntroGdError::InvalidFeatureSpec {
+        message: format!("column '{}' has no rows to derive a range from", column),
+    }
+}
+
+/// Zero-normalize a signed value range against `min_value`, returning the
+/// per-row unsigned values plus the unsigned range (`max - min`). Uses i128
+/// internally so this is safe even at the i64::MIN/MAX extremes.
+fn offset_to_unsigned(values: &[i64], min_value: i64) -> (Vec<u64>, u64) {
+    let mut max_offset: u64 = 0;
+    let offset_values: Vec<u64> = values
+        .iter()
+        .map(|&v| {
+            let offset = (v as i128 - min_value as i128) as u64;
+            max_offset = max_offset.max(offset);
+            offset
+        })
+        .collect();
+    (offset_values, max_offset)
+}
+
+/// Fixed, data-independent bias for mapping a signed integer type to
+/// unsigned without scanning the data (used when zero-normalization is
+/// disabled). This is just the type's natural minimum, i.e. the standard
+/// "flip the sign bit" trick.
+fn fixed_signed_bias(dtype: &DataType) -> i64 {
+    match dtype {
+        DataType::Int8 => i8::MIN as i64,
+        DataType::Int16 => i16::MIN as i64,
+        DataType::Int32 => i32::MIN as i64,
+        DataType::Int64 => i64::MIN,
+        _ => 0,
+    }
+}
+
+fn transform_signed_column(
+    series: &Series,
+    options: &PreprocessOptions,
+) -> Result<TransformedColumn, EntroGdError> {
+    let name = series.name().to_string();
+    let casted = series
+        .cast(&DataType::Int64)
+        .map_err(|e| cast_err(&name, e))?;
+    let ca = casted.i64().map_err(|e| cast_err(&name, e))?;
+    let values: Vec<i64> = ca.into_no_null_iter().collect();
+
+    let min_value = if options.integer_zero_normalization {
+        *values.iter().min().ok_or_else(|| empty_column_err(&name))?
     } else {
-        bits.load_le::<u64>()
+        fixed_signed_bias(series.dtype())
+    };
+
+    let (offset_values, range) = offset_to_unsigned(&values, min_value);
+
+    Ok(TransformedColumn {
+        spec: FeatureSpec {
+            data_type: FeatureDataType::smallest_unsigned_for(range),
+            transform: FeatureTransform::OffsetSignedInt { min_value },
+        },
+        values: offset_values,
+    })
+}
+
+fn transform_unsigned_column(
+    series: &Series,
+    options: &PreprocessOptions,
+) -> Result<TransformedColumn, EntroGdError> {
+    let name = series.name().to_string();
+    let casted = series
+        .cast(&DataType::UInt64)
+        .map_err(|e| cast_err(&name, e))?;
+    let ca = casted.u64().map_err(|e| cast_err(&name, e))?;
+    let values: Vec<u64> = ca.into_no_null_iter().collect();
+
+    if !options.integer_zero_normalization {
+        let max_value = *values.iter().max().ok_or_else(|| empty_column_err(&name))?;
+        return Ok(TransformedColumn {
+            spec: FeatureSpec {
+                data_type: FeatureDataType::smallest_unsigned_for(max_value),
+                transform: FeatureTransform::None,
+            },
+            values,
+        });
+    }
+
+    let min_value = *values.iter().min().ok_or_else(|| empty_column_err(&name))?;
+    let max_value = *values.iter().max().unwrap();
+    let range = max_value - min_value;
+    let offset_values: Vec<u64> = values.iter().map(|&v| v - min_value).collect();
+
+    Ok(TransformedColumn {
+        spec: FeatureSpec {
+            data_type: FeatureDataType::smallest_unsigned_for(range),
+            transform: FeatureTransform::OffsetUnsignedInt { min_value },
+        },
+        values: offset_values,
+    })
+}
+
+fn transform_float_column(
+    series: &Series,
+    options: &PreprocessOptions,
+) -> Result<TransformedColumn, EntroGdError> {
+    let name = series.name().to_string();
+
+    if options.float_scaling == FloatScalingMode::Disabled {
+        return transform_float_column_raw_bits(series);
+    }
+
+    let casted = series
+        .cast(&DataType::Float64)
+        .map_err(|e| cast_err(&name, e))?;
+    let ca = casted.f64().map_err(|e| cast_err(&name, e))?;
+
+    let decimal_scale = options.decimal_scale.min(MAX_DECIMAL_SCALE);
+    let multiplier = 10f64.powi(decimal_scale as i32);
+
+    let mut scaled: Vec<i64> = Vec::with_capacity(ca.len());
+    for v in ca.into_no_null_iter() {
+        if !v.is_finite() {
+            return Err(EntroGdError::InvalidDataType {
+                message: format!(
+                    "column '{}' contains a non-finite value ({}) that cannot be scaled",
+                    name, v
+                ),
+            });
+        }
+        let s = v * multiplier;
+        if s < i64::MIN as f64 || s > i64::MAX as f64 {
+            return Err(EntroGdError::InvalidDataType {
+                message: format!(
+                    "column '{}' overflows i64 once scaled by 10^{}",
+                    name, decimal_scale
+                ),
+            });
+        }
+        scaled.push(s.round() as i64);
+    }
+
+    match options.float_scaling {
+        FloatScalingMode::Disabled => unreachable!("handled above"),
+        FloatScalingMode::ScaledSignedInt => {
+            // Fast path: skip scanning for the true minimum and bias by the
+            // scaled type's fixed lower bound instead.
+            let min_value = i64::MIN;
+            let (offset_values, range) = offset_to_unsigned(&scaled, min_value);
+            Ok(TransformedColumn {
+                spec: FeatureSpec {
+                    data_type: FeatureDataType::smallest_unsigned_for(range),
+                    transform: FeatureTransform::ScaledSignedInt { decimal_scale },
+                },
+                values: offset_values,
+            })
+        }
+        FloatScalingMode::ScaledOffsetSignedInt => {
+            let min_value = *scaled.iter().min().ok_or_else(|| empty_column_err(&name))?;
+            let (offset_values, range) = offset_to_unsigned(&scaled, min_value);
+            Ok(TransformedColumn {
+                spec: FeatureSpec {
+                    data_type: FeatureDataType::smallest_unsigned_for(range),
+                    transform: FeatureTransform::ScaledOffsetSignedInt {
+                        decimal_scale,
+                        min_value,
+                    },
+                },
+                values: offset_values,
+            })
+        }
     }
 }
 
-fn decode_signed(value: u64, bits: usize) -> i64 {
-    if bits == 64 {
-        value as i64
-    } else {
-        let shift = 64 - bits;
-        ((value << shift) as i64) >> shift
+/// Store a float's raw IEEE-754 bit pattern, unmodified (no zero-normalization
+/// makes sense on unscaled floats, since bit-for-bit reproduction is the point).
+fn transform_float_column_raw_bits(series: &Series) -> Result<TransformedColumn, EntroGdError> {
+    let name = series.name().to_string();
+    let data_type: FeatureDataType = series.dtype().clone().try_into()?;
+
+    let values: Vec<u64> = match data_type {
+        FeatureDataType::Float32 => {
+            let casted = series
+                .cast(&DataType::Float32)
+                .map_err(|e| cast_err(&name, e))?;
+            let ca = casted.f32().map_err(|e| cast_err(&name, e))?;
+            ca.into_no_null_iter().map(|v| v.to_bits() as u64).collect()
+        }
+        _ => {
+            let casted = series
+                .cast(&DataType::Float64)
+                .map_err(|e| cast_err(&name, e))?;
+            let ca = casted.f64().map_err(|e| cast_err(&name, e))?;
+            ca.into_no_null_iter().map(|v| v.to_bits()).collect()
+        }
+    };
+
+    Ok(TransformedColumn {
+        spec: FeatureSpec {
+            data_type,
+            transform: FeatureTransform::None,
+        },
+        values,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Image reconstruction metadata (unrelated to tabular preprocessing, kept as-is)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageGroupingTransform {
+    /// Store grouped channel bytes directly.
+    Raw = 0,
+    /// Store the first byte, then zig-zag encoded residuals relative to it.
+    ForFirstPixel = 1,
+    /// Store the minimum byte, then zig-zag encoded residuals relative to it.
+    ForMin = 2,
+}
+
+impl ImageGroupingTransform {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(value: u8) -> Result<Self, EntroGdError> {
+        match value {
+            0 => Ok(Self::Raw),
+            1 => Ok(Self::ForFirstPixel),
+            2 => Ok(Self::ForMin),
+            _ => Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "unsupported image grouping transform {} (expected 0, 1, or 2)",
+                    value
+                ),
+            }),
+        }
     }
 }
 
-fn scale_float_to_i64(value: f64, decimal_scale: u8) -> i64 {
-    let factor = 10f64.powi(decimal_scale as i32);
-    (value * factor).round() as i64
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageColorModel {
+    /// Store channels as RGB(A).
+    Rgb = 0,
+    /// Store channels as YCoCg(A), where Co/Cg are biased into byte range.
+    YCoCg = 1,
+    /// Store channels as reversible YCoCg-R(A), where Co/Cg are wrapped to 8-bit and biased.
+    YCoCgR = 2,
 }
 
-fn push_bits(stream: &mut BitVec<usize, Lsb0>, value: u64, bits: usize) {
-    if bits == 0 {
-        return;
+impl ImageColorModel {
+    pub fn as_u8(self) -> u8 {
+        self as u8
     }
 
-    let start = stream.len();
-    stream.resize(start + bits, false);
-    stream[start..].store_le(value);
+    pub fn from_u8(value: u8) -> Result<Self, EntroGdError> {
+        match value {
+            0 => Ok(Self::Rgb),
+            1 => Ok(Self::YCoCg),
+            2 => Ok(Self::YCoCgR),
+            _ => Err(EntroGdError::InvalidMetadata {
+                message: format!(
+                    "unsupported image color model {} (expected 0, 1, or 2)",
+                    value
+                ),
+            }),
+        }
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageReconstructionInfo {
+    pub width: u32,
+    pub height: u32,
+    pub channels: u8,
+    pub color_model: ImageColorModel,
+    pub pixel_grouping: PixelGrouping,
+    pub grouping_transform: ImageGroupingTransform,
+    /// 0 = sRGB + linear alpha, 1 = all linear
+    pub colorspace: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BitDataReconstructionInfo {
+    Tabular,
+    Image(ImageReconstructionInfo),
+}
+
+// ---------------------------------------------------------------------------
+// Reconstruction
+// ---------------------------------------------------------------------------
+
+/// Reconstruct the original value of a feature from its bit-packed
+/// representation by reversing the stored [`FeatureTransform`].
+pub fn reconstruct_feature_value(bits: &BitSlice<usize, Lsb0>, spec: &FeatureSpec) -> f64 {
+    let raw: u64 = bits.load_le::<u64>();
+
+    match spec.transform {
+        FeatureTransform::None => match spec.data_type {
+            FeatureDataType::Float16 => f64::from(f32::from_bits((raw as u32) << 16)),
+            FeatureDataType::Float32 => f64::from(f32::from_bits(raw as u32)),
+            FeatureDataType::Float64 => f64::from_bits(raw),
+            _ => raw as f64,
+        },
+        FeatureTransform::ScaledSignedInt { decimal_scale } => {
+            let signed = (raw as i128).wrapping_add(i64::MIN as i128);
+            signed as f64 / 10f64.powi(decimal_scale as i32)
+        }
+        FeatureTransform::OffsetSignedInt { min_value } => {
+            (raw as i64).wrapping_add(min_value) as f64
+        }
+        FeatureTransform::OffsetUnsignedInt { min_value } => (raw + min_value) as f64,
+        FeatureTransform::ScaledOffsetSignedInt {
+            decimal_scale,
+            min_value,
+        } => {
+            let signed = (raw as i64).wrapping_add(min_value) as f64;
+            signed / 10f64.powi(decimal_scale as i32)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_loader::{ColumnData, CsvDataLoader, DataLoader, Dataset};
 
-    #[test]
-    fn test_empty_bitslice_to_u64() {
-        let bits = bitvec![usize, Lsb0;];
-        assert_eq!(bits_to_u64(&bits), 0);
+    fn load_le(slice: &BitSlice<usize, Lsb0>) -> u64 {
+        slice.load_le::<u64>()
     }
+
     #[test]
-    fn print_bitdata_head() {
-        let loader = CsvDataLoader::new(true);
-        let loaded = loader
-            .load("data/tabular/data-10000-8-int.csv")
-            .expect("Failed to load dataset");
-        let dataset = loaded.dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
+    fn smallest_unsigned_for_picks_tightest_type() {
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(0),
+            FeatureDataType::UInt8
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(255),
+            FeatureDataType::UInt8
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(256),
+            FeatureDataType::UInt16
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(u16::MAX as u64),
+            FeatureDataType::UInt16
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(u16::MAX as u64 + 1),
+            FeatureDataType::UInt32
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(u32::MAX as u64 + 1),
+            FeatureDataType::UInt(33)
+        );
+    }
 
-        tracing::info!("\nFirst 5 rows in bit representation (MSB first):");
-        tracing::info!("==============================================");
+    #[test]
+    fn signed_column_zero_normalizes_to_smallest_uint() {
+        let s = Series::new("temperature".into(), &[-10i32, 0, 5, 20]);
+        let options = PreprocessOptions::default();
+        let transformed = transform_column(&s, &options).unwrap();
 
-        for row_index in 0..5 {
-            tracing::info!("\nRow {}:", row_index);
+        // range = 20 - (-10) = 30, fits in UInt8
+        assert_eq!(transformed.spec.data_type, FeatureDataType::UInt8);
+        assert_eq!(
+            transformed.spec.transform,
+            FeatureTransform::OffsetSignedInt { min_value: -10 }
+        );
+        assert_eq!(transformed.values, vec![0, 10, 15, 30]);
+    }
 
-            for feat_idx in 0..bit_data.info.num_features() {
-                let feature_bits = bit_data.get_feature(row_index, feat_idx);
-                let bits: String = feature_bits
-                    .iter()
-                    .map(|bit| if *bit { '1' } else { '0' })
-                    .collect();
-                tracing::info!("  Feature {}: {}", feat_idx, bits);
+    #[test]
+    fn unsigned_column_zero_normalizes() {
+        let s = Series::new("count".into(), &[100u32, 105, 110]);
+        let options = PreprocessOptions::default();
+        let transformed = transform_column(&s, &options).unwrap();
+
+        assert_eq!(transformed.spec.data_type, FeatureDataType::UInt8);
+        assert_eq!(
+            transformed.spec.transform,
+            FeatureTransform::OffsetUnsignedInt { min_value: 100 }
+        );
+        assert_eq!(transformed.values, vec![0, 5, 10]);
+    }
+
+    #[test]
+    fn float_column_scales_and_offsets() {
+        let s = Series::new("price".into(), &[1.50f64, 2.25, 0.75]);
+        let mut options = PreprocessOptions::default();
+        options.decimal_scale = 2;
+        let transformed = transform_column(&s, &options).unwrap();
+
+        // scaled: 150, 225, 75 -> min 75 -> offsets: 75, 150, 0
+        match transformed.spec.transform {
+            FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value,
+            } => {
+                assert_eq!(decimal_scale, 2);
+                assert_eq!(min_value, 75);
             }
+            other => panic!("unexpected transform: {:?}", other),
         }
+        assert_eq!(transformed.values, vec![75, 150, 0]);
     }
 
     #[test]
-    fn test_bitdata_from_dataset() {
-        let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/tabular/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
-
-        assert_eq!(bit_data.info.num_features(), 8);
-        assert_eq!(bit_data.info.feature_bits(0), 8);
-        assert_eq!(bit_data.data.chunk_size, 8 * 8);
-        assert_eq!(bit_data.data.num_rows, 10000);
-        assert_eq!(bit_data.data.total_bits(), 10000 * 64);
-    }
-
-    #[test]
-    fn test_chunk_access() {
-        let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/tabular/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
-
-        let chunk = bit_data.data.get_chunk(0);
-        assert_eq!(chunk.len(), 64);
-
-        let feature = bit_data.get_feature(0, 0);
-        assert_eq!(feature.len(), 8);
-    }
-
-    #[test]
-    fn test_get_bit_individual_access() {
-        let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/tabular/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
-
-        let feature_bits = bit_data.info.feature_bits(0);
-        for row in 0..10 {
-            for feat in 0..8 {
-                let feature_slice = bit_data.get_feature(row, feat);
-                for bit in 0..feature_bits {
-                    assert_eq!(
-                        bit_data.get_bit_by_feature(row, feat, bit),
-                        feature_slice[bit],
-                        "Mismatch at row={}, feat={}, bit={}",
-                        row,
-                        feat,
-                        bit
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_raw_access() {
-        let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/tabular/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
-
-        let raw = bit_data.data.raw();
-        // Since we now have padding, the raw length is num_rows * stride
-        assert_eq!(raw.len(), bit_data.data.num_rows * bit_data.data.stride);
-
-        let feature_bits = bit_data.info.feature_bits(0);
-        for row in 0..10 {
-            for within_chunk in 0..bit_data.data.chunk_size {
-                let i = row * bit_data.data.stride + within_chunk;
-                let feat = within_chunk / feature_bits;
-                let bit = within_chunk % feature_bits;
-                assert_eq!(raw[i], bit_data.get_bit_by_feature(row, feat, bit));
-            }
-        }
-    }
-
-    #[test]
-    fn test_single_bit_precision() {
-        let loader = CsvDataLoader::new(true);
-        let dataset = loader
-            .load("data/tabular/data-10000-8-int.csv")
-            .unwrap()
-            .dataset;
-        let bit_data = BitDataSet::from_dataset(&dataset).expect("Failed to create BitDataSet");
-
-        assert_eq!(bit_data.info.feature_bits(0), 8);
-        assert_eq!(bit_data.data.chunk_size, 8 * 8);
-    }
-
-    #[test]
-    fn test_schema_with_floats() {
-        let columns = vec![
-            ColumnData::Unsigned(vec![1, 2]),
-            ColumnData::F64(vec![3.5, -1.0]),
-            ColumnData::Signed(vec![-2, 5]),
-            ColumnData::F64(vec![1.25, 0.5]),
-        ];
-        let dataset = Dataset::from_columns(columns).unwrap();
-        let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 8),
-            FeatureSpec::new(FeatureDataType::F64, 64),
-            FeatureSpec::new(FeatureDataType::SignedInt, 8),
-            FeatureSpec::new(FeatureDataType::F64, 64),
-        ];
-
-        let bit_data = BitDataSet::from_dataset_with_schema(&dataset, features).unwrap();
-        assert_eq!(bit_data.info.num_features(), 4);
-        assert_eq!(bit_data.data.chunk_size, 144);
-        assert_eq!(bit_data.data.num_rows, 2);
-    }
-
-    #[test]
-    fn test_auto_scale_float_feature_spec() {
-        let columns = vec![
-            ColumnData::F64(vec![1.25, 2.50, -0.75]),
-            ColumnData::Unsigned(vec![1, 2, 3]),
-        ];
-        let dataset = Dataset::from_columns(columns).unwrap();
-
-        let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
-        let spec = bit_data.info.feature_spec(0);
-
-        assert_eq!(spec.data_type, FeatureDataType::F64);
-        assert!(matches!(
-            spec.transform,
-            FeatureTransform::ScaledOffsetSignedInt { .. }
-        ));
-        assert!(spec.bits <= 64);
-    }
-
-    #[test]
-    fn test_integer_columns_are_offset_and_bucketed() {
-        let columns = vec![
-            ColumnData::Signed(vec![-5, -1, 10]),
-            ColumnData::Unsigned(vec![1000, 1001, 1005]),
-        ];
-        let dataset = Dataset::from_columns(columns).unwrap();
-        let bit_data = BitDataSet::from_dataset(&dataset).unwrap();
-
-        let spec0 = bit_data.info.feature_spec(0);
-        assert_eq!(spec0.bits, 8);
-        assert!(matches!(
-            spec0.transform,
-            FeatureTransform::OffsetSignedInt { min_value: -5 }
-        ));
-
-        let spec1 = bit_data.info.feature_spec(1);
-        assert_eq!(spec1.bits, 8);
-        assert!(matches!(
-            spec1.transform,
-            FeatureTransform::OffsetUnsignedInt { min_value: 1000 }
-        ));
-    }
-
-    #[test]
-    fn test_integer_columns_can_disable_zero_normalization() {
-        let columns = vec![
-            ColumnData::Signed(vec![-5, -1, 10]),
-            ColumnData::Unsigned(vec![1000, 1001, 1005]),
-        ];
-        let dataset = Dataset::from_columns(columns).unwrap();
-        let options = PreprocessOptions {
-            integer_zero_normalization: false,
-            ..PreprocessOptions::default()
-        };
-
-        let bit_data = BitDataSet::from_dataset_with_options(&dataset, options).unwrap();
-
-        let spec0 = bit_data.info.feature_spec(0);
-        assert_eq!(spec0.bits, 8);
-        assert!(matches!(spec0.transform, FeatureTransform::None));
-
-        let spec1 = bit_data.info.feature_spec(1);
-        assert_eq!(spec1.bits, 16);
-        assert!(matches!(spec1.transform, FeatureTransform::None));
-    }
-
-    #[test]
-    fn test_float_columns_can_use_scaled_signed_transform() {
-        let columns = vec![ColumnData::F64(vec![-1.25, 0.0, 2.50])];
-        let dataset = Dataset::from_columns(columns).unwrap();
-        let options = PreprocessOptions {
-            float_scaling: FloatScalingMode::ScaledSignedInt,
-            max_decimal_scale: 3,
-            integer_zero_normalization: true,
-        };
-
-        let bit_data = BitDataSet::from_dataset_with_options(&dataset, options).unwrap();
-        let spec = bit_data.info.feature_spec(0);
-        assert!(matches!(
-            spec.transform,
-            FeatureTransform::ScaledSignedInt { .. }
-        ));
-    }
-
-    #[test]
-    fn test_build_bitdataset_filter_respects_row_padding_flag() {
-        let dataset = Dataset::from_columns(vec![ColumnData::Unsigned(vec![1, 2])]).unwrap();
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
-
-        let compact = BuildBitDataSet {
-            pad_rows_to_word: false,
-        }
-        .process((dataset.clone(), features.clone()))
+    fn from_dataframe_round_trips_values_through_bit_storage() {
+        let df = DataFrame::new(
+            3,
+            vec![
+                Series::new("a".into(), &[-5i32, 0, 5]).into(),
+                Series::new("b".into(), &[10i32, 20, 30]).into(),
+            ],
+        )
         .unwrap();
-        assert_eq!(compact.chunk_size(), 8);
-        assert_eq!(compact.data.stride, 8);
-        assert_eq!(compact.data.raw().len(), 16);
 
-        let padded = BuildBitDataSet {
-            pad_rows_to_word: true,
-        }
-        .process((dataset, features))
-        .unwrap();
-        assert_eq!(padded.chunk_size(), 8);
-        assert_eq!(padded.data.stride, 64);
-        assert_eq!(padded.data.raw().len(), 128);
+        let dataset = BitDataSet::from_dataframe(df, PreprocessOptions::default(), false).unwrap();
+        assert_eq!(dataset.num_rows(), 3);
+        assert_eq!(dataset.num_features(), 2);
+
+        // Column "a": min -5 -> offsets 0, 5, 10
+        assert_eq!(load_le(dataset.get_feature(0, 0)), 0);
+        assert_eq!(load_le(dataset.get_feature(1, 0)), 5);
+        assert_eq!(load_le(dataset.get_feature(2, 0)), 10);
+
+        // Column "b": min 10 -> offsets 0, 10, 20
+        assert_eq!(load_le(dataset.get_feature(0, 1)), 0);
+        assert_eq!(load_le(dataset.get_feature(1, 1)), 10);
+        assert_eq!(load_le(dataset.get_feature(2, 1)), 20);
     }
 }

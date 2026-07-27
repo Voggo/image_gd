@@ -1,9 +1,8 @@
 use crate::compression::encoding::{BaseTable, CompressedData, CondensedSamples, EncodedData};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
-    decode_value_from_bits,
+    reconstruct_feature_value,
 };
-use crate::data_loader::DataValue;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -455,12 +454,7 @@ pub fn write_bitdata_as_csv<P: AsRef<Path>>(
         for feature in 0..bit_data.info.num_features() {
             let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
             let spec = bit_data.info.feature_spec(feature);
-            let formatted = match decode_value_from_bits(feature_bits, spec) {
-                DataValue::Unsigned(v) => v.to_string(),
-                DataValue::Signed(v) => v.to_string(),
-                DataValue::F32(v) => v.to_string(),
-                DataValue::F64(v) => v.to_string(),
-            };
+            let formatted = reconstruct_feature_value(feature_bits, spec).to_string();
             values.push(formatted);
         }
         writeln!(file, "{}", values.join(","))?;
@@ -796,8 +790,7 @@ mod tests {
     /// Creates a BitDataInfo for testing with a single feature
     fn create_test_bit_data_info(chunk_size: usize, num_rows: usize) -> BitDataInfo {
         let features = vec![FeatureSpec {
-            data_type: FeatureDataType::UnsignedInt,
-            bits: chunk_size,
+            data_type: FeatureDataType::UInt(chunk_size as u16),
             transform: FeatureTransform::None,
         }];
         BitDataInfo::new(features, chunk_size * num_rows).unwrap()

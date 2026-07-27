@@ -113,8 +113,9 @@ pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<EntropyBitScore> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
-    use crate::data_loader::FeatureDataType;
+    use crate::compression::preprocessor::{
+        BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -136,8 +137,13 @@ mod tests {
             stride: chunk_size,
             num_rows,
         };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(bits_per_feature as u16),
+                transform: FeatureTransform::None
+            };
+            num_features
+        ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -168,8 +174,13 @@ mod tests {
             stride: chunk_size,
             num_rows,
         };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(bits_per_feature as u16),
+                transform: FeatureTransform::None
+            };
+            num_features
+        ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -216,8 +227,13 @@ mod tests {
             stride: chunk_size,
             num_rows,
         };
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(bits_per_feature as u16),
+                transform: FeatureTransform::None
+            };
+            num_features
+        ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
 
@@ -246,7 +262,13 @@ mod tests {
             stride: chunk_size,
             num_rows,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 1); chunk_size];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(1),
+                transform: FeatureTransform::None
+            };
+            chunk_size
+        ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
         let bit_data = BitDataSet { data, info };
 

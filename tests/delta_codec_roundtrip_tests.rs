@@ -1,7 +1,7 @@
 use image_gd::compression::BaseTable;
-use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::load_csv;
 use image_gd::prelude::*;
-use image_gd::{BitDataSet, DecompressFileData, LoadEgdFile, SaveEgdFile};
+use image_gd::{BitDataSet, DecompressFileData, LoadEgdFile, PreprocessOptions, SaveEgdFile};
 use std::env;
 
 fn assert_bitstream_eq(
@@ -37,10 +37,10 @@ fn assert_bitstream_eq(
 #[test]
 fn test_delta_codec_roundtrip_unary_prefix() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
     let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
@@ -110,10 +110,10 @@ fn test_delta_codec_roundtrip_unary_prefix() {
 #[test]
 fn test_delta_codec_roundtrip_fixed_prefix() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
     let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
@@ -183,10 +183,10 @@ fn test_delta_codec_roundtrip_fixed_prefix() {
 #[test]
 fn test_delta_codec_tag_serialization() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
     // Test unary prefix codec serialization
     let compression_pipeline_unary = Entropy {}

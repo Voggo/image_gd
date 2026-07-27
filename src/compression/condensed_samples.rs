@@ -255,8 +255,7 @@ fn append_condensed_samples(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{BitDataInfo, FeatureSpec};
-    use crate::data_loader::FeatureDataType;
+    use crate::compression::preprocessor::{BitDataInfo, FeatureDataType, FeatureSpec};
 
     // ============================================================================
     // Helper Functions for Test Data Construction
@@ -292,8 +291,7 @@ mod tests {
 
             let features = (0..self.num_features)
                 .map(|_| FeatureSpec {
-                    data_type: FeatureDataType::UnsignedInt,
-                    bits: self.bits_per_feature,
+                    data_type: FeatureDataType::UInt(self.bits_per_feature as u16),
                     transform: crate::compression::preprocessor::FeatureTransform::None,
                 })
                 .collect();
