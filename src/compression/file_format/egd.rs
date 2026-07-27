@@ -1,4 +1,5 @@
 use fxhash::FxHashMap;
+use polars::prelude::{CsvWriter, SerWriter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,7 +12,7 @@ use super::tags::{
 
 use crate::ScopedTimer;
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
-use crate::compression::decompression::{decompress_file, write_bitdata_as_csv};
+use crate::compression::decompression::decompress_file;
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
     HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationOffsetData,
@@ -1262,10 +1263,11 @@ pub fn load_and_decompress_egd<P: AsRef<Path>>(input_path: P) -> Result<BitDataS
 pub fn decompress_egd_to_csv<P: AsRef<Path>, Q: AsRef<Path>>(
     input_path: P,
     output_path: Q,
-    headers: Option<&[String]>,
 ) -> Result<PathBuf, EntroGdError> {
     let bit_data = load_and_decompress_egd(input_path)?;
+    let mut df = crate::compression::preprocessor::reconstruct_to_dataframe(&bit_data)?;
     let target = ensure_csv_extension(output_path.as_ref());
-    write_bitdata_as_csv(&bit_data, &target, headers)?;
+    let mut f = std::fs::File::create(&target)?;
+    CsvWriter::new(&mut f).finish(&mut df)?;
     Ok(target)
 }

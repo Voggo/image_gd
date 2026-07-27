@@ -313,10 +313,16 @@ impl BitDataInfo {
         features: Vec<FeatureSpec>,
         original_size_bits: usize,
     ) -> Result<Self, EntroGdError> {
+        let num_features = features.len();
+        let column_names: Vec<String> = (0..num_features).map(|i| format!("f{}", i)).collect();
+        let original_dtypes = vec![DataType::Float64; num_features];
         Self::new_with_reconstruction_info(
             features,
             original_size_bits,
-            BitDataReconstructionInfo::Tabular,
+            BitDataReconstructionInfo::Tabular {
+                column_names,
+                original_dtypes,
+            },
         )
     }
 
@@ -395,6 +401,45 @@ impl BitDataInfo {
     pub fn set_condensed_sample_weights(&mut self, weights: Option<Vec<usize>>) {
         self.compression.m_condensed_samples = weights.as_ref().map(Vec::len);
         self.compression.m_condensed_sample_weights = weights;
+    }
+
+    pub fn set_tabular_column_info(
+        &mut self,
+        names: Vec<String>,
+        dtypes: Vec<DataType>,
+    ) -> Result<(), EntroGdError> {
+        let num_features = self.num_features();
+        match &mut self.reconstruction {
+            BitDataReconstructionInfo::Tabular {
+                column_names,
+                original_dtypes,
+            } => {
+                if names.len() != num_features {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "column names count {} does not match feature count {}",
+                            names.len(),
+                            num_features
+                        ),
+                    });
+                }
+                if dtypes.len() != num_features {
+                    return Err(EntroGdError::InvalidMetadata {
+                        message: format!(
+                            "dtype count {} does not match feature count {}",
+                            dtypes.len(),
+                            num_features
+                        ),
+                    });
+                }
+                *column_names = names;
+                *original_dtypes = dtypes;
+                Ok(())
+            }
+            BitDataReconstructionInfo::Image(_) => Err(EntroGdError::InvalidMetadata {
+                message: "cannot set tabular column info on image reconstruction data".to_string(),
+            }),
+        }
     }
 
     pub fn num_features(&self) -> usize {
@@ -610,7 +655,17 @@ impl BitDataSet {
         let stride = aligned_stride(chunk_size, pad_rows_to_word);
         let original_size_bits = num_rows * chunk_size;
 
-        let mut info = BitDataInfo::new(features, original_size_bits)?;
+        let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
+        let original_dtypes: Vec<DataType> = columns.iter().map(|c| c.dtype().clone()).collect();
+
+        let mut info = BitDataInfo::new_with_reconstruction_info(
+            features,
+            original_size_bits,
+            BitDataReconstructionInfo::Tabular {
+                column_names,
+                original_dtypes,
+            },
+        )?;
         if stride != chunk_size {
             info = info.with_original_size_bits_and_row_stride(original_size_bits, stride);
         }
@@ -1143,7 +1198,10 @@ pub struct ImageReconstructionInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BitDataReconstructionInfo {
-    Tabular,
+    Tabular {
+        column_names: Vec<String>,
+        original_dtypes: Vec<DataType>,
+    },
     Image(ImageReconstructionInfo),
 }
 
@@ -1178,6 +1236,90 @@ pub fn reconstruct_feature_value(bits: &BitSlice<usize, Lsb0>, spec: &FeatureSpe
             let signed = (raw as i64).wrapping_add(min_value) as f64;
             signed / 10f64.powi(decimal_scale as i32)
         }
+    }
+}
+
+/// Reconstruct a [`BitDataSet`] into a [`DataFrame`] by reversing
+/// per-feature transforms. Column names and original data types are
+/// read from the dataset's reconstruction metadata.
+pub fn reconstruct_to_dataframe(dataset: &BitDataSet) -> Result<DataFrame, EntroGdError> {
+    let (column_names, original_dtypes) = match &dataset.info.reconstruction {
+        BitDataReconstructionInfo::Tabular {
+            column_names,
+            original_dtypes,
+        } => (column_names.clone(), original_dtypes.clone()),
+        BitDataReconstructionInfo::Image(_) => {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "cannot reconstruct tabular DataFrame from image reconstruction data"
+                    .to_string(),
+            });
+        }
+    };
+
+    if column_names.len() != dataset.num_features() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "column names count {} does not match feature count {}",
+                column_names.len(),
+                dataset.num_features()
+            ),
+        });
+    }
+
+    let num_rows = dataset.num_rows();
+    let num_features = dataset.num_features();
+
+    let mut columns = Vec::with_capacity(num_features);
+    for feature_idx in 0..num_features {
+        let spec = dataset.info.feature_spec(feature_idx);
+        let values: Vec<f64> = (0..num_rows)
+            .map(|row| {
+                let bits = unsafe { dataset.get_feature_unchecked(row, feature_idx) };
+                reconstruct_feature_value(bits, spec)
+            })
+            .collect();
+
+        let series = Series::new(column_names[feature_idx].clone().into(), values);
+
+        let casted = if original_dtypes[feature_idx] != DataType::Float64 {
+            series
+                .cast(&original_dtypes[feature_idx])
+                .map_err(|e| EntroGdError::InvalidDataType {
+                    message: format!(
+                        "failed to cast column '{}' to {:?}: {}",
+                        column_names[feature_idx], original_dtypes[feature_idx], e
+                    ),
+                })?
+        } else {
+            series
+        };
+
+        columns.push(casted.into());
+    }
+
+    DataFrame::new(num_rows, columns).map_err(|e| EntroGdError::InvalidDataType {
+        message: format!("failed to build DataFrame: {}", e),
+    })
+}
+
+/// [`Filter`] that reconstructs a [`BitDataSet`] into a [`DataFrame`].
+///
+/// Can be composed directly into a pipeline:
+///
+/// ```ignore
+/// let pipeline = DecompressFileData {}.then(ReconstructDataFrame {});
+/// let df = pipeline.process(compressed)?;
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct ReconstructDataFrame;
+
+impl Filter for ReconstructDataFrame {
+    type Input = BitDataSet;
+    type Output = DataFrame;
+
+    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+        let _timer = ScopedTimer::info("Reconstructing DataFrame from BitDataSet");
+        reconstruct_to_dataframe(&input)
     }
 }
 

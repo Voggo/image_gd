@@ -200,7 +200,7 @@ pub(crate) fn huffman_row_layout(
             }
             Ok((original_num_samples, row_count, row_width))
         }
-        BitDataReconstructionInfo::Tabular => Ok((original_num_samples, original_num_samples, 1)),
+        BitDataReconstructionInfo::Tabular { .. } => Ok((original_num_samples, original_num_samples, 1)),
     }
 }
 

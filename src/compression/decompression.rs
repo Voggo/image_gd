@@ -1,7 +1,6 @@
 use crate::compression::encoding::{BaseTable, CompressedData, CondensedSamples, EncodedData};
 use crate::compression::preprocessor::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
-    reconstruct_feature_value,
 };
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -10,8 +9,6 @@ use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
 use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
 use rayon::prelude::*;
-use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 const PARALLEL_MIN_ROWS: usize = 256;
@@ -437,32 +434,6 @@ pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamp
     }
 }
 
-/// Write decompressed bit data back to a CSV file.
-pub fn write_bitdata_as_csv<P: AsRef<Path>>(
-    bit_data: &BitDataSet,
-    output_path: P,
-    headers: Option<&[String]>,
-) -> Result<(), EntroGdError> {
-    let mut file = File::create(output_path)?;
-
-    if let Some(headers) = headers {
-        writeln!(file, "{}", headers.join(","))?;
-    }
-
-    for row in 0..bit_data.data.num_rows {
-        let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
-        for feature in 0..bit_data.info.num_features() {
-            let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
-            let spec = bit_data.info.feature_spec(feature);
-            let formatted = reconstruct_feature_value(feature_bits, spec).to_string();
-            values.push(formatted);
-        }
-        writeln!(file, "{}", values.join(","))?;
-    }
-
-    Ok(())
-}
-
 /// Write decompressed image bit data back to an image file.
 pub fn write_bitdata_as_image<P: AsRef<Path>>(
     bit_data: &BitDataSet,
@@ -470,7 +441,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
 ) -> Result<(), EntroGdError> {
     let image_info = match &bit_data.info.reconstruction {
         BitDataReconstructionInfo::Image(info) => *info,
-        BitDataReconstructionInfo::Tabular => {
+        BitDataReconstructionInfo::Tabular { .. } => {
             return Err(EntroGdError::InvalidMetadata {
                 message: "cannot write image from tabular reconstruction metadata".to_string(),
             });
@@ -552,21 +523,6 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         image_info.channels,
         output_raw,
     )
-}
-
-/// Write decompressed data to a format-appropriate output file.
-///
-/// - `Tabular` reconstruction metadata writes CSV.
-/// - `Image` reconstruction metadata writes an image file.
-pub fn write_bitdata_to_output<P: AsRef<Path>>(
-    bit_data: &BitDataSet,
-    output_path: P,
-    headers: Option<&[String]>,
-) -> Result<(), EntroGdError> {
-    match bit_data.info.reconstruction {
-        BitDataReconstructionInfo::Tabular => write_bitdata_as_csv(bit_data, output_path, headers),
-        BitDataReconstructionInfo::Image(_) => write_bitdata_as_image(bit_data, output_path),
-    }
 }
 
 fn byte_from_bits(bits: &BitSlice<usize, Lsb0>) -> Result<u8, EntroGdError> {

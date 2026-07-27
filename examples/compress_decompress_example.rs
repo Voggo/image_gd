@@ -1,8 +1,9 @@
 use image_gd::prelude::*;
 use image_gd::{
     EntroGdError, PreprocessOptions, ScopedTimer, init_logging, load_csv,
-    reconstruct_feature_value, write_bitdata_as_csv,
+    reconstruct_feature_value, reconstruct_to_dataframe,
 };
+use polars::prelude::{CsvWriter, SerWriter};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -40,13 +41,6 @@ fn main() -> Result<(), EntroGdError> {
 
     tracing::info!("Loaded: {} rows, {} columns", df.height(), df.width());
 
-    let column_names: Vec<String> = df
-        .get_column_names()
-        .iter()
-        .map(|n| n.to_string())
-        .collect();
-
-    // let bit_data = BitDataSet::from_dataframe(df, PreprocessOptions::default(), false)?;
     let bit_data = BuildBitDataSet {
         options: PreprocessOptions::default(),
         pad_rows_to_word: false,
@@ -134,7 +128,9 @@ fn main() -> Result<(), EntroGdError> {
     }
 
     tracing::info!("Writing CSV: {}", decompressed_path.display());
-    write_bitdata_as_csv(&decompressed, &decompressed_path, Some(&column_names))?;
+    let mut df = reconstruct_to_dataframe(&decompressed)?;
+    let mut f = std::fs::File::create(&decompressed_path)?;
+    CsvWriter::new(&mut f).finish(&mut df)?;
 
     tracing::info!("Done.");
     Ok(())

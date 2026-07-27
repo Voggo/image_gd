@@ -16,11 +16,11 @@ pub use compression::{
     FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
     IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
     ImageReconstructionInfo, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, OpenImage, PixelGrouping,
-    PreEncodeContext, PreprocessOptions, RleDeviationOffsetData, SaveEgdFile, SaveIgdFile,
+    PreEncodeContext, PreprocessOptions, ReconstructDataFrame, RleDeviationOffsetData, SaveEgdFile, SaveIgdFile,
     SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
     SelectBasesThreshold, calculate_entropy, decompress_egd_to_csv, decompress_igd_to_image,
     load_and_decompress_egd, load_and_decompress_igd, reconstruct_feature_value,
-    write_bitdata_as_csv, write_bitdata_as_image, write_bitdata_to_output,
+    reconstruct_to_dataframe, write_bitdata_as_image,
 };
 pub use data_loader::load_csv;
 pub use error::EntroGdError;
@@ -34,9 +34,9 @@ pub mod prelude {
         DecompressRandomAccessHandle, DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData,
         EncodeDataHuffman, EncodeDataOffsetRLE, Entropy, Filter, FilterExt, FloatScalingMode,
         GenCondensedSamples, ImageColorModel, ImageColorSpace, ImageGroupingTransform, LoadEgdFile,
-        LoadIgdFile, OpenImage, PixelGrouping, PreprocessOptions, SaveEgdFile, SaveIgdFile,
-        SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
-        SelectBasesThreshold,
+        LoadIgdFile, OpenImage, PixelGrouping, PreprocessOptions, ReconstructDataFrame,
+        SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesAdaptive, SelectBasesDebug,
+        SelectBasesProfileAllBits, SelectBasesThreshold,
     };
 }
 
