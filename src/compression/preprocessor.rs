@@ -624,11 +624,18 @@ impl BitDataSet {
         let mut bits: BitVec<usize, Lsb0> = BitVec::repeat(false, stride * num_rows);
 
         // Fill column-by-column: for each feature, walk its already-transformed
-        // values (a contiguous Vec<u64>) and store each one into its row slot.
+        // UInt64 Series and store each value into its row slot.
         for (feature_idx, column) in transformed.iter().enumerate() {
             let bit_width = info.feature_bits(feature_idx);
             let base_offset = info.feature_offset(feature_idx);
-            for (row, &value) in column.values.iter().enumerate() {
+            let ca = column.series.u64().map_err(|e| EntroGdError::InvalidDataType {
+                message: format!(
+                    "internal error: transformed column '{}' is not UInt64: {}",
+                    column.series.name(),
+                    e
+                ),
+            })?;
+            for (row, value) in ca.into_no_null_iter().enumerate() {
                 let start = row * stride + base_offset;
                 let end = start + bit_width;
                 bits[start..end].store_le::<u64>(value);
@@ -769,11 +776,71 @@ impl Display for BitDataSet {
 // ---------------------------------------------------------------------------
 
 /// A column after transformation: its final schema entry, plus the
-/// already-zero-normalized, packable `u64` value for every row (row order
-/// matches the source column).
+/// transformed `Series` (UInt64) holding the packable value for every row.
 struct TransformedColumn {
     spec: FeatureSpec,
-    values: Vec<u64>,
+    series: Series,
+}
+
+fn apply_transform(s: &Series, transform: &FeatureTransform) -> PolarsResult<Series> {
+    match transform {
+        FeatureTransform::None => match s.dtype() {
+            DataType::Float64 => {
+                let ca = s.f64()?;
+                let out: UInt64Chunked =
+                    ca.apply_nonnull_values_generic(DataType::UInt64, |v| v.to_bits());
+                Ok(out.into_series())
+            }
+            DataType::Float32 => {
+                let ca = s.f32()?;
+                let out: UInt64Chunked =
+                    ca.apply_nonnull_values_generic(DataType::UInt64, |v| v.to_bits() as u64);
+                Ok(out.into_series())
+            }
+            _ => s.cast(&DataType::UInt64),
+        },
+
+        FeatureTransform::ScaledSignedInt { decimal_scale } => {
+            let factor = 10f64.powi(*decimal_scale as i32);
+            let ca = s.f64()?;
+            let out: UInt64Chunked =
+                ca.apply_nonnull_values_generic(DataType::UInt64, |v| {
+                    let scaled = (v * factor).round() as i64;
+                    (scaled as u64).wrapping_sub(i64::MIN as u64)
+                });
+            Ok(out.into_series())
+        }
+
+        FeatureTransform::OffsetSignedInt { min_value } => {
+            let ca = s.i64()?;
+            let out: UInt64Chunked =
+                ca.apply_nonnull_values_generic(DataType::UInt64, |v| {
+                    (v as u64).wrapping_sub(*min_value as u64)
+                });
+            Ok(out.into_series())
+        }
+
+        FeatureTransform::OffsetUnsignedInt { min_value } => {
+            let ca = s.u64()?;
+            let out: UInt64Chunked =
+                ca.apply_nonnull_values_generic(DataType::UInt64, |v| v - min_value);
+            Ok(out.into_series())
+        }
+
+        FeatureTransform::ScaledOffsetSignedInt {
+            decimal_scale,
+            min_value,
+        } => {
+            let factor = 10f64.powi(*decimal_scale as i32);
+            let ca = s.f64()?;
+            let out: UInt64Chunked =
+                ca.apply_nonnull_values_generic(DataType::UInt64, |v| {
+                    let scaled = (v * factor).round() as i64;
+                    (scaled as u64).wrapping_sub(*min_value as u64)
+                });
+            Ok(out.into_series())
+        }
+    }
 }
 
 fn transform_column(
@@ -821,22 +888,6 @@ fn empty_column_err(column: &str) -> EntroGdError {
     }
 }
 
-/// Zero-normalize a signed value range against `min_value`, returning the
-/// per-row unsigned values plus the unsigned range (`max - min`). Uses i128
-/// internally so this is safe even at the i64::MIN/MAX extremes.
-fn offset_to_unsigned(values: &[i64], min_value: i64) -> (Vec<u64>, u64) {
-    let mut max_offset: u64 = 0;
-    let offset_values: Vec<u64> = values
-        .iter()
-        .map(|&v| {
-            let offset = (v as i128 - min_value as i128) as u64;
-            max_offset = max_offset.max(offset);
-            offset
-        })
-        .collect();
-    (offset_values, max_offset)
-}
-
 /// Fixed, data-independent bias for mapping a signed integer type to
 /// unsigned without scanning the data (used when zero-normalization is
 /// disabled). This is just the type's natural minimum, i.e. the standard
@@ -860,22 +911,27 @@ fn transform_signed_column(
         .cast(&DataType::Int64)
         .map_err(|e| cast_err(&name, e))?;
     let ca = casted.i64().map_err(|e| cast_err(&name, e))?;
-    let values: Vec<i64> = ca.into_no_null_iter().collect();
 
     let min_value = if options.integer_zero_normalization {
-        *values.iter().min().ok_or_else(|| empty_column_err(&name))?
+        ca.min().ok_or_else(|| empty_column_err(&name))?
     } else {
         fixed_signed_bias(series.dtype())
     };
 
-    let (offset_values, range) = offset_to_unsigned(&values, min_value);
+    let transform = FeatureTransform::OffsetSignedInt { min_value };
+    let out = apply_transform(&casted, &transform).map_err(|e| cast_err(&name, e))?;
+    let range = out
+        .u64()
+        .map_err(|e| cast_err(&name, e))?
+        .max()
+        .unwrap_or(0);
 
     Ok(TransformedColumn {
         spec: FeatureSpec {
             data_type: FeatureDataType::smallest_unsigned_for(range),
-            transform: FeatureTransform::OffsetSignedInt { min_value },
+            transform,
         },
-        values: offset_values,
+        series: out,
     })
 }
 
@@ -888,30 +944,33 @@ fn transform_unsigned_column(
         .cast(&DataType::UInt64)
         .map_err(|e| cast_err(&name, e))?;
     let ca = casted.u64().map_err(|e| cast_err(&name, e))?;
-    let values: Vec<u64> = ca.into_no_null_iter().collect();
 
     if !options.integer_zero_normalization {
-        let max_value = *values.iter().max().ok_or_else(|| empty_column_err(&name))?;
+        let max_value = ca.max().ok_or_else(|| empty_column_err(&name))?;
         return Ok(TransformedColumn {
             spec: FeatureSpec {
                 data_type: FeatureDataType::smallest_unsigned_for(max_value),
                 transform: FeatureTransform::None,
             },
-            values,
+            series: casted,
         });
     }
 
-    let min_value = *values.iter().min().ok_or_else(|| empty_column_err(&name))?;
-    let max_value = *values.iter().max().unwrap();
-    let range = max_value - min_value;
-    let offset_values: Vec<u64> = values.iter().map(|&v| v - min_value).collect();
+    let min_value = ca.min().ok_or_else(|| empty_column_err(&name))?;
+    let transform = FeatureTransform::OffsetUnsignedInt { min_value };
+    let out = apply_transform(&casted, &transform).map_err(|e| cast_err(&name, e))?;
+    let range = out
+        .u64()
+        .map_err(|e| cast_err(&name, e))?
+        .max()
+        .unwrap_or(0);
 
     Ok(TransformedColumn {
         spec: FeatureSpec {
             data_type: FeatureDataType::smallest_unsigned_for(range),
-            transform: FeatureTransform::OffsetUnsignedInt { min_value },
+            transform,
         },
-        values: offset_values,
+        series: out,
     })
 }
 
@@ -922,7 +981,16 @@ fn transform_float_column(
     let name = series.name().to_string();
 
     if options.float_scaling == FloatScalingMode::Disabled {
-        return transform_float_column_raw_bits(series);
+        let data_type: FeatureDataType = series.dtype().clone().try_into()?;
+        let transform = FeatureTransform::None;
+        let out = apply_transform(series, &transform).map_err(|e| cast_err(&name, e))?;
+        return Ok(TransformedColumn {
+            spec: FeatureSpec {
+                data_type,
+                transform,
+            },
+            series: out,
+        });
     }
 
     let casted = series
@@ -933,90 +1001,68 @@ fn transform_float_column(
     let decimal_scale = options.decimal_scale.min(MAX_DECIMAL_SCALE);
     let multiplier = 10f64.powi(decimal_scale as i32);
 
-    let mut scaled: Vec<i64> = Vec::with_capacity(ca.len());
-    for v in ca.into_no_null_iter() {
-        if !v.is_finite() {
-            return Err(EntroGdError::InvalidDataType {
-                message: format!(
-                    "column '{}' contains a non-finite value ({}) that cannot be scaled",
-                    name, v
-                ),
-            });
-        }
-        let s = v * multiplier;
-        if s < i64::MIN as f64 || s > i64::MAX as f64 {
-            return Err(EntroGdError::InvalidDataType {
-                message: format!(
-                    "column '{}' overflows i64 once scaled by 10^{}",
-                    name, decimal_scale
-                ),
-            });
-        }
-        scaled.push(s.round() as i64);
-    }
+    // Pre-pass: validate non-finite and overflow, and find scaled minimum
+    let scaled_min = ca
+        .into_no_null_iter()
+        .try_fold(i64::MAX, |min_acc, v| {
+            if !v.is_finite() {
+                return Err(EntroGdError::InvalidDataType {
+                    message: format!(
+                        "column '{}' contains a non-finite value ({}) that cannot be scaled",
+                        name, v
+                    ),
+                });
+            }
+            let s = v * multiplier;
+            if s < i64::MIN as f64 || s > i64::MAX as f64 {
+                return Err(EntroGdError::InvalidDataType {
+                    message: format!(
+                        "column '{}' overflows i64 once scaled by 10^{}",
+                        name, decimal_scale
+                    ),
+                });
+            }
+            Ok(min_acc.min(s.round() as i64))
+        })?;
 
     match options.float_scaling {
-        FloatScalingMode::Disabled => unreachable!("handled above"),
+        FloatScalingMode::Disabled => unreachable!(),
         FloatScalingMode::ScaledSignedInt => {
-            // Fast path: skip scanning for the true minimum and bias by the
-            // scaled type's fixed lower bound instead.
-            let min_value = i64::MIN;
-            let (offset_values, range) = offset_to_unsigned(&scaled, min_value);
+            let transform = FeatureTransform::ScaledSignedInt { decimal_scale };
+            let out = apply_transform(&casted, &transform).map_err(|e| cast_err(&name, e))?;
+            let range = out
+                .u64()
+                .map_err(|e| cast_err(&name, e))?
+                .max()
+                .unwrap_or(0);
             Ok(TransformedColumn {
                 spec: FeatureSpec {
                     data_type: FeatureDataType::smallest_unsigned_for(range),
-                    transform: FeatureTransform::ScaledSignedInt { decimal_scale },
+                    transform,
                 },
-                values: offset_values,
+                series: out,
             })
         }
         FloatScalingMode::ScaledOffsetSignedInt => {
-            let min_value = *scaled.iter().min().ok_or_else(|| empty_column_err(&name))?;
-            let (offset_values, range) = offset_to_unsigned(&scaled, min_value);
+            let transform = FeatureTransform::ScaledOffsetSignedInt {
+                decimal_scale,
+                min_value: scaled_min,
+            };
+            let out = apply_transform(&casted, &transform).map_err(|e| cast_err(&name, e))?;
+            let range = out
+                .u64()
+                .map_err(|e| cast_err(&name, e))?
+                .max()
+                .unwrap_or(0);
             Ok(TransformedColumn {
                 spec: FeatureSpec {
                     data_type: FeatureDataType::smallest_unsigned_for(range),
-                    transform: FeatureTransform::ScaledOffsetSignedInt {
-                        decimal_scale,
-                        min_value,
-                    },
+                    transform,
                 },
-                values: offset_values,
+                series: out,
             })
         }
     }
-}
-
-/// Store a float's raw IEEE-754 bit pattern, unmodified (no zero-normalization
-/// makes sense on unscaled floats, since bit-for-bit reproduction is the point).
-fn transform_float_column_raw_bits(series: &Series) -> Result<TransformedColumn, EntroGdError> {
-    let name = series.name().to_string();
-    let data_type: FeatureDataType = series.dtype().clone().try_into()?;
-
-    let values: Vec<u64> = match data_type {
-        FeatureDataType::Float32 => {
-            let casted = series
-                .cast(&DataType::Float32)
-                .map_err(|e| cast_err(&name, e))?;
-            let ca = casted.f32().map_err(|e| cast_err(&name, e))?;
-            ca.into_no_null_iter().map(|v| v.to_bits() as u64).collect()
-        }
-        _ => {
-            let casted = series
-                .cast(&DataType::Float64)
-                .map_err(|e| cast_err(&name, e))?;
-            let ca = casted.f64().map_err(|e| cast_err(&name, e))?;
-            ca.into_no_null_iter().map(|v| v.to_bits()).collect()
-        }
-    };
-
-    Ok(TransformedColumn {
-        spec: FeatureSpec {
-            data_type,
-            transform: FeatureTransform::None,
-        },
-        values,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1187,7 +1233,13 @@ mod tests {
             transformed.spec.transform,
             FeatureTransform::OffsetSignedInt { min_value: -10 }
         );
-        assert_eq!(transformed.values, vec![0, 10, 15, 30]);
+        let values: Vec<u64> = transformed
+            .series
+            .u64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        assert_eq!(values, vec![0, 10, 15, 30]);
     }
 
     #[test]
@@ -1201,7 +1253,13 @@ mod tests {
             transformed.spec.transform,
             FeatureTransform::OffsetUnsignedInt { min_value: 100 }
         );
-        assert_eq!(transformed.values, vec![0, 5, 10]);
+        let values: Vec<u64> = transformed
+            .series
+            .u64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        assert_eq!(values, vec![0, 5, 10]);
     }
 
     #[test]
@@ -1222,7 +1280,13 @@ mod tests {
             }
             other => panic!("unexpected transform: {:?}", other),
         }
-        assert_eq!(transformed.values, vec![75, 150, 0]);
+        let values: Vec<u64> = transformed
+            .series
+            .u64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        assert_eq!(values, vec![75, 150, 0]);
     }
 
     #[test]
