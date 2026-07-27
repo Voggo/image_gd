@@ -2,10 +2,10 @@ use bitvec::prelude::*;
 use image::DynamicImage;
 use std::path::PathBuf;
 
-pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
+pub use crate::compression::data::{ImageColorModel, ImageGroupingTransform};
 
 use crate::ScopedTimer;
-use crate::compression::preprocessor::{
+use crate::compression::data::{
     BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD,
     FeatureDataType, FeatureSpec, FeatureTransform, ImageReconstructionInfo, PixelGrouping,
     aligned_stride, append_row_padding,

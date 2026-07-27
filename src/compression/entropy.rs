@@ -1,4 +1,4 @@
-use crate::compression::preprocessor::BitDataSet;
+use crate::compression::data::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -113,7 +113,7 @@ pub fn calculate_entropy(bit_data: &BitDataSet) -> Vec<EntropyBitScore> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{
+    use crate::compression::data::{
         BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
     };
     use pretty_assertions::assert_eq;

@@ -9,7 +9,7 @@ use super::encoding_core::{
 };
 
 use crate::compression::base_table::PreEncodeContext;
-use crate::compression::preprocessor::BitDataSet;
+use crate::compression::data::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;

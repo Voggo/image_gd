@@ -9,8 +9,8 @@ use png::{
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::compression::encoding::BaseTable;
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError, IgdFile};
 

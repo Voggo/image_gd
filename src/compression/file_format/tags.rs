@@ -1,4 +1,4 @@
-use crate::compression::preprocessor::FeatureDataType;
+use crate::compression::data::FeatureDataType;
 use crate::error::EntroGdError;
 
 pub(super) const ENCODING_TAG_NORMAL: u8 = 0;

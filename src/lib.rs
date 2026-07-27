@@ -1,10 +1,10 @@
 pub mod compression;
-pub mod data_loader;
 pub mod error;
 pub mod filter_pipeline;
 pub mod timing;
 mod utils;
 
+pub use compression::data::load_csv;
 pub use compression::{
     BaseBitImpl, BaseSelectionContext, BitData, BitDataCompressionInfo, BitDataInfo,
     BitDataReconstructionInfo, BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet,
@@ -16,13 +16,12 @@ pub use compression::{
     FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
     IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
     ImageReconstructionInfo, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, OpenImage, PixelGrouping,
-    PreEncodeContext, PreprocessOptions, ReconstructDataFrame, RleDeviationOffsetData, SaveEgdFile, SaveIgdFile,
-    SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
+    PreEncodeContext, PreprocessOptions, ReconstructDataFrame, RleDeviationOffsetData, SaveEgdFile,
+    SaveIgdFile, SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
     SelectBasesThreshold, calculate_entropy, decompress_egd_to_csv, decompress_igd_to_image,
     load_and_decompress_egd, load_and_decompress_igd, reconstruct_feature_value,
     reconstruct_to_dataframe, write_bitdata_as_image,
 };
-pub use data_loader::load_csv;
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
 pub use timing::ScopedTimer;

@@ -11,7 +11,7 @@ use image_gd::load_csv;
 use image_gd::prelude::*;
 use image_gd::{
     BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet, BuildSortedBaseTable,
-    EntroGdError, PreprocessOptions,
+    EntroGdError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

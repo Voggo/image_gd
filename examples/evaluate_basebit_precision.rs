@@ -1,6 +1,6 @@
 use image_gd::compression::BaseBitHyperLogLogCount;
 use image_gd::compression::base_bits::BaseBitGroups;
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::load_csv;
 use image_gd::{
     BitDataSet, BuildImageBitDataSet, EntroGdError, Filter, FilterExt, ImageColorModel,

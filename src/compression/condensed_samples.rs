@@ -1,7 +1,7 @@
 use crate::compression::base_bits::BaseBitGroups;
+use crate::compression::data::BitDataSet;
 use crate::compression::encoding::CondensedSamples;
 use crate::compression::entropy::{ConstantBitPolarity, EntropyScoredContext};
-use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -255,7 +255,7 @@ fn append_condensed_samples(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{BitDataInfo, FeatureDataType, FeatureSpec};
+    use crate::compression::data::{BitDataInfo, FeatureDataType, FeatureSpec};
 
     // ============================================================================
     // Helper Functions for Test Data Construction
@@ -292,14 +292,14 @@ mod tests {
             let features = (0..self.num_features)
                 .map(|_| FeatureSpec {
                     data_type: FeatureDataType::UInt(self.bits_per_feature as u16),
-                    transform: crate::compression::preprocessor::FeatureTransform::None,
+                    transform: crate::compression::data::FeatureTransform::None,
                 })
                 .collect();
 
             let info =
                 BitDataInfo::new(features, total_bits).expect("failed to create BitDataInfo");
 
-            let data_struct = crate::compression::preprocessor::BitData {
+            let data_struct = crate::compression::data::BitData {
                 data,
                 chunk_size,
                 stride: chunk_size,

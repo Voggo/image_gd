@@ -1,6 +1,6 @@
 use crate::compression::base_bits::{BaseBit, BaseBitGroups, BaseBitHyperLogLogCount};
+use crate::compression::data::BitDataSet;
 use crate::compression::entropy::{ConstantBitPolarity, EntropyScoredContext};
-use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;

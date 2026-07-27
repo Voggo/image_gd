@@ -5,12 +5,12 @@ use super::egd::EgdFile;
 use super::path_utils::ensure_igd_extension;
 
 use crate::ScopedTimer;
-use crate::compression::decompression::{decompress_file, write_bitdata_as_image};
-use crate::compression::encoding::CompressedData;
-use crate::compression::preprocessor::{
+use crate::compression::data::{
     BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     ImageReconstructionInfo, PixelGrouping,
 };
+use crate::compression::decompression::{decompress_file, write_bitdata_as_image};
+use crate::compression::encoding::CompressedData;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 

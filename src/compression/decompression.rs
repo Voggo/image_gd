@@ -1,7 +1,7 @@
-use crate::compression::encoding::{BaseTable, CompressedData, CondensedSamples, EncodedData};
-use crate::compression::preprocessor::{
+use crate::compression::data::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
 };
+use crate::compression::encoding::{BaseTable, CompressedData, CondensedSamples, EncodedData};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -226,7 +226,7 @@ pub fn decompress_file(mut compressed: CompressedData) -> Result<BitDataSet, Ent
 fn decompress_file_parallel(
     compressed: &CompressedData,
     encoded_data: &EncodedData,
-    data_info: &crate::compression::preprocessor::BitDataInfo,
+    data_info: &crate::compression::data::BitDataInfo,
     chunk_size: usize,
     stride: usize,
     original_num_rows: usize,
@@ -291,7 +291,7 @@ fn decompress_file_parallel(
 
 fn decompress_file_sequential(
     compressed: &CompressedData,
-    data_info: &crate::compression::preprocessor::BitDataInfo,
+    data_info: &crate::compression::data::BitDataInfo,
     chunk_size: usize,
     stride: usize,
     original_num_rows: usize,
@@ -724,10 +724,8 @@ fn save_raw_image(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compression::data::{BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform};
     use crate::compression::encoding::{DeviationData, DeviationSample, EncodedData};
-    use crate::compression::preprocessor::{
-        BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
-    };
 
     // ============================================================================
     // HELPER FUNCTIONS FOR CONSTRUCTING TEST DATA

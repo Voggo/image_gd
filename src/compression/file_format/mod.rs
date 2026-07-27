@@ -21,15 +21,15 @@ mod tests {
     use crate::compression::base_selection::SelectBases;
     use crate::compression::base_table::BuildBaseTable;
     use crate::compression::condensed_samples::GenCondensedSamples;
-    use crate::compression::decompression::decompress_file;
-    use crate::compression::encoding::{CompressedData, EncodedData};
-    use crate::compression::encoding::{EncodeData, EncodeDataHuffman};
-    use crate::compression::entropy::Entropy;
-    use crate::compression::preprocessor::{
+    use crate::compression::data::{
         BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureDataType, FeatureSpec,
         FeatureTransform, ImageColorModel, ImageGroupingTransform, ImageReconstructionInfo,
         PixelGrouping,
     };
+    use crate::compression::decompression::decompress_file;
+    use crate::compression::encoding::{CompressedData, EncodedData};
+    use crate::compression::encoding::{EncodeData, EncodeDataHuffman};
+    use crate::compression::entropy::Entropy;
     use crate::filter_pipeline::{Filter, FilterExt};
     use bitvec::prelude::*;
 

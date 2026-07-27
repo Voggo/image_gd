@@ -1,4 +1,4 @@
-use crate::compression::preprocessor::BitDataSet;
+use crate::compression::data::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
 use fxhash::{FxHashMap, FxHashSet};
@@ -686,7 +686,7 @@ impl BaseBit for BaseBitHyperLogLogCount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{
+    use crate::compression::data::{
         BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
     };
 

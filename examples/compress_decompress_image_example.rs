@@ -1,7 +1,7 @@
 use image_gd::ImageColorModel;
 use image_gd::ScopedTimer;
 
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{EntroGdError, init_logging, write_bitdata_as_image};
 use std::env;

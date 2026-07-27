@@ -1,7 +1,7 @@
 use crate::compression::base_bits::{BaseBit, EncodingContext};
 use crate::compression::base_selection::BaseSelectionContext;
+use crate::compression::data::BitDataSet;
 use crate::compression::entropy::ConstantBitPolarity;
-use crate::compression::preprocessor::BitDataSet;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -287,10 +287,10 @@ pub(crate) fn project_selected_bases_to_variable(
 mod tests {
     use super::*;
     use crate::compression::base_bits::BaseBitGroups;
-    use crate::compression::entropy::ConstantBitPolarity;
-    use crate::compression::preprocessor::{
+    use crate::compression::data::{
         BitData, BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
     };
+    use crate::compression::entropy::ConstantBitPolarity;
 
     fn create_test_bit_data_set(rows_and_bits: Vec<Vec<bool>>) -> BitDataSet {
         assert!(!rows_and_bits.is_empty(), "Must have at least one row");

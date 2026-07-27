@@ -3,7 +3,7 @@ use bitvec::prelude::*;
 use rayon::prelude::*;
 
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo, PreEncodeContext};
-use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
+use crate::compression::data::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -200,7 +200,9 @@ pub(crate) fn huffman_row_layout(
             }
             Ok((original_num_samples, row_count, row_width))
         }
-        BitDataReconstructionInfo::Tabular { .. } => Ok((original_num_samples, original_num_samples, 1)),
+        BitDataReconstructionInfo::Tabular { .. } => {
+            Ok((original_num_samples, original_num_samples, 1))
+        }
     }
 }
 

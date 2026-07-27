@@ -12,13 +12,13 @@ use super::tags::{
 
 use crate::ScopedTimer;
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo};
+use crate::compression::data::{
+    BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
+};
 use crate::compression::decompression::decompress_file;
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
     HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationOffsetData,
-};
-use crate::compression::preprocessor::{
-    BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
 };
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -1265,7 +1265,7 @@ pub fn decompress_egd_to_csv<P: AsRef<Path>, Q: AsRef<Path>>(
     output_path: Q,
 ) -> Result<PathBuf, EntroGdError> {
     let bit_data = load_and_decompress_egd(input_path)?;
-    let mut df = crate::compression::preprocessor::reconstruct_to_dataframe(&bit_data)?;
+    let mut df = crate::compression::tabular_processor::reconstruct_to_dataframe(&bit_data)?;
     let target = ensure_csv_extension(output_path.as_ref());
     let mut f = std::fs::File::create(&target)?;
     CsvWriter::new(&mut f).finish(&mut df)?;

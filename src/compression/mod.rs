@@ -2,14 +2,15 @@ pub mod base_bits;
 pub mod base_selection;
 pub mod base_table;
 pub mod condensed_samples;
+pub mod data;
 pub mod decompression;
 #[path = "encoding/mod.rs"]
 pub mod encoding;
 pub mod entropy;
 #[path = "file_format/mod.rs"]
 pub mod file_format;
-pub mod image_preprocessor;
-pub mod preprocessor;
+pub mod image_processor;
+pub mod tabular_processor;
 
 pub use base_bits::{BaseBit, BaseBitGroups, BaseBitHyperLogLogCount};
 pub use base_selection::{
@@ -18,6 +19,11 @@ pub use base_selection::{
 };
 pub use base_table::{BuildBaseTable, BuildSortedBaseTable, PreEncodeContext};
 pub use condensed_samples::GenCondensedSamples;
+pub use data::{
+    BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
+    DEFAULT_ALIGN_ROWS_TO_WORD, FeatureDataType, FeatureSpec, FeatureTransform, ImageColorModel,
+    ImageGroupingTransform, ImageReconstructionInfo, PixelGrouping, reconstruct_feature_value,
+};
 pub use decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRandomAccessHandle, decompress_analytics,
     decompress_file, write_bitdata_as_image,
@@ -37,12 +43,8 @@ pub use file_format::{
     decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
     load_and_decompress_igd,
 };
-pub use image_preprocessor::{
-    BuildImageBitDataSet, ImageColorModel, ImageColorSpace, ImageGroupingTransform, OpenImage,
-};
-pub use preprocessor::{
-    BitData, BitDataCompressionInfo, BitDataInfo, BitDataReconstructionInfo, BitDataSet,
-    BuildBitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD, FeatureDataType, FeatureSpec, FeatureTransform,
-    FloatScalingMode, ImageReconstructionInfo, PixelGrouping, PreprocessOptions,
-    ReconstructDataFrame, reconstruct_feature_value, reconstruct_to_dataframe,
+pub use image_processor::{BuildImageBitDataSet, ImageColorSpace, OpenImage};
+pub use tabular_processor::{
+    BuildBitDataSet, FloatScalingMode, PreprocessOptions, ReconstructDataFrame,
+    reconstruct_to_dataframe,
 };
