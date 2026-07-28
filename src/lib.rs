@@ -15,12 +15,14 @@ pub use compression::{
     Entropy, EntropyBitScore, EntropyScoredContext, FORMAT_VERSION, FeatureDataType, FeatureSpec,
     FeatureTransform, FloatScalingMode, GenCondensedSamples, IMAGE_FORMAT_VERSION,
     IMAGE_MAGIC_BYTES, IgdFile, ImageColorModel, ImageColorSpace, ImageGroupingTransform,
-    ImageReconstructionInfo, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, OpenImage, PixelGrouping,
-    PreEncodeContext, PreprocessOptions, ReconstructDataFrame, RleDeviationOffsetData, SaveEgdFile,
-    SaveIgdFile, SelectBases, SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits,
-    SelectBasesThreshold, calculate_entropy, decompress_egd_to_csv, decompress_igd_to_image,
-    load_and_decompress_egd, load_and_decompress_igd, reconstruct_feature_value,
-    reconstruct_to_dataframe, write_bitdata_as_image,
+    ImageReconstructionInfo, LoadEgdFile, LoadIgdFile, LoadTgdFile, MAGIC_BYTES, OpenImage,
+    PixelGrouping, PreEncodeContext, PreprocessOptions, ReconstructDataFrame,
+    RleDeviationOffsetData, SaveEgdFile, SaveIgdFile, SaveTgdFile, SelectBases,
+    SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits, SelectBasesThreshold,
+    TGD_FORMAT_VERSION, TGD_MAGIC_BYTES, TgdFile, calculate_entropy, decompress_igd_to_image,
+    decompress_tgd_to_csv, load_and_decompress_egd, load_and_decompress_igd,
+    load_and_decompress_tgd, reconstruct_feature_value, reconstruct_to_dataframe,
+    write_bitdata_as_image,
 };
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};
@@ -33,9 +35,9 @@ pub mod prelude {
         DecompressRandomAccessHandle, DeltaEncodeBaseTable, DeltaEncodeBaseTableFixed, EncodeData,
         EncodeDataHuffman, EncodeDataOffsetRLE, Entropy, Filter, FilterExt, FloatScalingMode,
         GenCondensedSamples, ImageColorModel, ImageColorSpace, ImageGroupingTransform, LoadEgdFile,
-        LoadIgdFile, OpenImage, PixelGrouping, PreprocessOptions, ReconstructDataFrame,
-        SaveEgdFile, SaveIgdFile, SelectBases, SelectBasesAdaptive, SelectBasesDebug,
-        SelectBasesProfileAllBits, SelectBasesThreshold,
+        LoadIgdFile, LoadTgdFile, OpenImage, PixelGrouping, PreprocessOptions,
+        ReconstructDataFrame, SaveEgdFile, SaveIgdFile, SaveTgdFile, SelectBases,
+        SelectBasesAdaptive, SelectBasesDebug, SelectBasesProfileAllBits, SelectBasesThreshold,
     };
 }
 

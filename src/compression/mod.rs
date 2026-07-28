@@ -39,9 +39,10 @@ pub use encoding::{
 pub use entropy::{Entropy, EntropyBitScore, EntropyScoredContext, calculate_entropy};
 pub use file_format::{
     DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES,
-    IgdFile, LoadEgdFile, LoadIgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile,
-    decompress_egd_to_csv, decompress_igd_to_image, load_and_decompress_egd,
-    load_and_decompress_igd,
+    IgdFile, LoadEgdFile, LoadIgdFile, LoadTgdFile, MAGIC_BYTES, SaveEgdFile, SaveIgdFile,
+    SaveTgdFile, TGD_FORMAT_VERSION, TGD_MAGIC_BYTES, TgdFile, decompress_igd_to_image,
+    decompress_tgd_to_csv, load_and_decompress_egd, load_and_decompress_igd,
+    load_and_decompress_tgd,
 };
 pub use image_processor::{BuildImageBitDataSet, ImageColorSpace, OpenImage};
 pub use tabular_processor::{

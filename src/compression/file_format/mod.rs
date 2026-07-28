@@ -2,16 +2,21 @@ mod egd;
 mod igd;
 mod path_utils;
 pub(crate) mod tags;
+mod tgd;
 
 pub use egd::{
     DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile,
-    decompress_egd_to_csv, load_and_decompress_egd, load_compressed_from_egd,
-    save_compressed_as_egd,
+    load_and_decompress_egd, load_compressed_from_egd, save_compressed_as_egd,
 };
 pub use igd::{
     IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadIgdFile, SaveIgdFile,
     decompress_igd_to_image, load_and_decompress_igd, load_compressed_from_igd,
     save_compressed_as_igd,
+};
+pub use tgd::{
+    TGD_FORMAT_VERSION, TGD_MAGIC_BYTES, LoadTgdFile, SaveTgdFile, TgdFile,
+    decompress_tgd_to_csv, load_and_decompress_tgd, load_compressed_from_tgd,
+    save_compressed_as_tgd,
 };
 
 #[cfg(test)]
@@ -32,6 +37,7 @@ mod tests {
     use crate::compression::entropy::Entropy;
     use crate::filter_pipeline::{Filter, FilterExt};
     use bitvec::prelude::*;
+    use polars::prelude::DataType;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
         Entropy {}
@@ -412,6 +418,67 @@ mod tests {
                 decompressed_data.get_chunk(row),
                 bit_data.data.get_chunk(row)
             );
+        }
+    }
+
+    #[test]
+    fn test_tgd_preserves_long_column_names() {
+        let data = BitData {
+            data: bitvec![usize, Lsb0; 0; 384],
+            num_rows: 6,
+            stride: 64,
+            chunk_size: 64,
+        };
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UInt(8),
+            transform: FeatureTransform::None,
+        }; 8];
+
+        let column_names = vec![
+            "a_very_long_column_name_that_exceeds_typical_lengths_123456".to_string(),
+            "b".to_string(),
+            "another_extremely_verbose_header_describing_an_obscure_metric_abc".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+            "f".to_string(),
+            "this_is_the_eighth_column_with_a_particularly_verbose_name_xyz".to_string(),
+        ];
+        let original_dtypes = vec![
+            DataType::Float64,
+            DataType::Int32,
+            DataType::UInt8,
+            DataType::Float32,
+            DataType::Int64,
+            DataType::UInt16,
+            DataType::Float16,
+            DataType::UInt64,
+        ];
+
+        let info = BitDataInfo::new_with_reconstruction_info(
+            features,
+            6 * 64,  // num_rows * chunk_size
+            BitDataReconstructionInfo::Tabular {
+                column_names: column_names.clone(),
+                original_dtypes: original_dtypes.clone(),
+            },
+        )
+        .unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_compression_pipeline().process(bit_data).unwrap();
+        let tgd = TgdFile::from_compressed_data(compressed).unwrap();
+        let loaded = tgd.to_compressed_data().unwrap();
+
+        match &loaded.metadata.reconstruction {
+            BitDataReconstructionInfo::Tabular {
+                column_names: loaded_names,
+                original_dtypes: loaded_dtypes,
+            } => {
+                assert_eq!(*loaded_names, column_names);
+                assert_eq!(*loaded_dtypes, original_dtypes);
+            }
+            _ => panic!("expected Tabular reconstruction metadata"),
         }
     }
 }

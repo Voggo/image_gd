@@ -1,9 +1,8 @@
 use fxhash::FxHashMap;
-use polars::prelude::{CsvWriter, SerWriter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::path_utils::{ensure_csv_extension, ensure_egd_extension};
+use super::path_utils::ensure_egd_extension;
 use super::tags::{
     BASE_TABLE_TAG_DELTA_FIXED, BASE_TABLE_TAG_DELTA_UNARY, BASE_TABLE_TAG_RAW,
     ENCODING_TAG_HUFFMAN_BASE_ID_ONLY, ENCODING_TAG_NORMAL, ENCODING_TAG_RLE_OFFSET,
@@ -1258,16 +1257,4 @@ pub fn load_compressed_from_egd<P: AsRef<Path>>(
 pub fn load_and_decompress_egd<P: AsRef<Path>>(input_path: P) -> Result<BitDataSet, EntroGdError> {
     let compressed = load_compressed_from_egd(input_path)?;
     decompress_file(compressed)
-}
-
-pub fn decompress_egd_to_csv<P: AsRef<Path>, Q: AsRef<Path>>(
-    input_path: P,
-    output_path: Q,
-) -> Result<PathBuf, EntroGdError> {
-    let bit_data = load_and_decompress_egd(input_path)?;
-    let mut df = crate::compression::tabular_processor::reconstruct_to_dataframe(&bit_data)?;
-    let target = ensure_csv_extension(output_path.as_ref());
-    let mut f = std::fs::File::create(&target)?;
-    CsvWriter::new(&mut f).finish(&mut df)?;
-    Ok(target)
 }

@@ -28,10 +28,10 @@ fn main() -> Result<(), EntroGdError> {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("dataset");
-    let parent = input.parent().unwrap_or_else(|| Path::new("."));
 
-    let egd_path = parent.join(format!("{}.egd", stem));
-    let decompressed_path = parent.join(format!("{}-decompressed.csv", stem));
+    let tgd_path = Path::new("data/compressed").join(format!("{}.tgd", stem));
+    let decompressed_path =
+        Path::new("data/decompressed").join(format!("{}-decompressed.csv", stem));
 
     tracing::info!("Loading CSV: {}", input.display());
 
@@ -58,24 +58,27 @@ fn main() -> Result<(), EntroGdError> {
         .then(BuildBaseTable {})
         .then(EncodeData {});
 
+    fs::create_dir_all("data/compressed")?;
+    fs::create_dir_all("data/decompressed")?;
+
     tracing::info!("Compressing...");
     let compressed = compression_pipeline.process(bit_data)?;
 
-    tracing::info!("Saving EGD: {}", egd_path.display());
-    let compressed_path = SaveEgdFile {
-        output_path: egd_path,
+    tracing::info!("Saving TGD: {}", tgd_path.display());
+    let compressed_path = SaveTgdFile {
+        output_path: tgd_path,
     }
     .process(compressed.clone())?;
 
-    let egd_size_bytes = fs::metadata(&compressed_path)?.len() as usize;
-    let egd_size_bits = egd_size_bytes.saturating_mul(8);
+    let tgd_size_bytes = fs::metadata(&compressed_path)?.len() as usize;
+    let tgd_size_bits = tgd_size_bytes.saturating_mul(8);
 
     tracing::info!("Compression complete:");
     tracing::info!("  Original: {} bits", original_size_bits);
     tracing::info!(
         "  Compressed file: {} bytes ({} bits)",
-        egd_size_bytes,
-        egd_size_bits
+        tgd_size_bytes,
+        tgd_size_bits
     );
     tracing::info!(
         "  Encoded stream: {} bits",
@@ -90,13 +93,13 @@ fn main() -> Result<(), EntroGdError> {
     if original_size_bits > 0 {
         tracing::info!(
             "  Compression ratio: {:.2}% ({:.1} KB on disk)",
-            100.0 * egd_size_bits as f64 / original_size_bits as f64,
-            egd_size_bytes as f64 / 1024.0
+            100.0 * tgd_size_bits as f64 / original_size_bits as f64,
+            tgd_size_bytes as f64 / 1024.0
         );
     }
 
     tracing::info!("Decompressing...");
-    let compressed_data = LoadEgdFile {}.process(compressed_path.clone())?;
+    let compressed_data = LoadTgdFile {}.process(compressed_path.clone())?;
     let decompressed = DecompressFileData {}.process(compressed_data.clone())?;
 
     tracing::info!(
