@@ -50,11 +50,7 @@ fn main() -> Result<(), EntroGdError> {
 
     let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 100 })
-        .then(SelectBasesAdaptive {
-            width_decay: 0.45,
-            patience: 5,
-            base_bit_impl: BaseBitImpl::HyperLogLogCount,
-        })
+        .then(SelectBases { patience: 20 })
         .then(BuildBaseTable {})
         .then(EncodeData {});
 
@@ -74,15 +70,20 @@ fn main() -> Result<(), EntroGdError> {
     let tgd_size_bits = tgd_size_bytes.saturating_mul(8);
 
     tracing::info!("Compression complete:");
-    tracing::info!("  Original: {} bits", original_size_bits);
     tracing::info!(
-        "  Compressed file: {} bytes ({} bits)",
-        tgd_size_bytes,
-        tgd_size_bits
+        "  Original: {} bits ({} Bytes)",
+        original_size_bits,
+        original_size_bits / 8
     );
     tracing::info!(
-        "  Encoded stream: {} bits",
-        compressed.encoded_data.get_encoded_size()
+        "  Compressed file: {} bits ({} bytes)",
+        tgd_size_bits,
+        tgd_size_bytes
+    );
+    tracing::info!(
+        "  Encoded stream: {} bits ({} Bytes)",
+        compressed.encoded_data.get_encoded_size(),
+        compressed.encoded_data.get_encoded_size() / 8
     );
     tracing::info!("  Base table entries: {}", compressed.base_table.len());
     tracing::info!(
