@@ -30,18 +30,26 @@ fn organize_entropy_by_feature(
     }
 
     let mut result = zero_entropy;
-    let max_bits_per_feature = entropy_by_feature
-        .iter()
-        .map(|f| f.len())
-        .max()
-        .unwrap_or(0);
-
-    for i in 0..max_bits_per_feature {
-        for feature_entropy in entropy_by_feature.iter().take(num_features) {
-            if let Some(entry) = feature_entropy.get(i) {
-                result.push(*entry);
+    let mut pointers = vec![0usize; num_features];
+    loop {
+        let mut candidates: Vec<((usize, f64), usize)> = Vec::with_capacity(num_features);
+        for (feat_idx, feature_entropy) in entropy_by_feature.iter().enumerate() {
+            if let Some(&entry) = feature_entropy.get(pointers[feat_idx]) {
+                candidates.push((entry, feat_idx));
             }
         }
+        if candidates.is_empty() {
+            break;
+        }
+        candidates.sort_by(|a, b| {
+            b.0 .1
+                .partial_cmp(&a.0 .1)
+                .unwrap()
+                .then_with(|| b.0 .0.cmp(&a.0 .0))
+        });
+        let ((bit_pos, entropy), chosen_feat_idx) = candidates[0];
+        result.push((bit_pos, entropy));
+        pointers[chosen_feat_idx] += 1;
     }
 
     result
