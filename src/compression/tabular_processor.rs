@@ -11,7 +11,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
-const MAX_DECIMAL_SCALE: u8 = 9;
+const MAX_DECIMAL_SCALE: u8 = 2;
 
 // ---------------------------------------------------------------------------
 // Tabular ingestion
@@ -408,7 +408,7 @@ fn transform_signed_column(
 
     Ok(TransformedColumn {
         spec: FeatureSpec {
-            data_type: FeatureDataType::smallest_unsigned_for(range),
+            data_type: FeatureDataType::smallest_unsigned_for(range as u128),
             transform,
         },
         series: out,
@@ -429,7 +429,7 @@ fn transform_unsigned_column(
         let max_value = ca.max().ok_or_else(|| empty_column_err(&name))?;
         return Ok(TransformedColumn {
             spec: FeatureSpec {
-                data_type: FeatureDataType::smallest_unsigned_for(max_value),
+                data_type: FeatureDataType::smallest_unsigned_for(max_value as u128),
                 transform: FeatureTransform::None,
             },
             series: casted,
@@ -447,7 +447,7 @@ fn transform_unsigned_column(
 
     Ok(TransformedColumn {
         spec: FeatureSpec {
-            data_type: FeatureDataType::smallest_unsigned_for(range),
+            data_type: FeatureDataType::smallest_unsigned_for(range as u128),
             transform,
         },
         series: out,
@@ -514,7 +514,7 @@ fn transform_float_column(
                 .unwrap_or(0);
             Ok(TransformedColumn {
                 spec: FeatureSpec {
-                    data_type: FeatureDataType::smallest_unsigned_for(range),
+                    data_type: FeatureDataType::smallest_unsigned_for(range as u128),
                     transform,
                 },
                 series: out,
@@ -533,7 +533,7 @@ fn transform_float_column(
                 .unwrap_or(0);
             Ok(TransformedColumn {
                 spec: FeatureSpec {
-                    data_type: FeatureDataType::smallest_unsigned_for(range),
+                    data_type: FeatureDataType::smallest_unsigned_for(range as u128),
                     transform,
                 },
                 series: out,
@@ -651,16 +651,28 @@ mod tests {
             FeatureDataType::UInt16
         );
         assert_eq!(
-            FeatureDataType::smallest_unsigned_for(u16::MAX as u64),
+            FeatureDataType::smallest_unsigned_for(u16::MAX as u128),
             FeatureDataType::UInt16
         );
         assert_eq!(
-            FeatureDataType::smallest_unsigned_for(u16::MAX as u64 + 1),
+            FeatureDataType::smallest_unsigned_for(u16::MAX as u128 + 1),
             FeatureDataType::UInt32
         );
         assert_eq!(
-            FeatureDataType::smallest_unsigned_for(u32::MAX as u64 + 1),
-            FeatureDataType::UInt(33)
+            FeatureDataType::smallest_unsigned_for(u32::MAX as u128),
+            FeatureDataType::UInt32
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(u32::MAX as u128 + 1),
+            FeatureDataType::UInt64
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(u64::MAX as u128),
+            FeatureDataType::UInt64
+        );
+        assert_eq!(
+            FeatureDataType::smallest_unsigned_for(u64::MAX as u128 + 1),
+            FeatureDataType::UInt128
         );
     }
 

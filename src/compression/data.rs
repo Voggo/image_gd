@@ -86,6 +86,7 @@ pub enum FeatureDataType {
     UInt16,
     UInt32,
     UInt64,
+    UInt128,
     UInt(u16),
 }
 
@@ -126,22 +127,24 @@ impl FeatureDataType {
             FeatureDataType::UInt16 => 16,
             FeatureDataType::UInt32 => 32,
             FeatureDataType::UInt64 => 64,
+            FeatureDataType::UInt128 => 128,
             FeatureDataType::UInt(bits) => *bits as usize,
         }
     }
 
     /// Smallest unsigned integer type that can hold every value in
     /// `0..=max_value`.
-    pub(crate) fn smallest_unsigned_for(max_value: u64) -> FeatureDataType {
-        if max_value <= u8::MAX as u64 {
+    pub(crate) fn smallest_unsigned_for(max_value: u128) -> FeatureDataType {
+        if max_value <= u8::MAX as u128 {
             FeatureDataType::UInt8
-        } else if max_value <= u16::MAX as u64 {
+        } else if max_value <= u16::MAX as u128 {
             FeatureDataType::UInt16
-        } else if max_value <= u32::MAX as u64 {
+        } else if max_value <= u32::MAX as u128 {
             FeatureDataType::UInt32
+        } else if max_value <= u64::MAX as u128 {
+            FeatureDataType::UInt64
         } else {
-            let bits = usize::BITS as usize - max_value.leading_zeros() as usize;
-            FeatureDataType::UInt(bits.max(1) as u16)
+            FeatureDataType::UInt128
         }
     }
 }
@@ -691,6 +694,10 @@ pub fn reconstruct_feature_value(bits: &BitSlice<usize, Lsb0>, spec: &FeatureSpe
             FeatureDataType::Float16 => f64::from(f32::from_bits((raw as u32) << 16)),
             FeatureDataType::Float32 => f64::from(f32::from_bits(raw as u32)),
             FeatureDataType::Float64 => f64::from_bits(raw),
+            FeatureDataType::UInt128 => {
+                let raw128: u128 = bits.load_le::<u128>();
+                raw128 as f64
+            }
             _ => raw as f64,
         },
         FeatureTransform::ScaledSignedInt { decimal_scale } => {

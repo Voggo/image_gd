@@ -22,7 +22,8 @@ pub(super) fn encode_data_type(data_type: FeatureDataType) -> u8 {
         FeatureDataType::Float16 => 8,
         FeatureDataType::Float32 => 9,
         FeatureDataType::Float64 => 10,
-        FeatureDataType::UInt(_) => 11,
+        FeatureDataType::UInt128 => 11,
+        FeatureDataType::UInt(_) => 12,
     }
 }
 
@@ -39,7 +40,8 @@ pub(super) fn decode_data_type(tag: u8) -> Result<FeatureDataType, EntroGdError>
         8 => Ok(FeatureDataType::Float16),
         9 => Ok(FeatureDataType::Float32),
         10 => Ok(FeatureDataType::Float64),
-        11 => Ok(FeatureDataType::UInt(0)),
+        11 => Ok(FeatureDataType::UInt128),
+        12 => Ok(FeatureDataType::UInt(0)),
         _ => Err(EntroGdError::InvalidMetadata {
             message: format!("unsupported feature data type tag {}", tag),
         }),
