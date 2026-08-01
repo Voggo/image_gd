@@ -3,7 +3,7 @@ use image_gd::{
     EntroGdError, PreprocessOptions, ScopedTimer, init_logging, load_csv,
     reconstruct_feature_value, reconstruct_to_dataframe,
 };
-use polars::prelude::{CsvWriter, SerWriter};
+use polars::prelude::{CsvWriter, DataFrame, DataType, SerWriter};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -41,16 +41,21 @@ fn main() -> Result<(), EntroGdError> {
 
     tracing::info!("Loaded: {} rows, {} columns", df.height(), df.width());
 
+    let original_size_bytes = dataframe_memory_size_bytes(&df);
+
     let bit_data = BuildBitDataSet {
         options: PreprocessOptions::default(),
         pad_rows_to_word: false,
     }
     .process(df)?;
-    let original_size_bits = bit_data.data.total_bits();
 
     let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 100 })
-        .then(SelectBases { patience: 20 })
+        .then(SelectBasesAdaptive {
+            width_decay: 0.5,
+            patience: 10,
+            base_bit_impl: BaseBitImpl::Naive,
+        })
         .then(BuildBaseTable {})
         .then(EncodeData {});
 
@@ -67,18 +72,17 @@ fn main() -> Result<(), EntroGdError> {
     .process(compressed.clone())?;
 
     let tgd_size_bytes = fs::metadata(&compressed_path)?.len() as usize;
-    let tgd_size_bits = tgd_size_bytes.saturating_mul(8);
 
     tracing::info!("Compression complete:");
     tracing::info!(
-        "  Original: {} bits ({} Bytes)",
-        original_size_bits,
-        original_size_bits / 8
+        "  Original file: {} bytes ({:.1} KB)",
+        original_size_bytes,
+        original_size_bytes as f64 / 1024.0
     );
     tracing::info!(
-        "  Compressed file: {} bits ({} bytes)",
-        tgd_size_bits,
-        tgd_size_bytes
+        "  Compressed file: {} bytes ({:.1} KB)",
+        tgd_size_bytes,
+        tgd_size_bytes as f64 / 1024.0
     );
     tracing::info!(
         "  Encoded stream: {} bits ({} Bytes)",
@@ -91,11 +95,10 @@ fn main() -> Result<(), EntroGdError> {
         compressed.layout.selected_base_bit_positions()
     );
 
-    if original_size_bits > 0 {
+    if original_size_bytes > 0 && tgd_size_bytes > 0 {
         tracing::info!(
-            "  Compression ratio: {:.2}% ({:.1} KB on disk)",
-            100.0 * tgd_size_bits as f64 / original_size_bits as f64,
-            tgd_size_bytes as f64 / 1024.0
+            "  Compression rate: {:.2}x",
+            original_size_bytes as f64 / tgd_size_bytes as f64
         );
     }
 
@@ -138,4 +141,28 @@ fn main() -> Result<(), EntroGdError> {
 
     tracing::info!("Done.");
     Ok(())
+}
+
+fn dataframe_memory_size_bytes(df: &DataFrame) -> usize {
+    df.columns()
+        .iter()
+        .map(|col: &polars::prelude::Column| {
+            let n = col.len();
+            match col.dtype() {
+                DataType::Int8 | DataType::UInt8 => n,
+                DataType::Int16 | DataType::UInt16 => n * 2,
+                DataType::Int32 | DataType::UInt32 | DataType::Float32 => n * 4,
+                DataType::Int64 | DataType::UInt64 | DataType::Float64 => n * 8,
+                DataType::String => col
+                    .str()
+                    .map(|s: &polars::prelude::StringChunked| {
+                        s.iter()
+                            .map(|v: Option<&str>| v.unwrap_or("").len())
+                            .sum::<usize>()
+                    })
+                    .unwrap_or(0),
+                _ => n * 8,
+            }
+        })
+        .sum()
 }
