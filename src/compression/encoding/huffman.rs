@@ -183,15 +183,7 @@ impl HuffmanDeviationData {
         let expected_row_count = if original_num_samples == 0 {
             0
         } else {
-            if !original_num_samples.is_multiple_of(row_width) {
-                return Err(EntroGdError::InvalidMetadata {
-                    message: format!(
-                        "original sample count {} is not divisible by row width {}",
-                        original_num_samples, row_width
-                    ),
-                });
-            }
-            original_num_samples / row_width
+            original_num_samples.div_ceil(row_width)
         };
 
         if row_offsets.len() != expected_row_count {
@@ -331,7 +323,8 @@ impl HuffmanDeviationData {
             0
         } else {
             let last_row_offset = data.row_offsets[data.row_offsets.len() - 1] as usize;
-            let last_row_len = data.row_width;
+            let last_row_len = data.original_num_samples
+                .saturating_sub((data.row_offsets.len().saturating_sub(1)) * data.row_width);
             data.advance_by_symbols(last_row_offset, last_row_len)?
         };
 

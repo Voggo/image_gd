@@ -11,7 +11,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
-const MAX_DECIMAL_SCALE: u8 = 2;
+const MAX_DECIMAL_SCALE: u8 = 3;
 
 // ---------------------------------------------------------------------------
 // Tabular ingestion

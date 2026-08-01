@@ -57,15 +57,7 @@ impl RleDeviationOffsetData {
         let expected_row_count = if original_num_samples == 0 {
             0
         } else {
-            if !original_num_samples.is_multiple_of(row_width) {
-                return Err(EntroGdError::InvalidMetadata {
-                    message: format!(
-                        "original sample count {} is not divisible by row width {}",
-                        original_num_samples, row_width
-                    ),
-                });
-            }
-            original_num_samples / row_width
+            original_num_samples.div_ceil(row_width)
         };
 
         if row_offsets.len() != expected_row_count {

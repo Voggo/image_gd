@@ -17,7 +17,7 @@ use crate::compression::data::{
 use crate::compression::decompression::decompress_file;
 use crate::compression::encoding::{
     BaseTable, CompressedData, DeltaBaseTableData, DeviationData, EncodedData,
-    HuffmanDeviationData, RLE_LONG_MAX, RLE_SHORT_MAX, RleDeviationOffsetData,
+    HuffmanDeviationData, RLE_LONG_MAX, RleDeviationOffsetData,
 };
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
@@ -208,6 +208,7 @@ impl EgdFile {
                 1 + 4
                     + 1
                     + 1
+                    + 4
                     + 4
                     + canonical_bytes
                     + row_offsets_bytes
@@ -478,6 +479,8 @@ impl EgdFile {
                 buf[off] = l_d as u8;
                 off += 1;
                 buf[off..off + 4].copy_from_slice(&(row_count as u32).to_le_bytes());
+                off += 4;
+                buf[off..off + 4].copy_from_slice(&(huff.row_width() as u32).to_le_bytes());
                 off += 4;
 
                 let symbol_bytes = l_id.div_ceil(8);
@@ -963,12 +966,12 @@ impl EgdFile {
                     off += 1;
                     let m_val = bytes[off];
                     off += 1;
-                    if r > 0 && r.saturating_sub(1) as usize > RLE_LONG_MAX as usize {
+                    if r > RLE_LONG_MAX {
                         return Err(EntroGdError::InvalidMetadata {
                             message: "invalid RLE r value".to_string(),
                         });
                     }
-                    if m_val > 0 && !(RLE_SHORT_MAX + 1..=RLE_LONG_MAX).contains(&m_val) {
+                    if m_val > RLE_LONG_MAX {
                         return Err(EntroGdError::InvalidMetadata {
                             message: "invalid RLE m_val value".to_string(),
                         });
@@ -1029,6 +1032,12 @@ impl EgdFile {
                             message: "Huffman row count does not fit into usize".to_string(),
                         })?;
                 off += 4;
+                let row_width =
+                    usize::try_from(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()))
+                        .map_err(|_| EntroGdError::InvalidMetadata {
+                            message: "Huffman row width does not fit into usize".to_string(),
+                        })?;
+                off += 4;
 
                 if huffman_num_id_bits != num_id_bits {
                     return Err(EntroGdError::InvalidMetadata {
@@ -1079,20 +1088,6 @@ impl EgdFile {
                     row_offsets.push(u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
                     off += 4;
                 }
-
-                let row_width = if row_count == 0 {
-                    0
-                } else {
-                    if !n.is_multiple_of(row_count) {
-                        return Err(EntroGdError::InvalidMetadata {
-                            message: format!(
-                                "original sample count {} is not divisible by Huffman row count {}",
-                                n, row_count
-                            ),
-                        });
-                    }
-                    n / row_count
-                };
 
                 let dev_bit_len = num_samples * huffman_num_deviation_bits;
                 let dev_byte_len = dev_bit_len.div_ceil(8);

@@ -201,7 +201,9 @@ pub(crate) fn huffman_row_layout(
             Ok((original_num_samples, row_count, row_width))
         }
         BitDataReconstructionInfo::Tabular { .. } => {
-            Ok((original_num_samples, original_num_samples, 1))
+            const TABULAR_OFFSET_WIDTH: usize = 1024;
+            let row_count = original_num_samples.div_ceil(TABULAR_OFFSET_WIDTH);
+            Ok((original_num_samples, row_count, TABULAR_OFFSET_WIDTH))
         }
     }
 }
@@ -631,15 +633,6 @@ fn encode_data(input: &PreEncodeContext) -> DeviationData {
 fn encode_data_offset_rle(
     input: &PreEncodeContext,
 ) -> Result<RleDeviationOffsetData, EntroGdError> {
-    if !matches!(
-        input.bit_data.info.reconstruction,
-        BitDataReconstructionInfo::Image(_)
-    ) {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "RLE row-offset encoding requires image reconstruction metadata".to_string(),
-        });
-    }
-
     let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
     let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
@@ -682,7 +675,7 @@ fn encode_data_offset_rle(
         ));
 
         let row_start = row_idx * row_width;
-        let row_end = row_start + row_width;
+        let row_end = (row_start + row_width).min(original_num_samples);
         let mut i = row_start;
 
         while i < row_end {

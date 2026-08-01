@@ -12,4 +12,4 @@ pub use self::encoding_core::{
     RleDeviationOffsetData,
 };
 pub use self::huffman::EncodeDataHuffman;
-pub(crate) use self::rle::{RLE_LONG_MAX, RLE_SHORT_MAX};
+pub(crate) use self::rle::RLE_LONG_MAX;
