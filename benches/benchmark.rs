@@ -408,7 +408,7 @@ fn bench_compression_core(paths: &[PathBuf]) {
         for &pipeline in &PIPELINES {
             done += 1;
             eprintln!(
-                "[{done}/{total}] entrogd {stage}/{}/{file_name}",
+                "[{done}/{total}] generalized deduplication {stage}/{}/{file_name}",
                 pipeline.label()
             );
 
@@ -477,7 +477,7 @@ fn bench_decompress_file(paths: &[PathBuf]) {
         for &pipeline in &PIPELINES {
             done += 1;
             eprintln!(
-                "[{done}/{total}] entrogd {stage}/{}/{file_name}",
+                "[{done}/{total}] generalized deduplication {stage}/{}/{file_name}",
                 pipeline.label()
             );
 
@@ -545,7 +545,7 @@ fn bench_random_access(paths: &[PathBuf]) {
         for &pipeline in &PIPELINES {
             done += 1;
             eprintln!(
-                "[{done}/{total}] entrogd {stage}/{}/{file_name}",
+                "[{done}/{total}] generalized deduplication {stage}/{}/{file_name}",
                 pipeline.label()
             );
 
