@@ -11,7 +11,7 @@ use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
 
-const MAX_DECIMAL_SCALE: u8 = 3;
+pub const DEFAULT_DECIMAL_SCALE: u8 = 9;
 
 // ---------------------------------------------------------------------------
 // Tabular ingestion
@@ -105,7 +105,7 @@ impl Default for PreprocessOptions {
     fn default() -> Self {
         PreprocessOptions {
             float_scaling: FloatScalingMode::ScaledOffsetSignedInt,
-            decimal_scale: MAX_DECIMAL_SCALE,
+            decimal_scale: DEFAULT_DECIMAL_SCALE,
             integer_zero_normalization: true,
         }
     }
@@ -478,14 +478,14 @@ fn transform_float_column(
         .map_err(|e| cast_err(&name, e))?;
     let ca = casted.f64().map_err(|e| cast_err(&name, e))?;
 
-    if options.decimal_scale > MAX_DECIMAL_SCALE {
+    if options.decimal_scale > DEFAULT_DECIMAL_SCALE {
         tracing::warn!(
-            "decimal_scale ({}) exceeds MAX_DECIMAL_SCALE ({}), using MAX_DECIMAL_SCALE instead",
+            "decimal_scale ({}) exceeds {}; you may get overflow errors for large float values",
             options.decimal_scale,
-            MAX_DECIMAL_SCALE
+            DEFAULT_DECIMAL_SCALE,
         );
     }
-    let decimal_scale = options.decimal_scale.min(MAX_DECIMAL_SCALE);
+    let decimal_scale = options.decimal_scale;
     let multiplier = 10f64.powi(decimal_scale as i32);
 
     let scaled_min = ca.into_no_null_iter().try_fold(i64::MAX, |min_acc, v| {

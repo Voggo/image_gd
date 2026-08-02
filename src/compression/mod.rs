@@ -46,6 +46,6 @@ pub use file_format::{
 };
 pub use image_processor::{BuildImageBitDataSet, ImageColorSpace, OpenImage};
 pub use tabular_processor::{
-    BuildBitDataSet, FloatScalingMode, PreprocessOptions, ReconstructDataFrame,
+    BuildBitDataSet, DEFAULT_DECIMAL_SCALE, FloatScalingMode, PreprocessOptions, ReconstructDataFrame,
     reconstruct_to_dataframe,
 };
