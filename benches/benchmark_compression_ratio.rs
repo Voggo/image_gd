@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::compression::encoding::BaseTable;
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{
     BaseSelectionContext, CompressedData, EntroGdError, EntropyScoredContext, IgdFile,
@@ -154,7 +154,7 @@ fn base_table_delta_ratio(compressed: &CompressedData) -> String {
 }
 
 fn compute_sizes(compressed: &CompressedData) -> Result<CompressionSizes, EntroGdError> {
-    let igd = IgdFile::from_compressed_data(compressed)?;
+    let igd = IgdFile::from_compressed_data(compressed.clone())?;
     let total = igd.as_bytes().len() as u64;
 
     let base_table_bits = match &compressed.base_table {
@@ -275,7 +275,7 @@ fn bench_select_bases(paths: &[PathBuf]) {
                 }
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let entropy_ctx = Entropy {}.process(bit_data).unwrap();
 
             for variant in SELECT_BASES_VARIANTS {
                 done += 1;
@@ -286,7 +286,8 @@ fn bench_select_bases(paths: &[PathBuf]) {
                 );
 
                 let base_sel = variant.process(entropy_ctx.clone()).unwrap();
-                let compressed = EncodeDataFusedDictionary {}.process(base_sel).unwrap();
+                let pre_encode = BuildBaseTable {}.process(base_sel).unwrap();
+                let compressed = EncodeData {}.process(pre_encode).unwrap();
                 let sizes = compute_sizes(&compressed).unwrap();
 
                 BENCH_RECORDS.lock().unwrap().push(BenchRecord {
@@ -317,7 +318,6 @@ fn bench_select_bases(paths: &[PathBuf]) {
 #[derive(Clone, Copy)]
 enum EncodingVariant {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -326,7 +326,6 @@ impl EncodingVariant {
     fn name(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -335,16 +334,14 @@ impl EncodingVariant {
     fn process(self, pre_encode: PreEncodeContext) -> Result<CompressedData, EntroGdError> {
         match self {
             Self::Normal => EncodeData {}.process(pre_encode),
-            Self::Rle => EncodeDataRLE {}.process(pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(pre_encode),
         }
     }
 }
 
-const ENCODING_VARIANTS: [EncodingVariant; 4] = [
+const ENCODING_VARIANTS: [EncodingVariant; 3] = [
     EncodingVariant::Normal,
-    EncodingVariant::Rle,
     EncodingVariant::RleOffset,
     EncodingVariant::Huffman,
 ];
@@ -364,7 +361,7 @@ fn bench_encoding(paths: &[PathBuf]) {
                 }
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let entropy_ctx = Entropy {}.process(bit_data).unwrap();
             let base_sel = SelectBases {
                 patience: NORMAL_PATIENCE,
             }
@@ -467,7 +464,7 @@ fn bench_delta_encoding(paths: &[PathBuf]) {
                 }
             };
             let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-            let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+            let entropy_ctx = Entropy {}.process(bit_data).unwrap();
 
             for variant in DELTA_VARIANTS {
                 done += 1;
@@ -550,7 +547,11 @@ fn bench_color_model(paths: &[PathBuf]) {
         for seed in SEED_PREPROCESSING_CONFIGS {
             for variant in COLOR_MODEL_VARIANTS {
                 done += 1;
-                eprintln!("[{done}/{total}] color_model/{}/{}", variant.name(), file_name);
+                eprintln!(
+                    "[{done}/{total}] color_model/{}/{}",
+                    variant.name(),
+                    file_name
+                );
 
                 // Override the seed's color_model with the variant's so each color
                 // model is measured against the full grouping/transform grid.
@@ -568,7 +569,7 @@ fn bench_color_model(paths: &[PathBuf]) {
                     }
                 };
                 let source_bytes = (bit_data.data.num_rows * bit_data.data.chunk_size / 8) as u64;
-                let entropy_ctx = EntropyBatched {}.process(bit_data).unwrap();
+                let entropy_ctx = Entropy {}.process(bit_data).unwrap();
                 let base_sel = SelectBases {
                     patience: NORMAL_PATIENCE,
                 }

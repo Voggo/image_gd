@@ -9,8 +9,8 @@ use png::{
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::compression::encoding::BaseTable;
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError, IgdFile};
 
@@ -141,7 +141,7 @@ impl CompressionPipeline {
 
     fn run(self, bit_data: BitDataSet) -> Result<CompressedData, EntroGdError> {
         match self {
-            Self::ImageBestRatio => EntropyNaive {}
+            Self::ImageBestRatio => Entropy {}
                 .then(SelectBases {
                     patience: PATIENCE_BEST,
                 })
@@ -149,7 +149,7 @@ impl CompressionPipeline {
                 .then(EncodeDataHuffman {})
                 .then(DeltaEncodeBaseTableFixed {})
                 .process(bit_data),
-            Self::ImageBestRatioRle => EntropyNaive {}
+            Self::ImageBestRatioRle => Entropy {}
                 .then(SelectBases {
                     patience: PATIENCE_BEST,
                 })
@@ -157,13 +157,14 @@ impl CompressionPipeline {
                 .then(EncodeDataOffsetRLE {})
                 .then(DeltaEncodeBaseTableFixed {})
                 .process(bit_data),
-            Self::ImageFast => EntropyNaive {}
+            Self::ImageFast => Entropy {}
                 .then(SelectBasesAdaptive {
                     patience: PATIENCE_FAST,
                     width_decay: WIDTH_DECAY_DEFAULT,
                     base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 })
-                .then(EncodeDataFusedDictionary {})
+                .then(BuildBaseTable {})
+                .then(EncodeData {})
                 .process(bit_data),
         }
     }
@@ -267,7 +268,7 @@ struct CompressionSizes {
 }
 
 fn compute_sizes(compressed: &CompressedData) -> Result<CompressionSizes, EntroGdError> {
-    let igd = IgdFile::from_compressed_data(compressed)?;
+    let igd = IgdFile::from_compressed_data(compressed.clone())?;
     let total = igd.as_bytes().len() as u64;
 
     let base_table_bits = match &compressed.base_table {
@@ -325,8 +326,8 @@ fn discover_datasets(root: &Path) -> Vec<(String, Vec<PathBuf>)> {
         return vec![(dir_name(root), direct)];
     }
 
-    let read_dir = std::fs::read_dir(root)
-        .unwrap_or_else(|e| panic!("cannot read {}: {}", root.display(), e));
+    let read_dir =
+        std::fs::read_dir(root).unwrap_or_else(|e| panic!("cannot read {}: {}", root.display(), e));
     let mut subdirs: Vec<PathBuf> = read_dir
         .filter_map(|entry| {
             let path = entry.ok()?.path();
@@ -572,8 +573,7 @@ fn bench_random_access(paths: &[PathBuf]) {
                     for _ in 0..N_RUNS {
                         let compressed_clone = compressed.clone();
                         let start = Instant::now();
-                        let handle =
-                            DecompressRandomAccessHandle::new(compressed_clone).unwrap();
+                        let handle = DecompressRandomAccessHandle::new(compressed_clone).unwrap();
                         let decompressed = handle.decompress_samples(indices).unwrap();
                         let elapsed = start.elapsed();
                         black_box(decompressed);
@@ -774,8 +774,7 @@ fn write_bench_csv(dataset: &str) {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
-    let root = std::env::var("BENCH_DATA_DIR")
-        .unwrap_or_else(|_| DEFAULT_DATA_ROOT.to_string());
+    let root = std::env::var("BENCH_DATA_DIR").unwrap_or_else(|_| DEFAULT_DATA_ROOT.to_string());
     let root = PathBuf::from(root);
     let datasets = discover_datasets(&root);
     if datasets.is_empty() {

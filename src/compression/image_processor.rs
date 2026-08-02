@@ -2,14 +2,14 @@ use bitvec::prelude::*;
 use image::DynamicImage;
 use std::path::PathBuf;
 
-pub use crate::compression::preprocessor::{ImageColorModel, ImageGroupingTransform};
+pub use crate::compression::data::{ImageColorModel, ImageGroupingTransform};
 
 use crate::ScopedTimer;
-use crate::compression::preprocessor::{
+use crate::compression::data::{
     BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, DEFAULT_ALIGN_ROWS_TO_WORD,
-    FeatureSpec, ImageReconstructionInfo, PixelGrouping, aligned_stride, append_row_padding,
+    FeatureDataType, FeatureSpec, FeatureTransform, ImageReconstructionInfo, PixelGrouping,
+    aligned_stride, append_row_padding,
 };
-use crate::data_loader::FeatureDataType;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_encode_i16};
@@ -201,8 +201,13 @@ fn build_image_bitdataset(
                 message: "image dimensions overflow grouped row count".to_string(),
             })?;
 
-    let features =
-        vec![FeatureSpec::new(FeatureDataType::UnsignedInt, feature_bits); channels_usize];
+    let features = vec![
+        FeatureSpec {
+            data_type: FeatureDataType::UInt(feature_bits as u16),
+            transform: FeatureTransform::None,
+        };
+        channels_usize
+    ];
     let reconstruction = BitDataReconstructionInfo::Image(ImageReconstructionInfo {
         width,
         height,

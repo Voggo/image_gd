@@ -1,9 +1,7 @@
-use crate::compression::encoding::{CompressedData, CondensedSamples, EncodedData, BaseTable};
-use crate::compression::preprocessor::{
+use crate::compression::data::{
     BitData, BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
-    decode_value_from_bits,
 };
-use crate::data_loader::DataValue;
+use crate::compression::encoding::{BaseTable, CompressedData, CondensedSamples, EncodedData};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -11,8 +9,6 @@ use crate::utils::{min_position_bits, signed_half_wrapped, zigzag_decode_i16};
 use bitvec::prelude::*;
 use image::{RgbImage, RgbaImage};
 use rayon::prelude::*;
-use std::fs::File;
-use std::io::Write;
 use std::path::Path;
 
 const PARALLEL_MIN_ROWS: usize = 256;
@@ -118,7 +114,10 @@ impl DecompressRandomAccessHandle {
         let info = self
             .compressed
             .metadata
-            .with_original_size_bits_and_row_stride(self.chunk_size * sorted_indices.len(), self.stride);
+            .with_original_size_bits_and_row_stride(
+                self.chunk_size * sorted_indices.len(),
+                self.stride,
+            );
         Ok(BitDataSet { data, info })
     }
 
@@ -204,23 +203,30 @@ pub fn decompress_file(mut compressed: CompressedData) -> Result<BitDataSet, Ent
     let original_num_rows = data_info.original_size_bits() / chunk_size;
     let stride = data_info.row_stride();
 
-    match &compressed.encoded_data {
-        EncodedData::Rle(rle_data) if original_num_rows >= PARALLEL_MIN_ROWS => {
-            let deviation_data = rle_data.to_deviation_data()?;
-            let converted = EncodedData::Normal(deviation_data);
-            decompress_file_parallel(&compressed, &converted, data_info, chunk_size, stride, original_num_rows)
-        }
-        _ if original_num_rows >= PARALLEL_MIN_ROWS => {
-            decompress_file_parallel(&compressed, &compressed.encoded_data, data_info, chunk_size, stride, original_num_rows)
-        }
-        _ => decompress_file_sequential(&compressed, data_info, chunk_size, stride, original_num_rows),
+    if original_num_rows >= PARALLEL_MIN_ROWS {
+        decompress_file_parallel(
+            &compressed,
+            &compressed.encoded_data,
+            data_info,
+            chunk_size,
+            stride,
+            original_num_rows,
+        )
+    } else {
+        decompress_file_sequential(
+            &compressed,
+            data_info,
+            chunk_size,
+            stride,
+            original_num_rows,
+        )
     }
 }
 
 fn decompress_file_parallel(
     compressed: &CompressedData,
     encoded_data: &EncodedData,
-    data_info: &crate::compression::preprocessor::BitDataInfo,
+    data_info: &crate::compression::data::BitDataInfo,
     chunk_size: usize,
     stride: usize,
     original_num_rows: usize,
@@ -230,7 +236,7 @@ fn decompress_file_parallel(
     let deviation_positions = compressed.layout.deviation_bit_positions();
     let variable_base_positions = compressed.layout.variable_base_bit_positions();
     let constant_one_positions = compressed.layout.constant_one_bit_positions();
-    
+
     let base_table = compressed.base_table.as_raw();
 
     let num_threads = rayon::current_num_threads();
@@ -248,21 +254,20 @@ fn decompress_file_parallel(
             let mut chunk_bits = bitvec![usize, Lsb0; 0; stride * count];
             let mut local_cursor = 0usize;
 
-            encoded_data
-                .for_each_sample_range(start, count, |sample| {
-                    append_reconstructed_chunk(
-                        &mut chunk_bits,
-                        local_cursor,
-                        &deviation_positions,
-                        &variable_base_positions,
-                        &constant_one_positions,
-                        base_table,
-                        sample.deviation,
-                        sample.id,
-                    )?;
-                    local_cursor += stride;
-                    Ok(())
-                })?;
+            encoded_data.for_each_sample_range(start, count, |sample| {
+                append_reconstructed_chunk(
+                    &mut chunk_bits,
+                    local_cursor,
+                    &deviation_positions,
+                    &variable_base_positions,
+                    &constant_one_positions,
+                    base_table,
+                    sample.deviation,
+                    sample.id,
+                )?;
+                local_cursor += stride;
+                Ok(())
+            })?;
 
             Ok(chunk_bits)
         })
@@ -286,7 +291,7 @@ fn decompress_file_parallel(
 
 fn decompress_file_sequential(
     compressed: &CompressedData,
-    data_info: &crate::compression::preprocessor::BitDataInfo,
+    data_info: &crate::compression::data::BitDataInfo,
     chunk_size: usize,
     stride: usize,
     original_num_rows: usize,
@@ -388,19 +393,37 @@ impl Filter for DecompressAnalytics {
     type Input = CompressedData;
     type Output = Option<CondensedSamples>;
 
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
+    fn process(&self, mut input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Decompressing condensed samples for analytics");
+        if let BaseTable::Delta(delta) = input.base_table {
+            input.base_table = BaseTable::Raw(delta.decode_rows()?);
+        }
         Ok(decompress_analytics(&input))
     }
 }
 
 pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamples> {
     if let Some(weights) = &compressed.condensed_sample_weights {
+        let chunk_size = compressed.layout.chunk_size();
+        let variable_positions = compressed.layout.variable_base_bit_positions();
+        let constant_one_positions = compressed.layout.constant_one_bit_positions();
+
         let samples: Vec<BitVec<usize, Lsb0>> = compressed
             .base_table
             .as_raw()
             .iter()
-            .map(|(bv, _)| bv.clone())
+            .map(|(bv, _)| {
+                let mut reconstructed = bitvec![usize, Lsb0; 0; chunk_size];
+                for &pos in &constant_one_positions {
+                    reconstructed.set(pos, true);
+                }
+                for (i, &pos) in variable_positions.iter().enumerate() {
+                    if let Some(bit) = bv.get(i) {
+                        reconstructed.set(pos, *bit);
+                    }
+                }
+                reconstructed
+            })
             .collect();
         Some(CondensedSamples {
             samples,
@@ -411,37 +434,6 @@ pub fn decompress_analytics(compressed: &CompressedData) -> Option<CondensedSamp
     }
 }
 
-/// Write decompressed bit data back to a CSV file.
-pub fn write_bitdata_as_csv<P: AsRef<Path>>(
-    bit_data: &BitDataSet,
-    output_path: P,
-    headers: Option<&[String]>,
-) -> Result<(), EntroGdError> {
-    let mut file = File::create(output_path)?;
-
-    if let Some(headers) = headers {
-        writeln!(file, "{}", headers.join(","))?;
-    }
-
-    for row in 0..bit_data.data.num_rows {
-        let mut values: Vec<String> = Vec::with_capacity(bit_data.info.num_features());
-        for feature in 0..bit_data.info.num_features() {
-            let feature_bits = unsafe { bit_data.get_feature_unchecked(row, feature) };
-            let spec = bit_data.info.feature_spec(feature);
-            let formatted = match decode_value_from_bits(feature_bits, spec) {
-                DataValue::Unsigned(v) => v.to_string(),
-                DataValue::Signed(v) => v.to_string(),
-                DataValue::F32(v) => v.to_string(),
-                DataValue::F64(v) => v.to_string(),
-            };
-            values.push(formatted);
-        }
-        writeln!(file, "{}", values.join(","))?;
-    }
-
-    Ok(())
-}
-
 /// Write decompressed image bit data back to an image file.
 pub fn write_bitdata_as_image<P: AsRef<Path>>(
     bit_data: &BitDataSet,
@@ -449,7 +441,7 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
 ) -> Result<(), EntroGdError> {
     let image_info = match &bit_data.info.reconstruction {
         BitDataReconstructionInfo::Image(info) => *info,
-        BitDataReconstructionInfo::Tabular => {
+        BitDataReconstructionInfo::Tabular { .. } => {
             return Err(EntroGdError::InvalidMetadata {
                 message: "cannot write image from tabular reconstruction metadata".to_string(),
             });
@@ -531,21 +523,6 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
         image_info.channels,
         output_raw,
     )
-}
-
-/// Write decompressed data to a format-appropriate output file.
-///
-/// - `Tabular` reconstruction metadata writes CSV.
-/// - `Image` reconstruction metadata writes an image file.
-pub fn write_bitdata_to_output<P: AsRef<Path>>(
-    bit_data: &BitDataSet,
-    output_path: P,
-    headers: Option<&[String]>,
-) -> Result<(), EntroGdError> {
-    match bit_data.info.reconstruction {
-        BitDataReconstructionInfo::Tabular => write_bitdata_as_csv(bit_data, output_path, headers),
-        BitDataReconstructionInfo::Image(_) => write_bitdata_as_image(bit_data, output_path),
-    }
 }
 
 fn byte_from_bits(bits: &BitSlice<usize, Lsb0>) -> Result<u8, EntroGdError> {
@@ -747,10 +724,8 @@ fn save_raw_image(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compression::data::{BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform};
     use crate::compression::encoding::{DeviationData, DeviationSample, EncodedData};
-    use crate::compression::preprocessor::{
-        BitDataInfo, FeatureDataType, FeatureSpec, FeatureTransform,
-    };
 
     // ============================================================================
     // HELPER FUNCTIONS FOR CONSTRUCTING TEST DATA
@@ -769,8 +744,7 @@ mod tests {
     /// Creates a BitDataInfo for testing with a single feature
     fn create_test_bit_data_info(chunk_size: usize, num_rows: usize) -> BitDataInfo {
         let features = vec![FeatureSpec {
-            data_type: FeatureDataType::UnsignedInt,
-            bits: chunk_size,
+            data_type: FeatureDataType::UInt(chunk_size as u16),
             transform: FeatureTransform::None,
         }];
         BitDataInfo::new(features, chunk_size * num_rows).unwrap()
@@ -1051,13 +1025,29 @@ mod tests {
             create_compressed_data_with_analytics(chunk_size, num_rows, num_bases, 4, 4);
 
         let result = decompress_analytics(&compressed).unwrap();
+        let variable_positions = compressed.layout.variable_base_bit_positions();
+        let constant_one_positions = compressed.layout.constant_one_bit_positions();
 
-        // Verify that each sample matches the base table
+        // Verify that each sample is full chunk_size and base bits map correctly
         for (i, sample) in result.samples.iter().enumerate() {
-            let base_table = compressed.base_table.as_raw();
-            assert_eq!(sample.len(), base_table[i].0.len());
-            for bit_idx in 0..sample.len() {
-                assert_eq!(sample[bit_idx], base_table[i].0[bit_idx]);
+            let base_row = &compressed.base_table.as_raw()[i].0;
+            assert_eq!(sample.len(), chunk_size);
+
+            // Base bits at variable positions match the base table row
+            for (j, &pos) in variable_positions.iter().enumerate() {
+                assert_eq!(sample[pos], base_row[j]);
+            }
+
+            // Constant-one bits are set
+            for &pos in &constant_one_positions {
+                assert!(sample[pos]);
+            }
+
+            // Deviation positions are false (no per-sample deviation data available)
+            for pos in 0..chunk_size {
+                if !variable_positions.contains(&pos) && !constant_one_positions.contains(&pos) {
+                    assert!(!sample[pos]);
+                }
             }
         }
     }

@@ -1,8 +1,8 @@
-use image_gd::data_loader::{CsvDataLoader, DataLoader, FloatStorage};
+use image_gd::load_csv;
 use image_gd::prelude::*;
 use image_gd::{
-    BitDataSet, DecompressFileData, EncodedData, ImageColorModel, LoadEgdFile, SaveEgdFile,
-    SaveIgdFile, decompress_igd_to_image,
+    BitDataSet, DecompressFileData, EncodedData, ImageColorModel, LoadEgdFile, PreprocessOptions,
+    SaveEgdFile, SaveIgdFile, decompress_igd_to_image,
 };
 use std::env;
 
@@ -59,16 +59,16 @@ fn assert_chunk_data_eq(expected: &BitDataSet, actual: &BitDataSet, context: &st
 #[test]
 fn test_csv_roundtrip_compression() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
-    let compression_pipeline = EntropyBatched {}
+    let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
@@ -124,20 +124,20 @@ fn test_csv_roundtrip_compression() {
 #[test]
 fn test_csv_roundtrip_compression_rle() {
     let input_path = "data/tabular/data-10000-8-int.csv";
-    let loader = CsvDataLoader::new(true).with_float_storage(FloatStorage::F32);
-    let loaded = loader.load(input_path).expect("Failed to load CSV");
+    let loaded = load_csv(input_path, true, None).expect("Failed to load CSV");
 
-    let bit_data = BitDataSet::from_dataset(&loaded.dataset).expect("Failed to create BitDataSet");
+    let bit_data = BitDataSet::from_dataframe(loaded, PreprocessOptions::default(), false)
+        .expect("Failed to create BitDataSet");
 
-    let compression_pipeline = EntropyBatched {}
+    let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 50 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})
-        .then(EncodeDataRLE {});
+        .then(EncodeDataOffsetRLE {});
 
     let compressed = compression_pipeline
         .process(bit_data.clone())
@@ -194,11 +194,11 @@ fn test_image_roundtrip_compression() {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: true,
     }
-    .then(EntropyBatched {})
+    .then(Entropy {})
     .then(GenCondensedSamples { m_max: 0 })
     .then(SelectBasesThreshold {
         patience: 10,
-        base_bit_impl: BaseBitImpl::BatchGroups,
+        base_bit_impl: BaseBitImpl::Naive,
         entropy_threshold: 0.70,
     })
     .then(BuildBaseTable {})
@@ -262,11 +262,11 @@ fn test_image_roundtrip_compression_rle_offset() {
     .process(OpenImage.process(input_path).unwrap())
     .expect("Failed to build image BitDataSet");
 
-    let compression_pipeline = EntropyBatched {}
+    let compression_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 0 })
         .then(SelectBasesThreshold {
             patience: 10,
-            base_bit_impl: BaseBitImpl::BatchGroups,
+            base_bit_impl: BaseBitImpl::Naive,
             entropy_threshold: 0.70,
         })
         .then(BuildBaseTable {})

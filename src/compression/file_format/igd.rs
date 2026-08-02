@@ -5,12 +5,12 @@ use super::egd::EgdFile;
 use super::path_utils::ensure_igd_extension;
 
 use crate::ScopedTimer;
-use crate::compression::decompression::{decompress_file, write_bitdata_as_image};
-use crate::compression::encoding::CompressedData;
-use crate::compression::preprocessor::{
+use crate::compression::data::{
     BitDataReconstructionInfo, BitDataSet, ImageColorModel, ImageGroupingTransform,
     ImageReconstructionInfo, PixelGrouping,
 };
+use crate::compression::decompression::{decompress_file, write_bitdata_as_image};
+use crate::compression::encoding::CompressedData;
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 
@@ -24,7 +24,7 @@ pub struct IgdFile {
 }
 
 impl IgdFile {
-    pub fn from_compressed_data(compressed: &CompressedData) -> Result<Self, EntroGdError> {
+    pub fn from_compressed_data(compressed: CompressedData) -> Result<Self, EntroGdError> {
         let image_info = match compressed.metadata.reconstruction {
             BitDataReconstructionInfo::Image(info) => info,
             _ => {
@@ -191,7 +191,7 @@ impl Filter for SaveIgdFile {
 
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Saving compressed data as IGD file");
-        let igd_file = IgdFile::from_compressed_data(&input)?;
+        let igd_file = IgdFile::from_compressed_data(input)?;
         igd_file.save(&self.output_path)
     }
 }
@@ -209,7 +209,7 @@ impl Filter for LoadIgdFile {
 }
 
 pub fn save_compressed_as_igd<P: AsRef<Path>>(
-    compressed: &CompressedData,
+    compressed: CompressedData,
     output_path: P,
 ) -> Result<PathBuf, EntroGdError> {
     IgdFile::from_compressed_data(compressed)?.save(output_path)

@@ -1,11 +1,11 @@
 use image_gd::compression::BaseBitHyperLogLogCount;
 use image_gd::compression::base_bits::BaseBitGroups;
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
-use image_gd::data_loader::{CsvDataLoader, DataLoader};
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::load_csv;
 use image_gd::{
     BitDataSet, BuildImageBitDataSet, EntroGdError, Filter, FilterExt, ImageColorModel,
-    ImageColorSpace, ImageGroupingTransform, OpenImage, PixelGrouping, calculate_entropy,
-    init_logging,
+    ImageColorSpace, ImageGroupingTransform, OpenImage, PixelGrouping, PreprocessOptions,
+    calculate_entropy, init_logging,
 };
 use std::env;
 use std::fs::File;
@@ -193,9 +193,8 @@ fn load_bit_data(
 
     match resolved_kind {
         InputKind::Csv => {
-            let loader = CsvDataLoader::new(has_headers);
-            let dataset = loader.load(path)?.dataset;
-            BitDataSet::from_dataset(&dataset)
+            let df = load_csv(path, has_headers, None)?;
+            BitDataSet::from_dataframe(df, PreprocessOptions::default(), false)
         }
         InputKind::Image => OpenImage
             .then(BuildImageBitDataSet {
@@ -384,10 +383,7 @@ fn main() -> Result<(), EntroGdError> {
         let image_paths = collect_image_paths(&options.input)?;
         if image_paths.is_empty() {
             return Err(EntroGdError::InvalidMetadata {
-                message: format!(
-                    "no images found in directory '{}'",
-                    options.input.display()
-                ),
+                message: format!("no images found in directory '{}'", options.input.display()),
             });
         }
 

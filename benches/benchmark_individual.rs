@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{
     BaseSelectionContext, BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError,
@@ -117,8 +117,8 @@ impl EntropyImpl {
 
     fn process(self, input: BitDataSet) -> Result<EntropyScoredContext, EntroGdError> {
         match self {
-            Self::Naive => EntropyNaive {}.process(input),
-            Self::Batched => EntropyBatched {}.process(input),
+            Self::Naive => Entropy {}.process(input),
+            Self::Batched => Entropy {}.process(input),
         }
     }
 }
@@ -147,18 +147,6 @@ impl SelectBasesImpl {
                 ..
             } => "threshold_naive",
             Self::Threshold {
-                base_bit_impl: BaseBitImpl::BatchGroups,
-                ..
-            } => "threshold_batch_groups",
-            Self::Threshold {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-                ..
-            } => "threshold_inc_signature_groups",
-            Self::Threshold {
-                base_bit_impl: BaseBitImpl::SignatureGroups,
-                ..
-            } => "threshold_signature_groups",
-            Self::Threshold {
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 ..
             } => "threshold_hyper_log_log_count",
@@ -166,18 +154,6 @@ impl SelectBasesImpl {
                 base_bit_impl: BaseBitImpl::Naive,
                 ..
             } => "adaptive_naive",
-            Self::Adaptive {
-                base_bit_impl: BaseBitImpl::BatchGroups,
-                ..
-            } => "adaptive_batch_groups",
-            Self::Adaptive {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-                ..
-            } => "adaptive_inc_signature_groups",
-            Self::Adaptive {
-                base_bit_impl: BaseBitImpl::SignatureGroups,
-                ..
-            } => "adaptive_signature_groups",
             Self::Adaptive {
                 base_bit_impl: BaseBitImpl::HyperLogLogCount,
                 ..
@@ -222,15 +198,9 @@ impl BuildBaseTableImpl {
             Self::Unsorted {
                 base_bit_impl: BaseBitImpl::Naive,
             } => "build_base_table_naive",
-            Self::Unsorted {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-            } => "build_base_table_inc_sig",
             Self::Sorted {
                 base_bit_impl: BaseBitImpl::Naive,
             } => "build_sorted_base_table_naive",
-            Self::Sorted {
-                base_bit_impl: BaseBitImpl::IncSignatureGroups,
-            } => "build_sorted_base_table_inc_sig",
             _ => unreachable!(),
         }
     }
@@ -258,36 +228,29 @@ impl BuildBaseTableImpl {
 
 struct EncodeSeed {
     pre_encode: PreEncodeContext,
-    base_selection: BaseSelectionContext,
 }
 
 #[derive(Clone, Copy)]
 enum EncodeImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
-    Fused,
 }
 
 impl EncodeImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
-            Self::Fused => "fused_dictionary",
         }
     }
 
     fn process(self, input: EncodeSeed) -> Result<CompressedData, EntroGdError> {
         match self {
             Self::Normal => EncodeData {}.process(input.pre_encode),
-            Self::Rle => EncodeDataRLE {}.process(input.pre_encode),
             Self::RleOffset => EncodeDataOffsetRLE {}.process(input.pre_encode),
             Self::Huffman => EncodeDataHuffman {}.process(input.pre_encode),
-            Self::Fused => EncodeDataFusedDictionary {}.process(input.base_selection),
         }
     }
 }
@@ -332,7 +295,6 @@ impl DeltaEncodeImpl {
 #[derive(Clone, Copy)]
 enum SaveIgdImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -341,7 +303,6 @@ impl SaveIgdImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -355,7 +316,6 @@ impl SaveIgdImpl {
 #[derive(Clone, Copy)]
 enum LoadIgdImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -364,7 +324,6 @@ impl LoadIgdImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -378,7 +337,6 @@ impl LoadIgdImpl {
 #[derive(Clone, Copy)]
 enum DecompressFileImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -387,7 +345,6 @@ impl DecompressFileImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -401,7 +358,6 @@ impl DecompressFileImpl {
 #[derive(Clone, Copy)]
 enum DecompressRowsImpl {
     Normal,
-    Rle,
     RleOffset,
     Huffman,
 }
@@ -410,7 +366,6 @@ impl DecompressRowsImpl {
     fn label(self) -> &'static str {
         match self {
             Self::Normal => "normal",
-            Self::Rle => "rle",
             Self::RleOffset => "rle_offset",
             Self::Huffman => "huffman",
         }
@@ -490,7 +445,7 @@ const BUILD_IMAGE_GROUPING_CONFIGS: &[SeedPreprocessing] = seed_configs![
 
 const ENTROPY_IMPLS: [EntropyImpl; 2] = [EntropyImpl::Naive, EntropyImpl::Batched];
 
-const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
+const SELECT_BASES_IMPLS: [SelectBasesImpl; 5] = [
     SelectBasesImpl::Naive {
         patience: NORMAL_PATIENCE,
     },
@@ -499,14 +454,6 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
         patience: THRESHOLD_PATIENCE,
     },
     SelectBasesImpl::Threshold {
-        base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: THRESHOLD_PATIENCE,
-    },
-    SelectBasesImpl::Threshold {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: THRESHOLD_PATIENCE,
-    },
-    SelectBasesImpl::Threshold {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
         patience: THRESHOLD_PATIENCE,
     },
@@ -515,65 +462,45 @@ const SELECT_BASES_IMPLS: [SelectBasesImpl; 9] = [
         patience: ADAPTIVE_PATIENCE,
     },
     SelectBasesImpl::Adaptive {
-        base_bit_impl: BaseBitImpl::BatchGroups,
-        patience: ADAPTIVE_PATIENCE,
-    },
-    SelectBasesImpl::Adaptive {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
-        patience: ADAPTIVE_PATIENCE,
-    },
-    SelectBasesImpl::Adaptive {
         base_bit_impl: BaseBitImpl::HyperLogLogCount,
         patience: ADAPTIVE_PATIENCE,
     },
 ];
 
-const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 4] = [
+const BUILD_BASE_TABLE_IMPLS: [BuildBaseTableImpl; 2] = [
     BuildBaseTableImpl::Unsorted {
         base_bit_impl: BaseBitImpl::Naive,
     },
-    BuildBaseTableImpl::Unsorted {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
-    },
     BuildBaseTableImpl::Sorted {
         base_bit_impl: BaseBitImpl::Naive,
-    },
-    BuildBaseTableImpl::Sorted {
-        base_bit_impl: BaseBitImpl::IncSignatureGroups,
     },
 ];
 
-const ENCODE_IMPLS: [EncodeImpl; 5] = [
+const ENCODE_IMPLS: [EncodeImpl; 3] = [
     EncodeImpl::Normal,
-    EncodeImpl::Rle,
     EncodeImpl::RleOffset,
     EncodeImpl::Huffman,
-    EncodeImpl::Fused,
 ];
 
 const DELTA_ENCODE_IMPLS: [DeltaEncodeImpl; 2] = [DeltaEncodeImpl::Unary, DeltaEncodeImpl::Fixed];
 const DECODE_DELTA_IMPLS: [DecodeDeltaImpl; 2] = [DecodeDeltaImpl::Unary, DecodeDeltaImpl::Fixed];
-const SAVE_IGD_IMPLS: [SaveIgdImpl; 4] = [
+const SAVE_IGD_IMPLS: [SaveIgdImpl; 3] = [
     SaveIgdImpl::Normal,
-    SaveIgdImpl::Rle,
     SaveIgdImpl::RleOffset,
     SaveIgdImpl::Huffman,
 ];
-const LOAD_IGD_IMPLS: [LoadIgdImpl; 4] = [
+const LOAD_IGD_IMPLS: [LoadIgdImpl; 3] = [
     LoadIgdImpl::Normal,
-    LoadIgdImpl::Rle,
     LoadIgdImpl::RleOffset,
     LoadIgdImpl::Huffman,
 ];
-const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 4] = [
+const DECOMPRESS_FILE_IMPLS: [DecompressFileImpl; 3] = [
     DecompressFileImpl::Normal,
-    DecompressFileImpl::Rle,
     DecompressFileImpl::RleOffset,
     DecompressFileImpl::Huffman,
 ];
-const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 4] = [
+const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 3] = [
     DecompressRowsImpl::Normal,
-    DecompressRowsImpl::Rle,
     DecompressRowsImpl::RleOffset,
     DecompressRowsImpl::Huffman,
 ];
@@ -582,21 +509,18 @@ const DECOMPRESS_ROWS_IMPLS: [DecompressRowsImpl; 4] = [
 
 struct CompressedDataSeeds {
     normal: CompressedData,
-    rle: CompressedData,
     rle_offset: CompressedData,
     huffman: CompressedData,
 }
 
 struct IgdPaths {
     normal: PathBuf,
-    rle: PathBuf,
     rle_offset: PathBuf,
     huffman: PathBuf,
 }
 
 struct DecompressRowsSeeds {
     normal: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
-    rle: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
     rle_offset: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
     huffman: (Rc<DecompressRandomAccessHandle>, Vec<usize>),
 }
@@ -674,7 +598,7 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
     let bit_data_seed = preprocessing.process(image_path.clone()).unwrap();
     let source_size = (bit_data_seed.data.num_rows * bit_data_seed.data.chunk_size / 8) as u64;
 
-    let entropy_seed = EntropyBatched {}.process(bit_data_seed.clone()).unwrap();
+    let entropy_seed = Entropy {}.process(bit_data_seed.clone()).unwrap();
 
     let base_table_ctx_seed = want_unsorted_ctx.then(|| {
         let sel = canonical_select_bases(entropy_seed.clone());
@@ -704,7 +628,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
     let pre_label = preprocessing.artifact_label();
     let igd_paths = IgdPaths {
         normal: igd_artifact_path(&name, &pre_label, "normal"),
-        rle: igd_artifact_path(&name, &pre_label, "rle"),
         rle_offset: igd_artifact_path(&name, &pre_label, "rle_offset"),
         huffman: igd_artifact_path(&name, &pre_label, "huffman"),
     };
@@ -718,7 +641,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
             BuildSortedBaseTable {}.process(sel).unwrap()
         };
         let normal = EncodeData {}.process(base_ctx.clone()).unwrap();
-        let rle = EncodeDataRLE {}.process(base_ctx.clone()).unwrap();
         let rle_offset = EncodeDataOffsetRLE {}.process(base_ctx).unwrap();
         let huffman = EncodeDataHuffman {}.process(sorted_ctx).unwrap();
 
@@ -727,11 +649,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
                 output_path: igd_paths.normal.clone(),
             }
             .process(normal.clone())
-            .unwrap();
-            SaveIgdFile {
-                output_path: igd_paths.rle.clone(),
-            }
-            .process(rle.clone())
             .unwrap();
             SaveIgdFile {
                 output_path: igd_paths.rle_offset.clone(),
@@ -747,7 +664,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
 
         CompressedDataSeeds {
             normal,
-            rle,
             rle_offset,
             huffman,
         }
@@ -755,7 +671,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
 
     let loaded_compressed_seeds = want_loaded.then(|| CompressedDataSeeds {
         normal: LoadIgdFile {}.process(igd_paths.normal.clone()).unwrap(),
-        rle: LoadIgdFile {}.process(igd_paths.rle.clone()).unwrap(),
         rle_offset: LoadIgdFile {}
             .process(igd_paths.rle_offset.clone())
             .unwrap(),
@@ -770,10 +685,6 @@ fn prepare_case(image_path: PathBuf, preprocessing: SeedPreprocessing) -> Prepar
         DecompressRowsSeeds {
             normal: (
                 Rc::new(DecompressRandomAccessHandle::new(loaded.normal.clone()).unwrap()),
-                rows.clone(),
-            ),
-            rle: (
-                Rc::new(DecompressRandomAccessHandle::new(loaded.rle.clone()).unwrap()),
                 rows.clone(),
             ),
             rle_offset: (
@@ -1042,7 +953,6 @@ fn benchmark_filter_steps() {
                 EncodeImpl::label,
                 |_, case| EncodeSeed {
                     pre_encode: case.base_table_ctx_seed.clone().unwrap(),
-                    base_selection: canonical_select_bases(case.entropy_seed.clone()),
                 },
                 |implementation, input| implementation.process(input),
                 seed_meta,
@@ -1102,10 +1012,6 @@ fn benchmark_filter_steps() {
                         case.compressed_seeds.as_ref().unwrap().normal.clone(),
                         case.igd_paths.normal.clone(),
                     ),
-                    SaveIgdImpl::Rle => (
-                        case.compressed_seeds.as_ref().unwrap().rle.clone(),
-                        case.igd_paths.rle.clone(),
-                    ),
                     SaveIgdImpl::RleOffset => (
                         case.compressed_seeds.as_ref().unwrap().rle_offset.clone(),
                         case.igd_paths.rle_offset.clone(),
@@ -1127,7 +1033,6 @@ fn benchmark_filter_steps() {
                 LoadIgdImpl::label,
                 |impl_, case| match impl_ {
                     LoadIgdImpl::Normal => case.igd_paths.normal.clone(),
-                    LoadIgdImpl::Rle => case.igd_paths.rle.clone(),
                     LoadIgdImpl::RleOffset => case.igd_paths.rle_offset.clone(),
                     LoadIgdImpl::Huffman => case.igd_paths.huffman.clone(),
                 },
@@ -1148,9 +1053,6 @@ fn benchmark_filter_steps() {
                         .unwrap()
                         .normal
                         .clone(),
-                    DecompressFileImpl::Rle => {
-                        case.loaded_compressed_seeds.as_ref().unwrap().rle.clone()
-                    }
                     DecompressFileImpl::RleOffset => case
                         .loaded_compressed_seeds
                         .as_ref()
@@ -1178,10 +1080,6 @@ fn benchmark_filter_steps() {
                     DecompressRowsImpl::Normal => (
                         case.rows_context_seeds.as_ref().unwrap().normal.0.clone(),
                         case.rows_context_seeds.as_ref().unwrap().normal.1.clone(),
-                    ),
-                    DecompressRowsImpl::Rle => (
-                        case.rows_context_seeds.as_ref().unwrap().rle.0.clone(),
-                        case.rows_context_seeds.as_ref().unwrap().rle.1.clone(),
                     ),
                     DecompressRowsImpl::RleOffset => (
                         case.rows_context_seeds

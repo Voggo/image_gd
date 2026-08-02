@@ -1,10 +1,15 @@
-use crate::compression::preprocessor::BitDataSet;
+use crate::compression::data::BitDataSet;
 use crate::timing::ScopedTimer;
 use bitvec::prelude::*;
-use rayon::prelude::*;
-
 use fxhash::{FxHashMap, FxHashSet};
-use once_cell::unsync::OnceCell;
+use rayon::prelude::*;
+use std::cmp::Ordering;
+
+pub struct EncodingContext {
+    pub row_to_id: Vec<usize>,
+    pub base_table: Vec<(BitVec<usize, Lsb0>, usize)>,
+    pub sorted_column_order: Option<Vec<usize>>,
+}
 
 pub trait BaseBit {
     fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize;
@@ -16,43 +21,7 @@ pub trait BaseBit {
         num_bases
     }
     fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize;
-    /// Returns base-table entries packed to selected-bit order only.
-    ///
-    /// For each base, bit index `i` corresponds to `self.get_base_bit_positions()[i]`.
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)>;
-    /// Returns base-table entries packed to variable selected bits only.
-    ///
-    /// For each base, bit index `i` corresponds to
-    /// `self.get_variable_bit_positions(bit_data)[i]`.
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let selected_bases = self.get_bases(bit_data);
-        let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
-        project_selected_bases_by_indices(&selected_bases, &variable_indices)
-    }
-
-    fn get_variable_bit_positions(&self, bit_data: &BitDataSet) -> Vec<usize> {
-        let selected_bases = self.get_bases(bit_data);
-        let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
-        let selected_positions = self.get_base_bit_positions();
-        variable_indices
-            .into_iter()
-            .filter_map(|idx| selected_positions.get(idx).copied())
-            .collect()
-    }
-
-    fn get_constant_zero_bit_positions(&self, bit_data: &BitDataSet) -> Vec<usize> {
-        let selected_bases = self.get_bases(bit_data);
-        let selected_positions = self.get_base_bit_positions();
-        constant_bit_positions_by_value(&selected_bases, selected_positions, false)
-    }
-
-    fn get_constant_one_bit_positions(&self, bit_data: &BitDataSet) -> Vec<usize> {
-        let selected_bases = self.get_bases(bit_data);
-        let selected_positions = self.get_base_bit_positions();
-        constant_bit_positions_by_value(&selected_bases, selected_positions, true)
-    }
-
-    fn get_groups(&self) -> &[Vec<usize>];
+    fn get_encoding_context(&self, bit_data: &BitDataSet, sort: bool) -> EncodingContext;
     fn get_num_bases(&self) -> usize;
     fn get_num_bits_per_base(&self) -> usize;
     fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0>;
@@ -61,10 +30,6 @@ pub trait BaseBit {
 
 fn initial_groups(num_rows: usize, step: usize) -> Vec<Vec<usize>> {
     vec![(0..num_rows).step_by(step).collect()]
-}
-
-fn count_non_empty_groups(groups: &[Vec<usize>]) -> usize {
-    groups.iter().filter(|group| !group.is_empty()).count()
 }
 
 fn collect_new_bit_positions(
@@ -149,77 +114,110 @@ fn get_selected_bases_from_groups(
     bases
 }
 
-fn variable_bit_indices_from_selected_bases(
-    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
+fn binary_entropy_from_counts(ones: usize, total: usize) -> f64 {
+    if total == 0 || ones == 0 || ones == total {
+        return 0.0;
+    }
+    let p = ones as f64 / total as f64;
+    let q = 1.0 - p;
+    -(p * p.log2()) - (q * q.log2())
+}
+
+pub(crate) fn column_order_by_unweighted_entropy(
+    base_table: &[(BitVec<usize, Lsb0>, usize)],
 ) -> Vec<usize> {
-    let Some((first_base, _)) = selected_bases.first() else {
+    let Some((first_bits, _)) = base_table.first() else {
         return Vec::new();
     };
 
-    let selected_len = first_base.len();
-    let mut variable_indices = Vec::new();
-    for bit_idx in 0..selected_len {
-        let first_value = unsafe { *first_base.get_unchecked(bit_idx) };
-        let is_variable = selected_bases.iter().skip(1).any(|(base, _)| {
-            base.get(bit_idx)
-                .map(|bit| *bit != first_value)
-                .unwrap_or(first_value)
-        });
-        if is_variable {
-            variable_indices.push(bit_idx);
-        }
-    }
-    variable_indices
-}
+    let row_count = base_table.len();
+    let bit_len = first_bits.len();
 
-fn project_selected_bases_by_indices(
-    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
-    selected_indices: &[usize],
-) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-    selected_bases
-        .iter()
-        .map(|(selected_bits, count)| {
-            let mut projected = BitVec::with_capacity(selected_indices.len());
-            for &selected_idx in selected_indices {
-                projected.push(
-                    selected_bits
-                        .get(selected_idx)
-                        .map(|bit| *bit)
-                        .unwrap_or(false),
-                );
-            }
-            (projected, *count)
+    let mut columns_with_entropy: Vec<(usize, f64)> = (0..bit_len)
+        .map(|column_idx| {
+            let ones = base_table
+                .iter()
+                .filter(|(bits, _)| bits.get(column_idx).map(|b| *b).unwrap_or(false))
+                .count();
+            let entropy = binary_entropy_from_counts(ones, row_count);
+            (column_idx, entropy)
         })
+        .collect();
+
+    columns_with_entropy.sort_by(|(lhs_idx, lhs_entropy), (rhs_idx, rhs_entropy)| {
+        lhs_entropy
+            .partial_cmp(rhs_entropy)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| lhs_idx.cmp(rhs_idx))
+    });
+
+    columns_with_entropy
+        .into_iter()
+        .map(|(column_idx, _)| column_idx)
         .collect()
 }
 
-fn constant_bit_positions_by_value(
-    selected_bases: &[(BitVec<usize, Lsb0>, usize)],
-    selected_positions: &[usize],
-    constant_value: bool,
-) -> Vec<usize> {
-    let Some((first_base, _)) = selected_bases.first() else {
-        return Vec::new();
-    };
-
-    let selected_len = first_base.len();
-    let mut constants = Vec::new();
-    for bit_idx in 0..selected_len {
-        let first_value = unsafe { *first_base.get_unchecked(bit_idx) };
-        let is_constant = selected_bases.iter().skip(1).all(|(base, _)| {
-            base.get(bit_idx)
-                .map(|bit| *bit == first_value)
-                .unwrap_or(true)
-        });
-        if is_constant
-            && first_value == constant_value
-            && let Some(&bit_position) = selected_positions.get(bit_idx)
-        {
-            constants.push(bit_position);
+fn compare_rows_by_column_order(
+    lhs: &BitSlice<usize, Lsb0>,
+    rhs: &BitSlice<usize, Lsb0>,
+    column_order: &[usize],
+) -> Ordering {
+    for &column_idx in column_order {
+        let l = lhs.get(column_idx).map(|bit| *bit).unwrap_or(false);
+        let r = rhs.get(column_idx).map(|bit| *bit).unwrap_or(false);
+        match r.cmp(&l) {
+            Ordering::Equal => continue,
+            non_equal => return non_equal,
         }
     }
 
-    constants
+    let len = lhs.len().min(rhs.len());
+    for idx in 0..len {
+        let l = lhs.get(idx).map(|bit| *bit).unwrap_or(false);
+        let r = rhs.get(idx).map(|bit| *bit).unwrap_or(false);
+        match r.cmp(&l) {
+            Ordering::Equal => continue,
+            non_equal => return non_equal,
+        }
+    }
+
+    lhs.len().cmp(&rhs.len())
+}
+
+fn sort_encoding_context(
+    base_table: &mut Vec<(BitVec<usize, Lsb0>, usize)>,
+    row_to_id: &mut Vec<usize>,
+) -> Vec<usize> {
+    let base_count = base_table.len();
+    if base_count <= 1 {
+        return Vec::new();
+    }
+
+    let column_order = column_order_by_unweighted_entropy(base_table);
+
+    let mut indices: Vec<usize> = (0..base_count).collect();
+    indices.sort_by(|&lhs, &rhs| {
+        compare_rows_by_column_order(&base_table[lhs].0, &base_table[rhs].0, &column_order)
+            .then_with(|| lhs.cmp(&rhs))
+    });
+
+    let mut old_to_new = vec![0usize; base_count];
+    for (new_id, old_id) in indices.iter().copied().enumerate() {
+        old_to_new[old_id] = new_id;
+    }
+
+    *base_table = indices
+        .iter()
+        .map(|&old_id| base_table[old_id].clone())
+        .collect();
+
+    for id in row_to_id.iter_mut() {
+        if let Some(&new_id) = old_to_new.get(*id) {
+            *id = new_id;
+        }
+    }
+
+    column_order
 }
 
 #[derive(Clone)]
@@ -253,7 +251,7 @@ impl BaseBitGroups {
             groups,
             base_bit_mask,
             base_bit_positions,
-            num_bases: num_bits_per_base, // Initially, because they are constant bit positions
+            num_bases: num_bits_per_base,
             num_bits_per_base,
         }
     }
@@ -261,7 +259,6 @@ impl BaseBitGroups {
     pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
         let _timer = ScopedTimer::trace(format!("Adding bit position {}", bit_position));
 
-        // Skip duplicate work if this bit has already been selected.
         if self.base_bit_mask[bit_position] {
             return self.num_bases;
         }
@@ -270,8 +267,6 @@ impl BaseBitGroups {
         self.num_bits_per_base += 1;
         self.base_bit_positions.push(bit_position);
 
-        // Collect split-off groups and append after iteration.
-        // This avoids repeated growth/reallocation of `self.groups` while iterating.
         let mut new_groups = Vec::new();
 
         for group in &mut self.groups {
@@ -279,8 +274,6 @@ impl BaseBitGroups {
                 continue;
             }
 
-            // Keep zero-bit rows in place; move one-bit rows into a side vector.
-            // This avoids allocating a second vector for zeros.
             let mut group_ones = Vec::with_capacity(group.len() / 2 + 1);
             group.retain(|&row| {
                 if unsafe { bit_data.get_bit_unchecked(row, bit_position) } {
@@ -292,10 +285,8 @@ impl BaseBitGroups {
             });
 
             if group.is_empty() {
-                // All rows had bit=1.
                 *group = group_ones;
             } else if !group_ones.is_empty() {
-                // Mixed group: keep zeros in place and append ones as a new group.
                 new_groups.push(group_ones);
             }
         }
@@ -318,18 +309,8 @@ impl BaseBitGroups {
             &mut self.num_bits_per_base,
             bit_positions,
         );
-        self.num_bases = self.groups.len(); // Number of bases doesn't change for constant bits
+        self.num_bases = self.groups.len();
         self.num_bases
-    }
-    /// Get the bases as BitVecs along with their counts
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let _timer = ScopedTimer::debug("Getting bases");
-        get_selected_bases_from_groups(
-            &self.groups,
-            &self.base_bit_positions,
-            self.num_bases,
-            bit_data,
-        )
     }
 
     pub fn get_groups(&self) -> &[Vec<usize>] {
@@ -362,18 +343,29 @@ impl BaseBit for BaseBitGroups {
         BaseBitGroups::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        BaseBitGroups::get_bases(self, bit_data)
-    }
-
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let selected_bases = BaseBitGroups::get_bases(self, bit_data);
-        let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
-        project_selected_bases_by_indices(&selected_bases, &variable_indices)
-    }
-
-    fn get_groups(&self) -> &[Vec<usize>] {
-        BaseBitGroups::get_groups(self)
+    fn get_encoding_context(&self, bit_data: &BitDataSet, sort: bool) -> EncodingContext {
+        let mut base_table = get_selected_bases_from_groups(
+            &self.groups,
+            &self.base_bit_positions,
+            self.num_bases,
+            bit_data,
+        );
+        let mut row_to_id = vec![0usize; bit_data.num_rows()];
+        for (id, group) in self.groups.iter().enumerate() {
+            for &row in group {
+                row_to_id[row] = id;
+            }
+        }
+        let sorted_column_order = if sort {
+            Some(sort_encoding_context(&mut base_table, &mut row_to_id))
+        } else {
+            None
+        };
+        EncodingContext {
+            row_to_id,
+            base_table,
+            sorted_column_order,
+        }
     }
 
     fn get_num_bases(&self) -> usize {
@@ -390,498 +382,6 @@ impl BaseBit for BaseBitGroups {
 
     fn get_base_bit_positions(&self) -> &[usize] {
         BaseBitGroups::get_base_bit_positions(self)
-    }
-}
-
-#[derive(Clone)]
-pub struct BaseBitBatchGroups {
-    groups: Vec<Vec<usize>>,
-    base_bit_mask: BitVec<usize, Lsb0>,
-    base_bit_positions: Vec<usize>,
-    num_bases: usize,
-    num_bits_per_base: usize,
-}
-
-impl std::fmt::Debug for BaseBitBatchGroups {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("BaseBitBatchGroups")
-            .field("groups", &self.groups)
-            .field("base_bit_mask", &self.base_bit_mask)
-            .field("base_bit_positions", &self.base_bit_positions)
-            .field("num_bases", &self.num_bases)
-            .field("num_bits_per_base", &self.num_bits_per_base)
-            .finish()
-    }
-}
-
-impl BaseBitBatchGroups {
-    pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups = initial_groups(num_rows, 1);
-        let base_bit_mask = bitvec![usize, Lsb0; 0; chunk_size];
-        let base_bit_positions = Vec::new();
-        let num_bits_per_base = 0;
-        BaseBitBatchGroups {
-            groups,
-            base_bit_mask,
-            base_bit_positions,
-            num_bases: num_bits_per_base,
-            num_bits_per_base,
-        }
-    }
-
-    pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
-        let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
-
-        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
-        if new_bit_positions.is_empty() {
-            return self.num_bases;
-        }
-
-        const BIT_LIMIT: usize = 8;
-        const MAX_BUCKETS: usize = 1usize << BIT_LIMIT;
-        let mut counts = [0usize; MAX_BUCKETS];
-        let mut offsets = [0usize; MAX_BUCKETS];
-        let mut write_positions = [0usize; MAX_BUCKETS];
-        let mut scratch_rows: Vec<usize> = Vec::new();
-        let mut scratch_bucket_ids: Vec<usize> = Vec::new();
-
-        for bit_chunk in new_bit_positions.chunks(BIT_LIMIT) {
-            let bucket_count = 1usize << bit_chunk.len();
-            let mut next_groups: Vec<Vec<usize>> = Vec::with_capacity(self.groups.len());
-
-            for group in &self.groups {
-                if group.is_empty() {
-                    continue;
-                }
-
-                if group.len() <= 1 {
-                    next_groups.push(group.clone());
-                    continue;
-                }
-
-                counts[..bucket_count].fill(0);
-
-                if scratch_bucket_ids.len() < group.len() {
-                    scratch_bucket_ids.resize(group.len(), 0);
-                }
-                let bucket_ids = &mut scratch_bucket_ids[..group.len()];
-
-                for (&row, bucket_id_slot) in group.iter().zip(bucket_ids.iter_mut()) {
-                    let mut bucket_id = 0usize;
-                    for (bit_idx, &bit_position) in bit_chunk.iter().enumerate() {
-                        bucket_id |= (unsafe { bit_data.get_bit_unchecked(row, bit_position) }
-                            as usize)
-                            << bit_idx;
-                    }
-                    *bucket_id_slot = bucket_id;
-                    unsafe {
-                        *counts.get_unchecked_mut(bucket_id) += 1;
-                    }
-                }
-
-                let mut running = 0usize;
-                for bucket_id in 0..bucket_count {
-                    offsets[bucket_id] = running;
-                    running += counts[bucket_id];
-                }
-
-                if scratch_rows.len() < group.len() {
-                    scratch_rows.resize(group.len(), 0);
-                }
-
-                write_positions[..bucket_count].copy_from_slice(&offsets[..bucket_count]);
-
-                for (&row, &bucket_id) in group.iter().zip(bucket_ids.iter()) {
-                    let write_idx = unsafe { *write_positions.get_unchecked(bucket_id) };
-                    scratch_rows[write_idx] = row;
-                    unsafe {
-                        *write_positions.get_unchecked_mut(bucket_id) = write_idx + 1;
-                    }
-                }
-
-                for bucket_id in 0..bucket_count {
-                    let count = counts[bucket_id];
-                    if count == 0 {
-                        continue;
-                    }
-                    let start = offsets[bucket_id];
-                    let end = start + count;
-                    next_groups.push(scratch_rows[start..end].to_vec());
-                }
-            }
-
-            let added_count = apply_selected_bit_positions(
-                &mut self.base_bit_mask,
-                &mut self.base_bit_positions,
-                bit_chunk,
-            );
-            self.num_bits_per_base += added_count;
-            self.groups = next_groups;
-            self.num_bases = count_non_empty_groups(&self.groups);
-        }
-
-        self.num_bases
-    }
-
-    pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
-        self.add_bit_positions(bit_data, &[bit_position])
-    }
-
-    pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        let _timer =
-            ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-        add_constant_bits(
-            &mut self.base_bit_mask,
-            &mut self.base_bit_positions,
-            &mut self.num_bits_per_base,
-            bit_positions,
-        );
-        self.num_bases = self.groups.len();
-        self.num_bases
-    }
-
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let _timer = ScopedTimer::debug("Getting bases");
-        get_selected_bases_from_groups(
-            &self.groups,
-            &self.base_bit_positions,
-            self.num_bases,
-            bit_data,
-        )
-    }
-
-    pub fn get_groups(&self) -> &[Vec<usize>] {
-        &self.groups
-    }
-
-    pub fn get_num_bases(&self) -> usize {
-        self.num_bases
-    }
-
-    pub fn get_num_bits_per_base(&self) -> usize {
-        self.num_bits_per_base
-    }
-
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0> {
-        &self.base_bit_mask
-    }
-
-    pub fn get_base_bit_positions(&self) -> &[usize] {
-        &self.base_bit_positions
-    }
-}
-
-impl BaseBit for BaseBitBatchGroups {
-    fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
-        BaseBitBatchGroups::add_bit_position(self, bit_data, bit_position)
-    }
-
-    fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
-        BaseBitBatchGroups::add_bit_positions(self, bit_data, bit_positions)
-    }
-
-    fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        BaseBitBatchGroups::add_constant_bit_positions(self, bit_positions)
-    }
-
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        BaseBitBatchGroups::get_bases(self, bit_data)
-    }
-
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let selected_bases = BaseBitBatchGroups::get_bases(self, bit_data);
-        let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
-        project_selected_bases_by_indices(&selected_bases, &variable_indices)
-    }
-
-    fn get_groups(&self) -> &[Vec<usize>] {
-        BaseBitBatchGroups::get_groups(self)
-    }
-
-    fn get_num_bases(&self) -> usize {
-        BaseBitBatchGroups::get_num_bases(self)
-    }
-
-    fn get_num_bits_per_base(&self) -> usize {
-        BaseBitBatchGroups::get_num_bits_per_base(self)
-    }
-
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0> {
-        BaseBitBatchGroups::get_base_bit_mask(self)
-    }
-
-    fn get_base_bit_positions(&self) -> &[usize] {
-        BaseBitBatchGroups::get_base_bit_positions(self)
-    }
-}
-#[derive(Clone)]
-pub struct BaseBitIncSignatureGroups {
-    /// Per-row signature class id over selected (non-constant) base bits.
-    ///
-    /// `row_signatures[row]` is not a packed bit pattern; it is a stable class id.
-    /// When new positions are added, classes are refined incrementally from
-    /// `(old_class_id, new_bits_batch)` to `new_class_id` without rebuilding groups.
-    /// One transition per old class retains the old id (the "keeper"), so no id is
-    /// ever retired and the number of live classes is exactly `next_signature_id`.
-    row_signatures: Vec<u64>,
-    /// Monotonic id generator. Under the keeper invariant this also equals `n_b`.
-    next_signature_id: u64,
-    /// Lazily materialized groups cache, invalidated when signatures change.
-    ///
-    /// This keeps `add_bit_positions()` allocation-free per row and defers
-    /// `Vec<Vec<usize>>` construction to the rare `get_groups()` call.
-    groups_cache: OnceCell<Vec<Vec<usize>>>,
-    base_bit_mask: BitVec<usize, Lsb0>,
-    base_bit_positions: Vec<usize>,
-    num_bits_per_base: usize,
-}
-
-impl std::fmt::Debug for BaseBitIncSignatureGroups {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("BaseBitIncSignatureGroups")
-            .field("row_signatures", &self.row_signatures)
-            .field("next_signature_id", &self.next_signature_id)
-            .field("base_bit_mask", &self.base_bit_mask)
-            .field("base_bit_positions", &self.base_bit_positions)
-            .field("num_bases", &self.next_signature_id)
-            .field("num_bits_per_base", &self.num_bits_per_base)
-            .finish()
-    }
-}
-
-impl BaseBitIncSignatureGroups {
-    pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let base_bit_mask = bitvec![usize, Lsb0; 0; chunk_size];
-        let base_bit_positions = Vec::new();
-        // All rows start in a single class (id 0); next id to hand out is 1,
-        // so `next_signature_id == n_b == 1` initially.
-        let row_signatures = vec![0u64; num_rows];
-        BaseBitIncSignatureGroups {
-            row_signatures,
-            next_signature_id: 1,
-            groups_cache: OnceCell::new(),
-            base_bit_mask,
-            base_bit_positions,
-            num_bits_per_base: 0,
-        }
-    }
-
-    /// Refine current signature classes using one batch of at most 64 bit positions.
-    fn refine_signatures_batch(&mut self, bit_data: &BitDataSet, bit_positions_batch: &[usize]) {
-        debug_assert!(bit_positions_batch.len() <= 64);
-
-        // Tracks which old classes have already handed out their keeper id this batch.
-        let mut keeper_taken = FxHashSet::default();
-
-        // Maps a packed `(old_signature, mini_signature)` key to its new label.
-        let mut transitions = FxHashMap::<u128, u64>::with_capacity_and_hasher(
-            self.next_signature_id as usize,
-            Default::default(),
-        );
-
-        let mut mini_signatures = vec![0u64; self.row_signatures.len()];
-        for row in 0..self.row_signatures.len() {
-            let mut mini_signature = 0u64;
-            for (i, &bit_position) in bit_positions_batch.iter().enumerate() {
-                let bit = unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u64;
-                mini_signature |= bit << i;
-            }
-            mini_signatures[row] = mini_signature;
-        }
-
-        for (row_signature, mini_signature) in self
-            .row_signatures
-            .iter_mut()
-            .zip(mini_signatures.into_iter())
-        {
-            let old_signature = *row_signature;
-            let transition_key = ((old_signature as u128) << 64) | (mini_signature as u128);
-
-            let new_id = *transitions.entry(transition_key).or_insert_with(|| {
-                if keeper_taken.insert(old_signature) {
-                    // First transition for this class keeps the old id, so the
-                    // class is never emptied — only genuine splits mint new ids.
-                    old_signature
-                } else {
-                    let id = self.next_signature_id;
-                    self.next_signature_id = self
-                        .next_signature_id
-                        .checked_add(1)
-                        .expect("BaseBitIncSignatureGroups signature id overflow");
-                    id
-                }
-            });
-
-            *row_signature = new_id;
-        }
-        // No frequency-table update: `n_b` is `next_signature_id` by construction.
-    }
-
-    pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
-        let _timer = ScopedTimer::trace(format!("Adding bit positions {:?}", bit_positions));
-
-        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
-        if new_bit_positions.is_empty() {
-            return self.get_num_bases();
-        }
-
-        for batch in new_bit_positions.chunks(64) {
-            self.refine_signatures_batch(bit_data, batch);
-        }
-
-        let added_count = apply_selected_bit_positions(
-            &mut self.base_bit_mask,
-            &mut self.base_bit_positions,
-            &new_bit_positions,
-        );
-        self.num_bits_per_base += added_count;
-
-        // Signatures changed; lazy groups must be rebuilt on demand.
-        self.groups_cache.take();
-
-        self.get_num_bases()
-    }
-
-    pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
-        self.add_bit_positions(bit_data, &[bit_position])
-    }
-
-    pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        let _timer =
-            ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-        add_constant_bits(
-            &mut self.base_bit_mask,
-            &mut self.base_bit_positions,
-            &mut self.num_bits_per_base,
-            bit_positions,
-        );
-
-        // Constants do not change row signatures; base count is unchanged.
-        self.get_num_bases()
-    }
-
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let _timer = ScopedTimer::debug("Getting bases");
-
-        let num_classes = self.next_signature_id as usize;
-
-        // Single pass over the labels: recover a representative row per class,
-        // count class sizes, and preserve first-occurrence ordering.
-        let mut signature_order = Vec::with_capacity(num_classes);
-        let mut representative = FxHashMap::<u64, usize>::with_capacity_and_hasher(
-            num_classes,
-            Default::default(),
-        );
-        let mut counts =
-            FxHashMap::<u64, usize>::with_capacity_and_hasher(num_classes, Default::default());
-
-        for (row, &signature) in self.row_signatures.iter().enumerate() {
-            *counts.entry(signature).or_insert(0) += 1;
-            representative.entry(signature).or_insert_with(|| {
-                signature_order.push(signature);
-                row
-            });
-        }
-
-        let mut bases = Vec::with_capacity(signature_order.len());
-        for signature in signature_order {
-            let representative_row = representative[&signature];
-            let count = counts[&signature];
-            let chunk = unsafe { bit_data.get_chunk_unchecked(representative_row) };
-            let mut packed_base = BitVec::with_capacity(self.base_bit_positions.len());
-            for &bit_pos in &self.base_bit_positions {
-                packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
-            }
-            bases.push((packed_base, count));
-        }
-        bases
-    }
-
-    pub fn get_groups(&self) -> &[Vec<usize>] {
-        self.groups_cache
-            .get_or_init(|| {
-                let num_classes = self.next_signature_id as usize;
-                let mut group_index_by_signature =
-                    FxHashMap::<u64, usize>::with_capacity_and_hasher(
-                        num_classes,
-                        Default::default(),
-                    );
-                let mut groups: Vec<Vec<usize>> = Vec::with_capacity(num_classes);
-
-                for (row, &signature) in self.row_signatures.iter().enumerate() {
-                    let group_idx = if let Some(&idx) = group_index_by_signature.get(&signature) {
-                        idx
-                    } else {
-                        let idx = groups.len();
-                        groups.push(Vec::new());
-                        group_index_by_signature.insert(signature, idx);
-                        idx
-                    };
-                    groups[group_idx].push(row);
-                }
-                groups
-            })
-            .as_slice()
-    }
-
-    pub fn get_num_bases(&self) -> usize {
-        self.next_signature_id as usize
-    }
-
-    pub fn get_num_bits_per_base(&self) -> usize {
-        self.num_bits_per_base
-    }
-
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0> {
-        &self.base_bit_mask
-    }
-
-    pub fn get_base_bit_positions(&self) -> &[usize] {
-        &self.base_bit_positions
-    }
-}
-
-impl BaseBit for BaseBitIncSignatureGroups {
-    fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
-        BaseBitIncSignatureGroups::add_bit_position(self, bit_data, bit_position)
-    }
-
-    fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
-        BaseBitIncSignatureGroups::add_bit_positions(self, bit_data, bit_positions)
-    }
-
-    fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        BaseBitIncSignatureGroups::add_constant_bit_positions(self, bit_positions)
-    }
-
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        BaseBitIncSignatureGroups::get_bases(self, bit_data)
-    }
-
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let selected_bases = BaseBitIncSignatureGroups::get_bases(self, bit_data);
-        let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
-        project_selected_bases_by_indices(&selected_bases, &variable_indices)
-    }
-
-    fn get_groups(&self) -> &[Vec<usize>] {
-        BaseBitIncSignatureGroups::get_groups(self)
-    }
-
-    fn get_num_bases(&self) -> usize {
-        BaseBitIncSignatureGroups::get_num_bases(self)
-    }
-
-    fn get_num_bits_per_base(&self) -> usize {
-        BaseBitIncSignatureGroups::get_num_bits_per_base(self)
-    }
-
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0> {
-        BaseBitIncSignatureGroups::get_base_bit_mask(self)
-    }
-
-    fn get_base_bit_positions(&self) -> &[usize] {
-        BaseBitIncSignatureGroups::get_base_bit_positions(self)
     }
 }
 
@@ -1127,22 +627,43 @@ impl BaseBit for BaseBitHyperLogLogCount {
         BaseBitHyperLogLogCount::add_constant_bit_positions(self, bit_positions)
     }
 
-    fn get_bases(&self, _bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        panic!(
-            "BaseBitHyperLogLogCount does not support get_bases(); use a different BaseBit implementation"
-        )
-    }
+    fn get_encoding_context(&self, bit_data: &BitDataSet, sort: bool) -> EncodingContext {
+        let selected_bit_positions = &self.base_bit_positions;
+        let num_rows = self.row_hashes.len();
+        let mut hash_to_id: FxHashMap<u64, usize> =
+            FxHashMap::with_capacity_and_hasher(num_rows.min(1024), Default::default());
+        let mut base_table: Vec<(BitVec<usize, Lsb0>, usize)> = Vec::new();
+        let mut row_to_id = Vec::with_capacity(num_rows);
 
-    fn get_variable_bases(&self, _bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        panic!(
-            "BaseBitHyperLogLogCount does not support get_variable_bases(); use a different BaseBit implementation"
-        )
-    }
+        for (row, &row_hash) in self.row_hashes.iter().enumerate() {
+            let id = if let Some(&existing_id) = hash_to_id.get(&row_hash) {
+                base_table[existing_id].1 += 1;
+                existing_id
+            } else {
+                let new_id = base_table.len();
+                hash_to_id.insert(row_hash, new_id);
+                let chunk = unsafe { bit_data.get_chunk_unchecked(row) };
+                let mut packed_base = BitVec::with_capacity(selected_bit_positions.len());
+                for &bit_pos in selected_bit_positions {
+                    packed_base.push(unsafe { *chunk.get_unchecked(bit_pos) });
+                }
+                base_table.push((packed_base, 1));
+                new_id
+            };
+            row_to_id.push(id);
+        }
 
-    fn get_groups(&self) -> &[Vec<usize>] {
-        panic!(
-            "BaseBitHyperLogLogCount does not support get_groups(); use a different BaseBit implementation"
-        )
+        let sorted_column_order = if sort {
+            Some(sort_encoding_context(&mut base_table, &mut row_to_id))
+        } else {
+            None
+        };
+
+        EncodingContext {
+            row_to_id,
+            base_table,
+            sorted_column_order,
+        }
     }
 
     fn get_num_bases(&self) -> usize {
@@ -1162,225 +683,13 @@ impl BaseBit for BaseBitHyperLogLogCount {
     }
 }
 
-#[derive(Clone)]
-pub struct BaseBitSignatureGroups {
-    groups: Vec<Vec<usize>>,
-    base_bit_mask: BitVec<usize, Lsb0>,
-    base_bit_positions: Vec<usize>,
-    num_bases: usize,
-    num_bits_per_base: usize,
-}
-
-impl std::fmt::Debug for BaseBitSignatureGroups {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("BaseBitSignatureGroups")
-            .field("groups", &self.groups)
-            .field("base_bit_mask", &self.base_bit_mask)
-            .field("base_bit_positions", &self.base_bit_positions)
-            .field("num_bases", &self.num_bases)
-            .field("num_bits_per_base", &self.num_bits_per_base)
-            .finish()
-    }
-}
-
-impl BaseBitSignatureGroups {
-    pub fn new(num_rows: usize, chunk_size: usize) -> Self {
-        let groups = initial_groups(num_rows, 1);
-        let base_bit_mask = bitvec![usize, Lsb0; 0; chunk_size];
-        let base_bit_positions = Vec::new();
-        let num_bits_per_base = 0;
-        BaseBitSignatureGroups {
-            groups,
-            base_bit_mask,
-            base_bit_positions,
-            num_bases: num_bits_per_base,
-            num_bits_per_base,
-        }
-    }
-
-    pub fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
-        let _timer = ScopedTimer::trace(format!(
-            "Adding bit positions (signature) {:?}",
-            bit_positions
-        ));
-
-        let new_bit_positions = collect_new_bit_positions(&self.base_bit_mask, bit_positions);
-        if new_bit_positions.is_empty() {
-            return self.num_bases;
-        }
-
-        let added_count = apply_selected_bit_positions(
-            &mut self.base_bit_mask,
-            &mut self.base_bit_positions,
-            &new_bit_positions,
-        );
-        self.num_bits_per_base += added_count;
-
-        let groups = if self.base_bit_positions.len() <= 128 {
-            let mut signature_rows: Vec<(u128, usize)> = Vec::with_capacity(bit_data.num_rows());
-            for row in 0..bit_data.num_rows() {
-                let mut signature = 0u128;
-                for &bit_position in &self.base_bit_positions {
-                    signature <<= 1;
-                    signature |= unsafe { bit_data.get_bit_unchecked(row, bit_position) } as u128;
-                }
-                signature_rows.push((signature, row));
-            }
-
-            signature_rows.sort_unstable_by_key(|(signature, _row)| *signature);
-
-            let mut groups: Vec<Vec<usize>> = Vec::new();
-            let mut current_signature: Option<u128> = None;
-            for (signature, row) in signature_rows {
-                if current_signature == Some(signature) {
-                    groups.last_mut().expect("group exists").push(row);
-                } else {
-                    current_signature = Some(signature);
-                    groups.push(vec![row]);
-                }
-            }
-            groups
-        } else {
-            tracing::warn!(
-                "More than 128 selected bits; using lexicographic fallback for grouping"
-            );
-            let mut rows: Vec<usize> = (0..bit_data.num_rows()).collect();
-            rows.sort_unstable_by(|&lhs, &rhs| {
-                for &bit_position in &self.base_bit_positions {
-                    let lhs_bit = unsafe { bit_data.get_bit_unchecked(lhs, bit_position) };
-                    let rhs_bit = unsafe { bit_data.get_bit_unchecked(rhs, bit_position) };
-                    match lhs_bit.cmp(&rhs_bit) {
-                        std::cmp::Ordering::Equal => {}
-                        ordering => return ordering,
-                    }
-                }
-                std::cmp::Ordering::Equal
-            });
-
-            let mut groups: Vec<Vec<usize>> = Vec::new();
-            'rows_loop: for row in rows {
-                if let Some(last_group) = groups.last_mut() {
-                    let last_row = last_group[0];
-                    for &bit_position in &self.base_bit_positions {
-                        if unsafe { bit_data.get_bit_unchecked(last_row, bit_position) }
-                            != unsafe { bit_data.get_bit_unchecked(row, bit_position) }
-                        {
-                            groups.push(vec![row]);
-                            continue 'rows_loop;
-                        }
-                    }
-                    last_group.push(row);
-                } else {
-                    groups.push(vec![row]);
-                }
-            }
-            groups
-        };
-
-        self.groups = groups;
-        self.num_bases = self.groups.len();
-        self.num_bases
-    }
-
-    pub fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
-        self.add_bit_positions(bit_data, &[bit_position])
-    }
-
-    pub fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        let _timer =
-            ScopedTimer::debug(format!("Adding constant bit positions {:?}", bit_positions));
-        add_constant_bits(
-            &mut self.base_bit_mask,
-            &mut self.base_bit_positions,
-            &mut self.num_bits_per_base,
-            bit_positions,
-        );
-        self.num_bases = self.groups.len();
-        self.num_bases
-    }
-
-    pub fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let _timer = ScopedTimer::debug("Getting bases");
-        get_selected_bases_from_groups(
-            &self.groups,
-            &self.base_bit_positions,
-            self.num_bases,
-            bit_data,
-        )
-    }
-
-    pub fn get_groups(&self) -> &[Vec<usize>] {
-        &self.groups
-    }
-
-    pub fn get_num_bases(&self) -> usize {
-        self.num_bases
-    }
-
-    pub fn get_num_bits_per_base(&self) -> usize {
-        self.num_bits_per_base
-    }
-
-    pub fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0> {
-        &self.base_bit_mask
-    }
-
-    pub fn get_base_bit_positions(&self) -> &[usize] {
-        &self.base_bit_positions
-    }
-}
-
-impl BaseBit for BaseBitSignatureGroups {
-    fn add_bit_position(&mut self, bit_data: &BitDataSet, bit_position: usize) -> usize {
-        BaseBitSignatureGroups::add_bit_position(self, bit_data, bit_position)
-    }
-
-    fn add_bit_positions(&mut self, bit_data: &BitDataSet, bit_positions: &[usize]) -> usize {
-        BaseBitSignatureGroups::add_bit_positions(self, bit_data, bit_positions)
-    }
-
-    fn add_constant_bit_positions(&mut self, bit_positions: &[usize]) -> usize {
-        BaseBitSignatureGroups::add_constant_bit_positions(self, bit_positions)
-    }
-
-    fn get_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        BaseBitSignatureGroups::get_bases(self, bit_data)
-    }
-
-    fn get_variable_bases(&self, bit_data: &BitDataSet) -> Vec<(BitVec<usize, Lsb0>, usize)> {
-        let selected_bases = BaseBitSignatureGroups::get_bases(self, bit_data);
-        let variable_indices = variable_bit_indices_from_selected_bases(&selected_bases);
-        project_selected_bases_by_indices(&selected_bases, &variable_indices)
-    }
-
-    fn get_groups(&self) -> &[Vec<usize>] {
-        BaseBitSignatureGroups::get_groups(self)
-    }
-
-    fn get_num_bases(&self) -> usize {
-        BaseBitSignatureGroups::get_num_bases(self)
-    }
-
-    fn get_num_bits_per_base(&self) -> usize {
-        BaseBitSignatureGroups::get_num_bits_per_base(self)
-    }
-
-    fn get_base_bit_mask(&self) -> &BitSlice<usize, Lsb0> {
-        BaseBitSignatureGroups::get_base_bit_mask(self)
-    }
-
-    fn get_base_bit_positions(&self) -> &[usize] {
-        BaseBitSignatureGroups::get_base_bit_positions(self)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::preprocessor::{BitData, BitDataInfo, BitDataSet, FeatureSpec};
-    use crate::data_loader::FeatureDataType;
+    use crate::compression::data::{
+        BitData, BitDataInfo, BitDataSet, FeatureDataType, FeatureSpec, FeatureTransform,
+    };
 
-    /// Helper function to create standard test data with 6 rows and 8 bits per row
     fn create_test_bit_data() -> BitDataSet {
         let num_rows = 6;
         let chunk_size = 8;
@@ -1403,88 +712,19 @@ mod tests {
             num_rows,
         };
 
-        let features =
-            vec![FeatureSpec::new(FeatureDataType::UnsignedInt, bits_per_feature); num_features];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(bits_per_feature as u16),
+                transform: FeatureTransform::None
+            };
+            num_features
+        ];
         let info = BitDataInfo::new(features, chunk_size * num_rows).unwrap();
 
         BitDataSet {
             data: bit_data,
             info,
         }
-    }
-
-    fn print_bases(base_bit_groups: &BaseBitGroups, bit_data: &BitDataSet) {
-        tracing::info!("Bases after adding bit:");
-        for (i, (base, count)) in base_bit_groups.get_bases(bit_data).iter().enumerate() {
-            tracing::info!("Base {}: {:?}, Count: {}", i, base, count);
-        }
-    }
-
-    #[test]
-    fn test_base_bit_groups() {
-        let bit_data = create_test_bit_data();
-        tracing::info!("BitData: {}", bit_data);
-
-        let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
-        assert_eq!(num_bases, 2);
-        print_bases(&base_bit_groups, &bit_data);
-
-        let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
-        assert_eq!(num_bases, 3);
-        print_bases(&base_bit_groups, &bit_data);
-    }
-
-    #[test]
-    fn test_base_bit_groups_with_initial_bits() {
-        let bit_data = create_test_bit_data();
-        tracing::info!("BitData: {}", bit_data);
-
-        let mut base_bit_groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let num_bases = base_bit_groups.add_bit_position(&bit_data, 4);
-        assert_eq!(num_bases, 2);
-        print_bases(&base_bit_groups, &bit_data);
-
-        let num_bases = base_bit_groups.add_bit_position(&bit_data, 5);
-        assert_eq!(num_bases, 3);
-        print_bases(&base_bit_groups, &bit_data);
-    }
-
-    #[test]
-    fn test_base_bit_batch_groups_add_multiple_bits() {
-        let bit_data = create_test_bit_data();
-
-        let mut batch_groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let num_bases = batch_groups.add_bit_positions(&bit_data, &[4, 5]);
-        assert_eq!(num_bases, 3);
-        assert_eq!(batch_groups.get_num_bits_per_base(), 2);
-        assert_eq!(
-            batch_groups
-                .get_groups()
-                .iter()
-                .map(|g| g.len())
-                .sum::<usize>(),
-            bit_data.num_rows()
-        );
-    }
-
-    #[test]
-    fn test_base_bit_signature_groups_add_multiple_bits() {
-        let bit_data = create_test_bit_data();
-
-        let mut signature_groups =
-            BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-        let num_bases = signature_groups.add_bit_positions(&bit_data, &[4, 5]);
-        assert_eq!(num_bases, 3);
-        assert_eq!(signature_groups.get_num_bits_per_base(), 2);
-        assert_eq!(
-            signature_groups
-                .get_groups()
-                .iter()
-                .map(|g| g.len())
-                .sum::<usize>(),
-            bit_data.num_rows()
-        );
     }
 
     #[test]
@@ -1500,30 +740,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "does not support get_groups")]
-    fn test_base_bit_hll_count_get_groups_panics() {
-        let bit_data = create_test_bit_data();
-        let hll_groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
-        let _ = hll_groups.get_groups();
-    }
-
-    #[test]
-    #[should_panic(expected = "does not support get_bases")]
-    fn test_base_bit_hll_count_get_bases_panics() {
-        let bit_data = create_test_bit_data();
-        let hll_groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
-        let _ = hll_groups.get_bases(&bit_data);
-    }
-
-    #[test]
-    #[should_panic(expected = "does not support get_variable_bases")]
-    fn test_base_bit_hll_count_get_variable_bases_panics() {
-        let bit_data = create_test_bit_data();
-        let hll_groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
-        let _ = hll_groups.get_variable_bases(&bit_data);
-    }
-
-    #[test]
     fn test_constant_bits_ignore_duplicates_base_groups() {
         let bit_data = create_test_bit_data();
         let mut groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
@@ -1535,53 +751,6 @@ mod tests {
     }
 
     #[test]
-    fn test_constant_bits_ignore_duplicates_batch_groups() {
-        let bit_data = create_test_bit_data();
-        let mut groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-
-        groups.add_constant_bit_positions(&[1, 1, 2]);
-
-        assert_eq!(groups.get_num_bits_per_base(), 2);
-        assert_eq!(groups.get_base_bit_positions(), &[1, 2]);
-    }
-
-    #[test]
-    fn test_add_bit_positions_ignore_duplicates_batch_groups() {
-        let bit_data = create_test_bit_data();
-        let mut groups = BaseBitBatchGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-
-        let num_bases = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
-
-        assert_eq!(num_bases, 3);
-        assert_eq!(groups.get_num_bits_per_base(), 2);
-        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
-    }
-
-    #[test]
-    fn test_add_bit_positions_ignore_duplicates_signature_groups() {
-        let bit_data = create_test_bit_data();
-        let mut groups = BaseBitSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-
-        let num_bases = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
-
-        assert_eq!(num_bases, 3);
-        assert_eq!(groups.get_num_bits_per_base(), 2);
-        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
-    }
-
-    #[test]
-    fn test_add_bit_positions_ignore_duplicates_inc_signature_groups() {
-        let bit_data = create_test_bit_data();
-        let mut groups = BaseBitIncSignatureGroups::new(bit_data.num_rows(), bit_data.chunk_size());
-
-        let num_bases = groups.add_bit_positions(&bit_data, &[4, 4, 5]);
-
-        assert_eq!(num_bases, 3);
-        assert_eq!(groups.get_num_bits_per_base(), 2);
-        assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
-    }
-
-    #[test]
     fn test_add_bit_positions_ignore_duplicates_hll_groups() {
         let bit_data = create_test_bit_data();
         let mut groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
@@ -1590,5 +759,53 @@ mod tests {
 
         assert_eq!(groups.get_num_bits_per_base(), 2);
         assert_eq!(groups.get_base_bit_positions(), &[4, 5]);
+    }
+
+    #[test]
+    fn test_base_groups_get_encoding_context_no_sort() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        groups.add_bit_position(&bit_data, 0);
+        groups.add_bit_position(&bit_data, 4);
+
+        let ctx = groups.get_encoding_context(&bit_data, false);
+
+        assert_eq!(ctx.row_to_id.len(), bit_data.num_rows());
+        assert!(!ctx.base_table.is_empty());
+        let total: usize = ctx.base_table.iter().map(|(_, count)| count).sum();
+        assert_eq!(total, bit_data.num_rows());
+    }
+
+    #[test]
+    fn test_hll_get_encoding_context_no_sort() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitHyperLogLogCount::new(bit_data.num_rows(), bit_data.chunk_size());
+        let _ = groups.add_bit_positions(&bit_data, &[0, 4]);
+
+        let ctx = groups.get_encoding_context(&bit_data, false);
+
+        assert_eq!(ctx.row_to_id.len(), bit_data.num_rows());
+        assert!(!ctx.base_table.is_empty());
+        let total: usize = ctx.base_table.iter().map(|(_, count)| count).sum();
+        assert_eq!(total, bit_data.num_rows());
+        // Rows 1 and 5 are identical so they share a base
+        assert_eq!(ctx.row_to_id[1], ctx.row_to_id[5]);
+    }
+
+    #[test]
+    fn test_get_encoding_context_sort_remaps_ids() {
+        let bit_data = create_test_bit_data();
+        let mut groups = BaseBitGroups::new(bit_data.num_rows(), bit_data.chunk_size());
+        groups.add_bit_position(&bit_data, 0);
+        groups.add_bit_position(&bit_data, 4);
+
+        let unsorted = groups.get_encoding_context(&bit_data, false);
+        let sorted = groups.get_encoding_context(&bit_data, true);
+
+        // Same number of bases and same total row count
+        assert_eq!(unsorted.base_table.len(), sorted.base_table.len());
+        let unsorted_total: usize = unsorted.base_table.iter().map(|(_, c)| c).sum();
+        let sorted_total: usize = sorted.base_table.iter().map(|(_, c)| c).sum();
+        assert_eq!(unsorted_total, sorted_total);
     }
 }

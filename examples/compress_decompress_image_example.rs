@@ -1,7 +1,7 @@
 use image_gd::ImageColorModel;
 use image_gd::ScopedTimer;
 
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{EntroGdError, init_logging, write_bitdata_as_image};
 use std::env;
@@ -12,7 +12,7 @@ use std::path::Path;
 fn main() -> Result<(), EntroGdError> {
     unsafe {
         env::set_var("ENTRO_GD_LOG_TO_STDERR", "1");
-        env::set_var("RUST_LOG", "debug");
+        env::set_var("RUST_LOG", "info");
     }
     let _log_handle = init_logging();
     let _timer =
@@ -83,11 +83,11 @@ fn main() -> Result<(), EntroGdError> {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .then(EntropyNaive {})
+    .then(Entropy {})
     .then(SelectBasesAdaptive {
         width_decay: 0.45,
         patience: 5,
-        base_bit_impl: BaseBitImpl::Naive,
+        base_bit_impl: BaseBitImpl::HyperLogLogCount,
     })
     .then(BuildSortedBaseTable {})
     .then(EncodeDataHuffman {})
@@ -121,7 +121,9 @@ fn main() -> Result<(), EntroGdError> {
         let cloned_compressed_data = compressed_data.clone();
         let _timer = ScopedTimer::info("Decompression time for random access handle");
         let decompress_handle = DecompressRandomAccessHandle::new(cloned_compressed_data)?;
-        let _decompressed_data = decompress_handle.decompress_samples(&vec![compressed_data.encoded_data.get_num_samples() / 2 as usize])?;
+        let _decompressed_data = decompress_handle.decompress_samples(&vec![
+            compressed_data.encoded_data.get_num_samples() / 2 as usize,
+        ])?;
         black_box(decompress_handle);
         drop(_timer);
 

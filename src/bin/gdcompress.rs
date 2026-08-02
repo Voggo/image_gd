@@ -1,0 +1,819 @@
+use argh::FromArgs;
+use image_gd::prelude::*;
+use image_gd::{
+    BitDataReconstructionInfo, CompressedData, DEFAULT_ALIGN_ROWS_TO_WORD, DecompressFileData,
+    DecompressRandomAccessHandle, EntroGdError, FloatScalingMode, PixelGrouping,
+    PreprocessOptions, load_csv, reconstruct_feature_value, reconstruct_to_dataframe,
+    write_bitdata_as_image,
+};
+use polars::prelude::{CsvWriter, SerWriter};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "bmp", "gif", "tiff", "webp"];
+
+#[derive(FromArgs)]
+/// gdcompress — EntroGD compression/decompression tool
+struct Args {
+    /// input file to compress or decompress (auto-detect based on extension)
+    #[argh(positional)]
+    input: String,
+
+    /// output path (auto-derived from input if omitted)
+    #[argh(option, short = 'o')]
+    output: Option<String>,
+
+    /// show condensed samples (analytics) from a compressed file
+    #[argh(switch)]
+    analytics: bool,
+
+    /// verbose output with detailed statistics
+    #[argh(switch, short = 'v')]
+    verbose: bool,
+
+    /// pixel grouping size for image compression (default: "3x3")
+    #[argh(option, default = "String::from(\"3x3\")")]
+    pixel_grouping: String,
+
+    /// convert floats to integers for compression: on or off (tabular only, default: on)
+    #[argh(option, default = "String::from(\"on\")")]
+    float_scaling: String,
+
+    /// decimal places preserved when float scaling is on (tabular only, default: 9)
+    #[argh(option, default = "9")]
+    float_precision: u8,
+
+    /// decompress only specific rows, e.g., "0,5,10-20" (tabular only)
+    #[argh(option)]
+    rows: Option<String>,
+
+    /// base-bit counting: precise or approximate (default: precise)
+    #[argh(option, default = "String::from(\"precise\")")]
+    base_counting: String,
+}
+
+#[derive(Debug)]
+enum Action {
+    CompressTabular {
+        input: PathBuf,
+        output: PathBuf,
+        float_scaling: FloatScalingMode,
+        float_precision: u8,
+        base_impl: BaseBitImpl,
+    },
+    CompressImage {
+        input: PathBuf,
+        output: PathBuf,
+        pixel_grouping: PixelGrouping,
+        base_impl: BaseBitImpl,
+    },
+    DecompressTabular {
+        input: PathBuf,
+        output: PathBuf,
+        rows: Option<Vec<usize>>,
+    },
+    DecompressImage {
+        input: PathBuf,
+        output: PathBuf,
+    },
+    ShowAnalytics {
+        input: PathBuf,
+    },
+}
+
+fn parse_pixel_grouping(s: &str) -> Result<PixelGrouping, String> {
+    let parts: Vec<&str> = s.split('x').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "invalid pixel grouping '{}', expected format WxH (e.g., 3x3)",
+            s
+        ));
+    }
+    let w: u32 = parts[0]
+        .parse()
+        .map_err(|_| format!("invalid width in '{}'", s))?;
+    let h: u32 = parts[1]
+        .parse()
+        .map_err(|_| format!("invalid height in '{}'", s))?;
+    if w == 0 || h == 0 {
+        return Err(format!(
+            "pixel grouping dimensions must be positive, got {}",
+            s
+        ));
+    }
+    Ok(PixelGrouping::new(w, h))
+}
+
+fn parse_float_scaling(s: &str) -> Result<FloatScalingMode, String> {
+    match s.to_lowercase().as_str() {
+        "on" => Ok(FloatScalingMode::ScaledOffsetSignedInt),
+        "off" => Ok(FloatScalingMode::Disabled),
+        _ => Err(format!(
+            "invalid float scaling '{}', expected: on or off",
+            s
+        )),
+    }
+}
+
+fn parse_rows(s: &str) -> Result<Vec<usize>, String> {
+    let mut indices = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(pos) = part.find('-') {
+            let start: usize = part[..pos]
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid range start in '{}'", part))?;
+            let end: usize = part[pos + 1..]
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid range end in '{}'", part))?;
+            if start > end {
+                return Err(format!("invalid range '{}': start > end", part));
+            }
+            for i in start..=end {
+                indices.push(i);
+            }
+        } else {
+            let idx: usize = part
+                .parse()
+                .map_err(|_| format!("invalid index '{}'", part))?;
+            indices.push(idx);
+        }
+    }
+    if indices.is_empty() {
+        return Err("no valid row indices provided".to_string());
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    Ok(indices)
+}
+
+fn parse_base_counting(s: &str) -> Result<BaseBitImpl, String> {
+    match s.to_lowercase().as_str() {
+        "precise" => Ok(BaseBitImpl::Naive),
+        "approximate" => Ok(BaseBitImpl::HyperLogLogCount),
+        _ => Err(format!(
+            "invalid base-counting '{}', expected: precise or approximate",
+            s
+        )),
+    }
+}
+
+fn derive_output(input: &Path, target_ext: &str) -> PathBuf {
+    let stem = input.file_stem().unwrap_or_else(|| input.as_os_str());
+    let parent = input.parent().unwrap_or_else(|| Path::new("."));
+    let mut name = stem.to_os_string();
+    name.push(".");
+    name.push(target_ext);
+    parent.join(name)
+}
+
+fn detect_action(args: &Args) -> Result<Action, String> {
+    let input = PathBuf::from(&args.input);
+    if !input.exists() {
+        return Err(format!("file not found: {}", input.display()));
+    }
+
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if args.analytics {
+        if !matches!(ext.as_str(), "tgd" | "igd" | "egd") {
+            return Err(format!(
+                "--analytics requires a compressed file (.tgd, .igd, .egd), got '{}'",
+                ext
+            ));
+        }
+        return Ok(Action::ShowAnalytics { input });
+    }
+
+    match ext.as_str() {
+        "csv" => {
+            let output = args
+                .output
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| derive_output(&input, "tgd"));
+            let float_scaling = parse_float_scaling(&args.float_scaling)?;
+            let float_precision = args.float_precision;
+            let base_impl = parse_base_counting(&args.base_counting)?;
+            Ok(Action::CompressTabular {
+                input,
+                output,
+                float_scaling,
+                float_precision,
+                base_impl,
+            })
+        }
+        "tgd" => {
+            let rows = args.rows.as_deref().map(parse_rows).transpose()?;
+            let output = args
+                .output
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| derive_output(&input, "csv"));
+            Ok(Action::DecompressTabular {
+                input,
+                output,
+                rows,
+            })
+        }
+        "igd" => {
+            let output = args
+                .output
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| derive_output(&input, "png"));
+            Ok(Action::DecompressImage { input, output })
+        }
+        "egd" => {
+            if args.output.is_none() {
+                return Err(
+                    "--output is required for .egd files (unknown original format)".to_string(),
+                );
+            }
+            let output = PathBuf::from(args.output.as_ref().unwrap());
+            // Try to infer output type from output extension
+            let out_ext = output
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            match out_ext.as_str() {
+                "csv" => Ok(Action::DecompressTabular {
+                    input,
+                    output,
+                    rows: None,
+                }),
+                "png" | "jpg" | "jpeg" | "bmp" | "gif" => {
+                    Ok(Action::DecompressImage { input, output })
+                }
+                _ => Err(format!(
+                    "cannot determine output format from extension '{}', use -o with .csv or .png",
+                    out_ext
+                )),
+            }
+        }
+        ext if IMAGE_EXTENSIONS.contains(&ext) => {
+            let output = args
+                .output
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| derive_output(&input, "igd"));
+            let pixel_grouping = parse_pixel_grouping(&args.pixel_grouping)?;
+            let base_impl = parse_base_counting(&args.base_counting)?;
+            Ok(Action::CompressImage {
+                input,
+                output,
+                pixel_grouping,
+                base_impl,
+            })
+        }
+        _ => Err(format!(
+            "unsupported file extension '{}'\n\
+             supported input formats:\n\
+               compress:   .csv, .png, .jpg, .jpeg, .bmp, .gif, .tiff, .webp\n\
+               decompress: .tgd (tabular), .igd (image), .egd (generic, requires -o)",
+            ext
+        )),
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.3} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    if d.as_secs() >= 1 {
+        format!("{:.2}s", d.as_secs_f64())
+    } else if d.as_millis() >= 1 {
+        format!("{}ms", d.as_millis())
+    } else {
+        format!("{}us", d.as_micros())
+    }
+}
+
+fn compress_tabular(
+    input: &Path,
+    output: &Path,
+    float_scaling: FloatScalingMode,
+    float_precision: u8,
+    base_impl: BaseBitImpl,
+    verbose: bool,
+) -> Result<(), EntroGdError> {
+    let total_start = Instant::now();
+
+    eprint!("Loading... ");
+    io::stderr().flush().unwrap();
+    let load_start = Instant::now();
+    let df = load_csv(input, true, None)?;
+    let original_rows = df.height();
+    let load_time = load_start.elapsed();
+    eprintln!("done ({} rows, {} columns)", original_rows, df.width());
+
+    if float_scaling != FloatScalingMode::Disabled {
+        eprintln!(
+            "warning: float scaling is on — floats are converted to integers,\n\
+             preserving up to {} decimal place(s). Data loss may occur if your floats\n\
+             need more precision. Tune with --float-precision or disable with\n\
+             --float-scaling off. (Too high a value will be rejected if it causes\n\
+             overflow.)",
+            float_precision,
+        );
+    }
+
+    let preprocess_options = PreprocessOptions {
+        float_scaling,
+        decimal_scale: float_precision,
+        integer_zero_normalization: true,
+    };
+
+    eprint!("Compressing... ");
+    io::stderr().flush().unwrap();
+    let compress_start = Instant::now();
+    let bit_data = BuildBitDataSet {
+        options: preprocess_options,
+        pad_rows_to_word: false,
+    }
+    .process(df)?;
+
+    let pipeline = Entropy {}
+        .then(GenCondensedSamples { m_max: 30 })
+        .then(SelectBasesAdaptive {
+            width_decay: 0.5,
+            patience: 10,
+            base_bit_impl: base_impl,
+        })
+        .then(BuildBaseTable {})
+        .then(EncodeData {});
+
+    let compressed = pipeline.process(bit_data)?;
+    let compress_time = compress_start.elapsed();
+
+    let save_start = Instant::now();
+    SaveTgdFile {
+        output_path: output.to_path_buf(),
+    }
+    .process(compressed.clone())?;
+    let save_time = save_start.elapsed();
+
+    let original_size = std::fs::metadata(input)?.len();
+    let compressed_size = std::fs::metadata(output)?.len();
+    let total_time = total_start.elapsed();
+    eprintln!("done");
+
+    println!("Compress  {} → {}", input.display(), output.display());
+    println!(
+        "  Original   {}  ({} bytes)",
+        format_size(original_size),
+        original_size
+    );
+    println!(
+        "  Compressed {}  ({} bytes)",
+        format_size(compressed_size),
+        compressed_size
+    );
+    if original_size > 0 {
+        let ratio = original_size as f64 / compressed_size as f64;
+        let pct = 100.0 * compressed_size as f64 / original_size as f64;
+        println!("  Ratio      {:.2}x  ({:.1}%)", ratio, pct);
+    }
+    println!("  Time       {}", format_duration(total_time));
+
+    if verbose {
+        let num_features = compressed.metadata.num_features();
+        let num_base_bits = compressed.layout.selected_base_bit_positions().len();
+        let base_table_entries = compressed.base_table.len();
+        let encoded_bits = compressed.encoded_data.get_encoded_size();
+        let original_bits = compressed.metadata.original_size_bits();
+
+        println!();
+        println!(
+            "  Bit representation: {} bits, {} rows, {} features",
+            original_bits, original_rows, num_features
+        );
+        println!("  ─────────────────────────────");
+        println!("  Base bits selected: {}", num_base_bits);
+        println!("  Base table entries: {}", base_table_entries);
+        println!("  Encoded stream:     {} bits", encoded_bits);
+        println!("  ─────────────────────────────");
+        println!("  Timing:");
+        println!("    Load      {}", format_duration(load_time));
+        println!("    Compress  {}", format_duration(compress_time));
+        println!("    Save      {}", format_duration(save_time));
+        println!("    Total     {}", format_duration(total_time));
+    }
+
+    Ok(())
+}
+
+fn compress_image(
+    input: &Path,
+    output: &Path,
+    pixel_grouping: PixelGrouping,
+    base_impl: BaseBitImpl,
+    verbose: bool,
+) -> Result<(), EntroGdError> {
+    let total_start = Instant::now();
+
+    eprint!("Loading... ");
+    io::stderr().flush().unwrap();
+    let load_start = Instant::now();
+    let image = OpenImage {}.process(input.to_path_buf())?;
+    let load_time = load_start.elapsed();
+    let (img_w, img_h) = (image.width(), image.height());
+    let raw_pixel_bytes = img_w as u64 * img_h as u64 * image.color().bytes_per_pixel() as u64;
+    eprintln!("done ({}x{})", img_w, img_h);
+
+    eprint!("Compressing... ");
+    io::stderr().flush().unwrap();
+    let compress_start = Instant::now();
+
+    let pipeline = BuildImageBitDataSet {
+        colorspace: ImageColorSpace::SrgbWithLinearAlpha,
+        color_model: ImageColorModel::YCoCgR,
+        pixel_grouping,
+        grouping_transform: ImageGroupingTransform::ForFirstPixel,
+        pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
+    }
+    .then(Entropy {})
+    .then(SelectBasesAdaptive {
+        width_decay: 0.45,
+        patience: 5,
+        base_bit_impl: base_impl,
+    })
+    .then(BuildSortedBaseTable {})
+    .then(EncodeDataHuffman {})
+    .then(DeltaEncodeBaseTableFixed {});
+
+    let compressed = pipeline.process(image)?;
+    let compress_time = compress_start.elapsed();
+
+    let save_start = Instant::now();
+    SaveIgdFile {
+        output_path: output.to_path_buf(),
+    }
+    .process(compressed.clone())?;
+    let save_time = save_start.elapsed();
+
+    let original_size = raw_pixel_bytes;
+    let input_file_size = std::fs::metadata(input)?.len();
+    let compressed_size = std::fs::metadata(output)?.len();
+    let total_time = total_start.elapsed();
+    eprintln!("done");
+
+    println!("Compress  {} → {}", input.display(), output.display());
+    println!(
+        "  Raw        {}  ({} bytes)",
+        format_size(original_size),
+        original_size
+    );
+    println!(
+        "  Compressed {}  ({} bytes)",
+        format_size(compressed_size),
+        compressed_size
+    );
+    if original_size > 0 {
+        let ratio = original_size as f64 / compressed_size as f64;
+        let pct = 100.0 * compressed_size as f64 / original_size as f64;
+        println!("  Ratio      {:.2}x  ({:.1}%)", ratio, pct);
+    }
+    println!("  Time       {}", format_duration(total_time));
+
+    if verbose {
+        let num_features = compressed.metadata.num_features();
+        let num_base_bits = compressed.layout.selected_base_bit_positions().len();
+        let base_table_entries = compressed.base_table.len();
+        let encoded_bits = compressed.encoded_data.get_encoded_size();
+        let original_bits = compressed.metadata.original_size_bits();
+
+        println!();
+        println!(
+            "  Grouping: {}x{} ({} pixels/block)",
+            pixel_grouping.width(),
+            pixel_grouping.height(),
+            pixel_grouping.total_pixels()
+        );
+        println!(
+            "  Bit representation: {} bits, {} features",
+            original_bits, num_features
+        );
+        println!(
+            "  Raw pixel data: {}  ({} bytes)",
+            format_size(original_size),
+            original_size
+        );
+        println!(
+            "  Input file ({}): {}  ({} bytes)",
+            input.extension().and_then(|e| e.to_str()).unwrap_or("?"),
+            format_size(input_file_size),
+            input_file_size
+        );
+        println!("  ─────────────────────────────");
+        println!("  Base bits selected: {}", num_base_bits);
+        println!("  Base table entries: {}", base_table_entries);
+        println!("  Encoded stream:     {} bits", encoded_bits);
+        println!("  ─────────────────────────────");
+        println!("  Timing:");
+        println!("    Load      {}", format_duration(load_time));
+        println!("    Compress  {}", format_duration(compress_time));
+        println!("    Save      {}", format_duration(save_time));
+        println!("    Total     {}", format_duration(total_time));
+    }
+
+    Ok(())
+}
+
+fn decompress_tabular(
+    input: &Path,
+    output: &Path,
+    rows: Option<Vec<usize>>,
+    verbose: bool,
+) -> Result<(), EntroGdError> {
+    let total_start = Instant::now();
+
+    eprint!("Loading... ");
+    io::stderr().flush().unwrap();
+    let load_start = Instant::now();
+    let compressed_data = LoadTgdFile {}.process(input.to_path_buf())?;
+    let load_time = load_start.elapsed();
+    eprintln!("done");
+
+    eprint!("Decompressing... ");
+    io::stderr().flush().unwrap();
+    let decompress_start = Instant::now();
+
+    let bit_data = if let Some(ref indices) = rows {
+        if indices.is_empty() {
+            return Err(EntroGdError::DataLoad {
+                message: "no rows to decompress".to_string(),
+            });
+        }
+        let handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;
+        handle.decompress_samples(indices)?
+    } else {
+        DecompressFileData {}.process(compressed_data.clone())?
+    };
+    let decompress_time = decompress_start.elapsed();
+
+    eprint!("Writing... ");
+    io::stderr().flush().unwrap();
+    let mut df = reconstruct_to_dataframe(&bit_data)?;
+    let mut f = std::fs::File::create(output)?;
+    CsvWriter::new(&mut f).finish(&mut df)?;
+    eprintln!("done");
+
+    let original_size = std::fs::metadata(input)?.len();
+    let decompressed_size = std::fs::metadata(output)?.len();
+    let total_time = total_start.elapsed();
+
+    let num_rows = bit_data.data.num_rows;
+    let num_features = bit_data.info.num_features();
+
+    println!("Decompress  {} → {}", input.display(), output.display());
+    println!("  Output   {} rows, {} features", num_rows, num_features);
+    if rows.is_some() {
+        println!("  Random access: {} row(s) extracted", num_rows);
+    }
+    println!(
+        "  Size     {}  ({} bytes)",
+        format_size(decompressed_size),
+        decompressed_size
+    );
+    println!("  Time     {}", format_duration(total_time));
+
+    if verbose {
+        println!();
+        println!(
+            "  Compressed file: {}  ({} bytes)",
+            format_size(original_size),
+            original_size
+        );
+        println!("  ─────────────────────────────");
+        println!("  Timing:");
+        println!("    Load        {}", format_duration(load_time));
+        println!("    Decompress  {}", format_duration(decompress_time));
+        println!("    Total       {}", format_duration(total_time));
+    }
+
+    Ok(())
+}
+
+fn decompress_image(input: &Path, output: &Path, verbose: bool) -> Result<(), EntroGdError> {
+    let total_start = Instant::now();
+
+    eprint!("Decompressing... ");
+    io::stderr().flush().unwrap();
+    let decompress_start = Instant::now();
+    let compressed_data = LoadIgdFile {}.process(input.to_path_buf())?;
+    let bit_data = DecompressFileData {}.process(compressed_data.clone())?;
+    let decompress_time = decompress_start.elapsed();
+
+    eprint!("Writing... ");
+    io::stderr().flush().unwrap();
+    write_bitdata_as_image(&bit_data, output)?;
+    eprintln!("done");
+
+    let original_size = std::fs::metadata(input)?.len();
+    let decompressed_size = std::fs::metadata(output)?.len();
+    let total_time = total_start.elapsed();
+
+    println!("Decompress  {} → {}", input.display(), output.display());
+    println!(
+        "  Size     {}  ({} bytes)",
+        format_size(decompressed_size),
+        decompressed_size
+    );
+    println!("  Time     {}", format_duration(total_time));
+
+    if verbose {
+        println!();
+        println!(
+            "  Compressed file: {}  ({} bytes)",
+            format_size(original_size),
+            original_size
+        );
+        if let BitDataReconstructionInfo::Image(ref recon) = bit_data.info.reconstruction {
+            println!(
+                "  Image: {}x{}, grouping {}x{}",
+                recon.width,
+                recon.height,
+                recon.pixel_grouping.width(),
+                recon.pixel_grouping.height()
+            );
+        }
+        println!("  ─────────────────────────────");
+        println!("  Timing:");
+        println!("    Decompress  {}", format_duration(decompress_time));
+        println!("    Total       {}", format_duration(total_time));
+    }
+
+    Ok(())
+}
+
+fn show_analytics(input: &Path, verbose: bool) -> Result<(), EntroGdError> {
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    eprint!("Loading... ");
+    io::stderr().flush().unwrap();
+    let load_start = Instant::now();
+
+    let compressed_data: CompressedData = match ext.as_str() {
+        "tgd" => LoadTgdFile {}.process(input.to_path_buf())?,
+        "igd" => LoadIgdFile {}.process(input.to_path_buf())?,
+        "egd" => LoadEgdFile {}.process(input.to_path_buf())?,
+        _ => unreachable!(),
+    };
+    let load_time = load_start.elapsed();
+
+    eprint!("Extracting... ");
+    io::stderr().flush().unwrap();
+    let analytics_start = Instant::now();
+    let analytics = DecompressAnalytics {}.process(compressed_data.clone())?;
+    let analytics_time = analytics_start.elapsed();
+    eprintln!("done");
+
+    let total_time = load_time + analytics_time;
+
+    match analytics {
+        None => {
+            println!("Analytics  {}", input.display());
+            println!("  No condensed samples found in this file.");
+            println!("  Time  {}", format_duration(total_time));
+        }
+        Some(samples) => {
+            let num_features = compressed_data.metadata.num_features();
+            let num_bases = compressed_data.base_table.len();
+
+            println!("Analytics  {}", input.display());
+            println!(
+                "  {} condensed sample(s), {} feature(s), {} base table entr{}",
+                samples.samples.len(),
+                num_features,
+                num_bases,
+                if num_bases == 1 { "y" } else { "ies" }
+            );
+
+            if verbose {
+                println!();
+                let num_show = samples
+                    .samples
+                    .len()
+                    .min(if num_features > 0 { 20 } else { 10 });
+                println!("  Samples (showing {}):", num_show);
+                for (i, (sample, weight)) in samples
+                    .samples
+                    .iter()
+                    .zip(samples.weights.iter())
+                    .take(num_show)
+                    .enumerate()
+                {
+                    print!("    Sample {:>3}  weight={:<6}  [", i, weight);
+                    for fi in 0..num_features {
+                        let feature_start = compressed_data.metadata.feature_offset(fi);
+                        let feature_end = feature_start + compressed_data.metadata.feature_bits(fi);
+                        if feature_end > sample.len() {
+                            print!("<?>");
+                            continue;
+                        }
+                        let feature_bits = &sample[feature_start..feature_end];
+                        let spec = compressed_data.metadata.feature_spec(fi);
+                        let formatted = reconstruct_feature_value(feature_bits, spec).to_string();
+                        if fi > 0 {
+                            print!(", ");
+                        }
+                        print!("{}", formatted);
+                    }
+                    println!("]");
+                }
+                if samples.samples.len() > num_show {
+                    println!("    ... and {} more", samples.samples.len() - num_show);
+                }
+            }
+
+            if verbose {
+                println!();
+                println!("  ─────────────────────────────");
+                println!("  Timing:");
+                println!("    Load     {}", format_duration(load_time));
+                println!("    Extract  {}", format_duration(analytics_time));
+                println!("    Total    {}", format_duration(total_time));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn main() {
+    let args: Args = argh::from_env();
+
+    let action = match detect_action(&args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let result = match action {
+        Action::CompressTabular {
+            input,
+            output,
+            float_scaling,
+            float_precision,
+            base_impl,
+        } => compress_tabular(
+            &input,
+            &output,
+            float_scaling,
+            float_precision,
+            base_impl,
+            args.verbose,
+        ),
+
+        Action::CompressImage {
+            input,
+            output,
+            pixel_grouping,
+            base_impl,
+        } => compress_image(&input, &output, pixel_grouping, base_impl, args.verbose),
+
+        Action::DecompressTabular {
+            input,
+            output,
+            rows,
+        } => decompress_tabular(&input, &output, rows, args.verbose),
+
+        Action::DecompressImage { input, output } => {
+            decompress_image(&input, &output, args.verbose)
+        }
+
+        Action::ShowAnalytics { input } => show_analytics(&input, args.verbose),
+    };
+
+    if let Err(e) = result {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+}

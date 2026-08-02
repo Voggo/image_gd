@@ -1,8 +1,9 @@
 use super::rle::RLE_LONG_MAX;
 use bitvec::prelude::*;
+use rayon::prelude::*;
 
 use crate::compression::base_table::{BaseBitLayoutState, BaseLayoutInfo, PreEncodeContext};
-use crate::compression::preprocessor::{BitDataInfo, BitDataReconstructionInfo};
+use crate::compression::data::{BitDataInfo, BitDataReconstructionInfo};
 use crate::error::EntroGdError;
 use crate::filter_pipeline::Filter;
 use crate::timing::ScopedTimer;
@@ -56,16 +57,6 @@ pub struct DeviationData {
 }
 
 #[derive(Debug, Clone)]
-pub struct RleDeviationData {
-    pub(super) symbol_bit_stream: BitVec<usize, Lsb0>,
-    pub(super) rm_values: Vec<(u8, u8)>,
-    pub(super) rm_control_stream: BitVec<usize, Lsb0>,
-    pub(super) num_samples: usize,
-    pub(super) num_deviation_bits: usize,
-    pub(super) num_id_bits: usize,
-}
-
-#[derive(Debug, Clone)]
 pub struct RleDeviationOffsetData {
     pub(super) symbol_bit_stream: BitVec<usize, Lsb0>,
     pub(super) rm_values: Vec<(u8, u8)>,
@@ -102,7 +93,6 @@ pub struct HuffmanDeviationData {
 #[derive(Debug, Clone)]
 pub enum EncodedData {
     Normal(DeviationData),
-    Rle(RleDeviationData),
     RleOffset(RleDeviationOffsetData),
     Huffman(HuffmanDeviationData),
 }
@@ -210,7 +200,11 @@ pub(crate) fn huffman_row_layout(
             }
             Ok((original_num_samples, row_count, row_width))
         }
-        BitDataReconstructionInfo::Tabular => Ok((original_num_samples, original_num_samples, 1)),
+        BitDataReconstructionInfo::Tabular { .. } => {
+            const TABULAR_OFFSET_WIDTH: usize = 1024;
+            let row_count = original_num_samples.div_ceil(TABULAR_OFFSET_WIDTH);
+            Ok((original_num_samples, row_count, TABULAR_OFFSET_WIDTH))
+        }
     }
 }
 
@@ -371,7 +365,6 @@ impl EncodedData {
     pub fn get_sample(&self, sample_idx: usize) -> Option<DeviationSample> {
         match self {
             EncodedData::Normal(data) => data.get_sample(sample_idx),
-            EncodedData::Rle(data) => data.get_sample(sample_idx),
             EncodedData::RleOffset(data) => data.get_sample(sample_idx),
             EncodedData::Huffman(data) => data.get_sample(sample_idx),
         }
@@ -380,7 +373,6 @@ impl EncodedData {
     pub fn get_encoded_size(&self) -> usize {
         match self {
             EncodedData::Normal(data) => data.get_encoded_size(),
-            EncodedData::Rle(data) => data.get_encoded_size(),
             EncodedData::RleOffset(data) => data.get_encoded_size(),
             EncodedData::Huffman(data) => data.get_encoded_size(),
         }
@@ -389,7 +381,6 @@ impl EncodedData {
     pub fn encoded_bit_stream(&self) -> &BitVec<usize, Lsb0> {
         match self {
             EncodedData::Normal(data) => data.encoded_bit_stream(),
-            EncodedData::Rle(data) => data.symbol_bit_stream(),
             EncodedData::RleOffset(data) => data.symbol_bit_stream(),
             EncodedData::Huffman(data) => data.pixel_bit_stream(),
         }
@@ -398,7 +389,7 @@ impl EncodedData {
     pub fn get_num_samples(&self) -> usize {
         match self {
             EncodedData::Normal(data) => data.get_num_samples(),
-            EncodedData::Rle(data) => data.get_num_samples(),
+
             EncodedData::RleOffset(data) => data.get_num_samples(),
             EncodedData::Huffman(data) => data.get_num_samples(),
         }
@@ -407,7 +398,6 @@ impl EncodedData {
     pub fn get_num_deviation_bits(&self) -> usize {
         match self {
             EncodedData::Normal(data) => data.get_num_deviation_bits(),
-            EncodedData::Rle(data) => data.get_num_deviation_bits(),
             EncodedData::RleOffset(data) => data.get_num_deviation_bits(),
             EncodedData::Huffman(data) => data.get_num_deviation_bits(),
         }
@@ -416,7 +406,6 @@ impl EncodedData {
     pub fn get_num_id_bits(&self) -> usize {
         match self {
             EncodedData::Normal(data) => data.get_num_id_bits(),
-            EncodedData::Rle(data) => data.get_num_id_bits(),
             EncodedData::RleOffset(data) => data.get_num_id_bits(),
             EncodedData::Huffman(data) => data.get_num_id_bits(),
         }
@@ -429,7 +418,6 @@ impl EncodedData {
     ) -> Result<(), EntroGdError> {
         match self {
             EncodedData::Normal(data) => data.for_each_sample_n(limit, f),
-            EncodedData::Rle(data) => data.for_each_sample_n(limit, f),
             EncodedData::RleOffset(data) => data.for_each_sample_n(limit, f),
             EncodedData::Huffman(data) => data.for_each_sample_n(limit, f),
         }
@@ -442,7 +430,6 @@ impl EncodedData {
     ) -> Result<(), EntroGdError> {
         match self {
             EncodedData::Normal(data) => data.for_each_sample_at_sorted_indices(sorted_indices, f),
-            EncodedData::Rle(data) => data.for_each_sample_at_sorted_indices(sorted_indices, f),
             EncodedData::RleOffset(data) => {
                 data.for_each_sample_at_sorted_indices(sorted_indices, f)
             }
@@ -462,19 +449,12 @@ impl EncodedData {
             EncodedData::Normal(data) => data.for_each_sample_range(start, count, f),
             EncodedData::RleOffset(data) => data.for_each_sample_range(start, count, f),
             EncodedData::Huffman(data) => data.for_each_sample_range(start, count, f),
-            EncodedData::Rle(_) => Err(EntroGdError::InvalidMetadata {
-                message: "for_each_sample_range is not supported for Rle encoding (no row offsets)"
-                    .to_string(),
-            }),
         }
     }
 
     pub fn to_raw_deviation_data(&self) -> DeviationData {
         match self {
             EncodedData::Normal(data) => data.clone(),
-            EncodedData::Rle(data) => data
-                .to_deviation_data()
-                .expect("RLE encoded data should be valid when converting to raw deviation data"),
             EncodedData::Huffman(data) => data.to_deviation_data().expect(
                 "Huffman encoded data should be valid when converting to raw deviation data",
             ),
@@ -559,21 +539,31 @@ pub(super) fn encode_rows_as_symbol_stream(
 ) -> BitVec<usize, Lsb0> {
     let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
+    let chunk_size = (num_rows / (rayon::current_num_threads() * 4)).clamp(256, 4096);
+
+    let chunk_results: Vec<BitVec<usize, Lsb0>> = (0..num_rows)
+        .into_par_iter()
+        .chunks(chunk_size)
+        .map(|row_chunk| {
+            let mut chunk_stream = BitVec::with_capacity(row_chunk.len() * symbol_width);
+            for row in row_chunk {
+                let id = input.row_to_base_id[row];
+                let chunk = unsafe { input.bit_data.get_chunk_unchecked(row) };
+                for &(start, end) in deviation_ranges {
+                    chunk_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
+                }
+                if l_id > 0 {
+                    chunk_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
+                }
+            }
+            chunk_stream
+        })
+        .collect();
+
     let mut symbol_stream = BitVec::with_capacity(num_rows * symbol_width);
-
-    for (row, id_ref) in input.row_to_base_id.iter().enumerate().take(num_rows) {
-        let id = *id_ref;
-        let chunk = unsafe { input.bit_data.get_chunk_unchecked(row) };
-
-        for &(start, end) in deviation_ranges {
-            symbol_stream.extend_from_bitslice(unsafe { chunk.get_unchecked(start..end) });
-        }
-
-        if l_id > 0 {
-            symbol_stream.extend_from_bitslice(id_bits_per_base[id].as_bitslice());
-        }
+    for chunk_stream in chunk_results {
+        symbol_stream.extend_from_bitslice(chunk_stream.as_bitslice());
     }
-
     symbol_stream
 }
 
@@ -586,19 +576,6 @@ impl Filter for EncodeData {
     fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
         let _timer = ScopedTimer::info("Encoding data into compressed format");
         let encoded = EncodedData::Normal(encode_data(&input));
-        Ok(build_compressed_data(input, encoded))
-    }
-}
-
-pub struct EncodeDataRLE {}
-
-impl Filter for EncodeDataRLE {
-    type Input = PreEncodeContext;
-    type Output = CompressedData;
-
-    fn process(&self, input: Self::Input) -> Result<Self::Output, EntroGdError> {
-        let _timer = ScopedTimer::info("Encoding data into compressed format (optimized + RLE)");
-        let encoded = EncodedData::Rle(encode_data_rle(&input));
         Ok(build_compressed_data(input, encoded))
     }
 }
@@ -656,15 +633,6 @@ fn encode_data(input: &PreEncodeContext) -> DeviationData {
 fn encode_data_offset_rle(
     input: &PreEncodeContext,
 ) -> Result<RleDeviationOffsetData, EntroGdError> {
-    if !matches!(
-        input.bit_data.info.reconstruction,
-        BitDataReconstructionInfo::Image(_)
-    ) {
-        return Err(EntroGdError::InvalidMetadata {
-            message: "RLE row-offset encoding requires image reconstruction metadata".to_string(),
-        });
-    }
-
     let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
     let symbol_width = num_deviation_bits + l_id;
     let num_rows = input.bit_data.num_rows();
@@ -707,7 +675,7 @@ fn encode_data_offset_rle(
         ));
 
         let row_start = row_idx * row_width;
-        let row_end = row_start + row_width;
+        let row_end = (row_start + row_width).min(original_num_samples);
         let mut i = row_start;
 
         while i < row_end {
@@ -836,85 +804,6 @@ fn encode_data_offset_rle(
         num_deviation_bits,
         l_id,
     )
-}
-
-fn encode_data_rle(input: &PreEncodeContext) -> RleDeviationData {
-    let (num_deviation_bits, l_id, deviation_ranges) = derive_symbol_layout(input);
-    let symbol_width = num_deviation_bits + l_id;
-    let num_rows = input.bit_data.num_rows();
-    let id_bits_per_base = build_id_bits_per_base(l_id, input.variable_base_table.len());
-    let raw_symbol_stream = encode_rows_as_symbol_stream(
-        input,
-        num_deviation_bits,
-        l_id,
-        &deviation_ranges,
-        &id_bits_per_base,
-    );
-    let mut symbol_stream = BitVec::new();
-    let mut rm_values: Vec<(u8, u8)> = Vec::new();
-
-    if num_rows == 0 || symbol_width == 0 {
-        return RleDeviationData::new(symbol_stream, rm_values, num_rows, num_deviation_bits, l_id);
-    }
-
-    let mut i = 0usize;
-    while i < num_rows {
-        let current_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i);
-
-        let mut run_len = 1usize;
-        while i + run_len < num_rows && run_len < RLE_MAX_RUN_LEN {
-            let next_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i + run_len);
-            if next_symbol == current_symbol {
-                run_len += 1;
-            } else {
-                break;
-            }
-        }
-
-        let r_encoded: u8;
-        if run_len >= 2 {
-            r_encoded = (run_len - 1) as u8;
-            symbol_stream.extend_from_bitslice(current_symbol);
-            i += run_len;
-        } else {
-            r_encoded = 0;
-        }
-
-        let literal_start = i;
-        let mut literal_count = 0usize;
-        while i < num_rows && literal_count < RLE_MAX_CONTROL_VALUE {
-            let this_symbol = symbol_slice(&raw_symbol_stream, symbol_width, i);
-
-            let mut lookahead_run = 1usize;
-            while i + lookahead_run < num_rows && lookahead_run < RLE_MAX_RUN_LEN {
-                let lookahead_symbol =
-                    symbol_slice(&raw_symbol_stream, symbol_width, i + lookahead_run);
-                if lookahead_symbol == this_symbol {
-                    lookahead_run += 1;
-                } else {
-                    break;
-                }
-            }
-
-            if lookahead_run >= 2 {
-                break;
-            }
-
-            symbol_stream.extend_from_bitslice(this_symbol);
-            literal_count += 1;
-            i += 1;
-        }
-
-        if r_encoded == 0 && literal_count == 0 {
-            symbol_stream.extend_from_bitslice(current_symbol);
-            literal_count = 1;
-            i = literal_start + 1;
-        }
-
-        rm_values.push((r_encoded, literal_count as u8));
-    }
-
-    RleDeviationData::new(symbol_stream, rm_values, num_rows, num_deviation_bits, l_id)
 }
 
 fn symbol_slice(

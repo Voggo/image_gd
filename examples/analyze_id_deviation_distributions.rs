@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use bitvec::prelude::*;
-use csv::Writer;
-use image_gd::compression::preprocessor::DEFAULT_ALIGN_ROWS_TO_WORD;
+use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
 use image_gd::prelude::*;
 use image_gd::{EntroGdError, ImageColorModel, init_logging};
 
@@ -51,7 +51,8 @@ fn main() -> Result<(), EntroGdError> {
         i += 1;
     }
 
-    let input_path = input_path.unwrap_or_else(|| PathBuf::from("data/bench_datasets/kodak_dataset"));
+    let input_path =
+        input_path.unwrap_or_else(|| PathBuf::from("data/bench_datasets/kodak_dataset"));
 
     let files = collect_image_files(&input_path)?;
     if files.is_empty() {
@@ -68,7 +69,7 @@ fn main() -> Result<(), EntroGdError> {
         grouping_transform: ImageGroupingTransform::ForFirstPixel,
         pad_rows_to_word: DEFAULT_ALIGN_ROWS_TO_WORD,
     }
-    .then(EntropyNaive {})
+    .then(Entropy {})
     .then(SelectBasesAdaptive {
         patience: 5,
         base_bit_impl: BaseBitImpl::Naive,
@@ -83,10 +84,7 @@ fn main() -> Result<(), EntroGdError> {
     let mut summary_rows: Vec<SummaryRow> = Vec::new();
 
     for file in &files {
-        let stem = file
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image");
+        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
 
         tracing::info!("Processing: {}", file.display());
 
@@ -126,7 +124,8 @@ fn main() -> Result<(), EntroGdError> {
             id_entropy,
             (num_bases as f64).log2(),
             dev_counts.len(),
-            1u64.checked_shl(num_deviation_bits.min(63) as u32).unwrap_or(u64::MAX),
+            1u64.checked_shl(num_deviation_bits.min(63) as u32)
+                .unwrap_or(u64::MAX),
             dev_entropy,
             num_deviation_bits as f64,
         );
@@ -152,7 +151,10 @@ fn main() -> Result<(), EntroGdError> {
     }
 
     write_frequency_csv(&output_path.join("aggregate_base_ids.csv"), &agg_id_counts)?;
-    write_frequency_csv(&output_path.join("aggregate_deviations.csv"), &agg_dev_counts)?;
+    write_frequency_csv(
+        &output_path.join("aggregate_deviations.csv"),
+        &agg_dev_counts,
+    )?;
     write_summary_csv(&output_path.join("summary.csv"), &summary_rows)?;
 
     tracing::info!("Done. Output written to: {}", output_path.display());
@@ -219,47 +221,39 @@ fn entropy(counts: &HashMap<u64, u64>) -> f64 {
     })
 }
 
-fn write_frequency_csv(
-    output_path: &Path,
-    counts: &HashMap<u64, u64>,
-) -> Result<(), EntroGdError> {
+fn write_frequency_csv(output_path: &Path, counts: &HashMap<u64, u64>) -> Result<(), EntroGdError> {
     let mut sorted: Vec<(u64, u64)> = counts.iter().map(|(&k, &v)| (k, v)).collect();
     sorted.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-    let mut writer = Writer::from_path(output_path)?;
-    writer.write_record(["value", "count"])?;
+    let mut writer = BufWriter::new(std::fs::File::create(output_path)?);
+    writeln!(writer, "value,count")?;
     for (value, count) in &sorted {
-        writer.write_record([value.to_string(), count.to_string()])?;
+        writeln!(writer, "{},{}", value, count)?;
     }
     writer.flush()?;
     Ok(())
 }
 
 fn write_summary_csv(output_path: &Path, rows: &[SummaryRow]) -> Result<(), EntroGdError> {
-    let mut writer = Writer::from_path(output_path)?;
-    writer.write_record([
-        "image",
-        "num_samples",
-        "num_bases",
-        "num_unique_base_ids",
-        "base_id_entropy_bits",
-        "max_base_id_entropy_bits",
-        "num_deviation_bits",
-        "num_unique_deviations",
-        "deviation_entropy_bits",
-    ])?;
+    let mut writer = BufWriter::new(std::fs::File::create(output_path)?);
+    writeln!(
+        writer,
+        "image,num_samples,num_bases,num_unique_base_ids,base_id_entropy_bits,max_base_id_entropy_bits,num_deviation_bits,num_unique_deviations,deviation_entropy_bits"
+    )?;
     for row in rows {
-        writer.write_record([
-            row.image.clone(),
-            row.num_samples.to_string(),
-            row.num_bases.to_string(),
-            row.num_unique_base_ids.to_string(),
-            format!("{:.4}", row.base_id_entropy_bits),
-            format!("{:.4}", row.max_base_id_entropy_bits),
-            row.num_deviation_bits.to_string(),
-            row.num_unique_deviations.to_string(),
-            format!("{:.4}", row.deviation_entropy_bits),
-        ])?;
+        writeln!(
+            writer,
+            "{},{},{},{},{:.4},{:.4},{},{},{:.4}",
+            row.image,
+            row.num_samples,
+            row.num_bases,
+            row.num_unique_base_ids,
+            row.base_id_entropy_bits,
+            row.max_base_id_entropy_bits,
+            row.num_deviation_bits,
+            row.num_unique_deviations,
+            row.deviation_entropy_bits,
+        )?;
     }
     writer.flush()?;
     Ok(())

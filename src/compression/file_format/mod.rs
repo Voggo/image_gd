@@ -1,40 +1,46 @@
-mod bit_io;
 mod egd;
 mod igd;
 mod path_utils;
 pub(crate) mod tags;
+mod tgd;
 
 pub use egd::{
     DecodeDeltaBaseTable, EgdFile, FORMAT_VERSION, LoadEgdFile, MAGIC_BYTES, SaveEgdFile,
-    decompress_egd_to_csv, load_and_decompress_egd, load_compressed_from_egd,
-    save_compressed_as_egd,
+    load_and_decompress_egd, load_compressed_from_egd, save_compressed_as_egd,
 };
 pub use igd::{
     IMAGE_FORMAT_VERSION, IMAGE_MAGIC_BYTES, IgdFile, LoadIgdFile, SaveIgdFile,
     decompress_igd_to_image, load_and_decompress_igd, load_compressed_from_igd,
     save_compressed_as_igd,
 };
+pub use tgd::{
+    TGD_FORMAT_VERSION, TGD_MAGIC_BYTES, LoadTgdFile, SaveTgdFile, TgdFile,
+    decompress_tgd_to_csv, load_and_decompress_tgd, load_compressed_from_tgd,
+    save_compressed_as_tgd,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EncodeDataOffsetRLE;
     use crate::compression::base_selection::SelectBases;
     use crate::compression::base_table::BuildBaseTable;
     use crate::compression::condensed_samples::GenCondensedSamples;
+    use crate::compression::data::{
+        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureDataType, FeatureSpec,
+        FeatureTransform, ImageColorModel, ImageGroupingTransform, ImageReconstructionInfo,
+        PixelGrouping,
+    };
     use crate::compression::decompression::decompress_file;
     use crate::compression::encoding::{CompressedData, EncodedData};
-    use crate::compression::encoding::{EncodeData, EncodeDataHuffman, EncodeDataRLE};
-    use crate::compression::entropy::EntropyBatched;
-    use crate::compression::preprocessor::{
-        BitData, BitDataInfo, BitDataReconstructionInfo, BitDataSet, FeatureSpec, ImageColorModel,
-        ImageGroupingTransform, ImageReconstructionInfo, PixelGrouping,
-    };
-    use crate::data_loader::FeatureDataType;
+    use crate::compression::encoding::{EncodeData, EncodeDataHuffman};
+    use crate::compression::entropy::Entropy;
     use crate::filter_pipeline::{Filter, FilterExt};
     use bitvec::prelude::*;
+    use polars::prelude::DataType;
 
     fn get_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyBatched {}
+        Entropy {}
             .then(GenCondensedSamples { m_max: 50 })
             .then(SelectBases { patience: 10 })
             .then(BuildBaseTable {})
@@ -42,16 +48,16 @@ mod tests {
     }
 
     fn get_rle_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData> {
-        EntropyBatched {}
+        Entropy {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
-            .then(EncodeDataRLE {})
+            .then(EncodeDataOffsetRLE {})
     }
 
     fn get_huffman_compression_pipeline() -> impl Filter<Input = BitDataSet, Output = CompressedData>
     {
-        EntropyBatched {}
+        Entropy {}
             .then(GenCondensedSamples { m_max: 100 })
             .then(SelectBases { patience: 5 })
             .then(BuildBaseTable {})
@@ -66,12 +72,18 @@ mod tests {
             stride: 64,
             chunk_size: 64,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(8),
+                transform: FeatureTransform::None
+            };
+            8
+        ];
         let info = BitDataInfo::new(features, 64).unwrap();
         let bit_data = BitDataSet { data, info };
         let pipeline = get_compression_pipeline();
         let compressed = pipeline.process(bit_data).unwrap();
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
 
         assert!(egd.as_bytes().len() >= 4);
         assert_eq!(&egd.as_bytes()[0..3], &MAGIC_BYTES);
@@ -93,15 +105,21 @@ mod tests {
             chunk_size: 64,
         };
         let features = vec![
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 32),
-            FeatureSpec::new(FeatureDataType::UnsignedInt, 32),
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(32),
+                transform: FeatureTransform::None,
+            },
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(32),
+                transform: FeatureTransform::None,
+            },
         ];
         let info = BitDataInfo::new(features, 320).unwrap();
         let bit_data = BitDataSet { data, info };
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
         assert_eq!(loaded.metadata, compressed.metadata);
@@ -161,7 +179,13 @@ mod tests {
             stride: 24,
             chunk_size: 24,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 3];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(8),
+                transform: FeatureTransform::None
+            };
+            3
+        ];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
             96,
@@ -180,7 +204,7 @@ mod tests {
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
-        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let igd = IgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 
         assert_eq!(loaded.metadata.num_features(), 3);
@@ -207,7 +231,13 @@ mod tests {
             stride: 111,
             chunk_size: 111,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 37); 3];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(37),
+                transform: FeatureTransform::None
+            };
+            3
+        ];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
             111,
@@ -226,7 +256,7 @@ mod tests {
 
         let compressed = get_compression_pipeline().process(bit_data).unwrap();
 
-        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let igd = IgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 
         assert!(matches!(
@@ -251,19 +281,28 @@ mod tests {
             stride: 64,
             chunk_size: 64,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8); 8];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(8),
+                transform: FeatureTransform::None
+            };
+            8
+        ];
         let info = BitDataInfo::new(features, 512).unwrap();
         let bit_data = BitDataSet { data, info };
 
         let compressed = get_rle_compression_pipeline().process(bit_data).unwrap();
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
         match (&compressed.encoded_data, &loaded.encoded_data) {
-            (EncodedData::Rle(src), EncodedData::Rle(dst)) => {
+            (EncodedData::RleOffset(src), EncodedData::RleOffset(dst)) => {
                 let src_as_raw = src.to_deviation_data().unwrap();
                 let dst_as_raw = dst.to_deviation_data().unwrap();
-                assert_eq!(src_as_raw.encoded_bit_stream(), dst_as_raw.encoded_bit_stream());
+                assert_eq!(
+                    src_as_raw.encoded_bit_stream(),
+                    dst_as_raw.encoded_bit_stream()
+                );
                 assert_eq!(src_as_raw.get_num_samples(), dst_as_raw.get_num_samples());
                 assert_eq!(
                     src_as_raw.get_num_deviation_bits(),
@@ -289,14 +328,17 @@ mod tests {
             stride: 8,
             chunk_size: 8,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 8)];
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UInt(8),
+            transform: FeatureTransform::None,
+        }];
         let info = BitDataInfo::new(features, 32).unwrap();
         let bit_data = BitDataSet { data, info };
 
         let compressed = get_huffman_compression_pipeline()
             .process(bit_data.clone())
             .unwrap();
-        let egd = EgdFile::from_compressed_data(&compressed).unwrap();
+        let egd = EgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = egd.to_compressed_data().unwrap();
 
         assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
@@ -326,7 +368,13 @@ mod tests {
             stride: 12,
             chunk_size: 12,
         };
-        let features = vec![FeatureSpec::new(FeatureDataType::UnsignedInt, 4); 3];
+        let features = vec![
+            FeatureSpec {
+                data_type: FeatureDataType::UInt(4),
+                transform: FeatureTransform::None
+            };
+            3
+        ];
         let info = BitDataInfo::new_with_reconstruction_info(
             features,
             24,
@@ -346,7 +394,7 @@ mod tests {
         let compressed = get_huffman_compression_pipeline()
             .process(bit_data.clone())
             .unwrap();
-        let igd = IgdFile::from_compressed_data(&compressed).unwrap();
+        let igd = IgdFile::from_compressed_data(compressed.clone()).unwrap();
         let loaded = igd.to_compressed_data().unwrap();
 
         assert!(matches!(loaded.encoded_data, EncodedData::Huffman(_)));
@@ -370,6 +418,67 @@ mod tests {
                 decompressed_data.get_chunk(row),
                 bit_data.data.get_chunk(row)
             );
+        }
+    }
+
+    #[test]
+    fn test_tgd_preserves_long_column_names() {
+        let data = BitData {
+            data: bitvec![usize, Lsb0; 0; 384],
+            num_rows: 6,
+            stride: 64,
+            chunk_size: 64,
+        };
+        let features = vec![FeatureSpec {
+            data_type: FeatureDataType::UInt(8),
+            transform: FeatureTransform::None,
+        }; 8];
+
+        let column_names = vec![
+            "a_very_long_column_name_that_exceeds_typical_lengths_123456".to_string(),
+            "b".to_string(),
+            "another_extremely_verbose_header_describing_an_obscure_metric_abc".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+            "f".to_string(),
+            "this_is_the_eighth_column_with_a_particularly_verbose_name_xyz".to_string(),
+        ];
+        let original_dtypes = vec![
+            DataType::Float64,
+            DataType::Int32,
+            DataType::UInt8,
+            DataType::Float32,
+            DataType::Int64,
+            DataType::UInt16,
+            DataType::Float16,
+            DataType::UInt64,
+        ];
+
+        let info = BitDataInfo::new_with_reconstruction_info(
+            features,
+            6 * 64,  // num_rows * chunk_size
+            BitDataReconstructionInfo::Tabular {
+                column_names: column_names.clone(),
+                original_dtypes: original_dtypes.clone(),
+            },
+        )
+        .unwrap();
+        let bit_data = BitDataSet { data, info };
+
+        let compressed = get_compression_pipeline().process(bit_data).unwrap();
+        let tgd = TgdFile::from_compressed_data(compressed).unwrap();
+        let loaded = tgd.to_compressed_data().unwrap();
+
+        match &loaded.metadata.reconstruction {
+            BitDataReconstructionInfo::Tabular {
+                column_names: loaded_names,
+                original_dtypes: loaded_dtypes,
+            } => {
+                assert_eq!(*loaded_names, column_names);
+                assert_eq!(*loaded_dtypes, original_dtypes);
+            }
+            _ => panic!("expected Tabular reconstruction metadata"),
         }
     }
 }
