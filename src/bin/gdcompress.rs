@@ -1,10 +1,10 @@
 use argh::FromArgs;
 use gdcompress::prelude::*;
 use gdcompress::{
-    BitDataReconstructionInfo, CompressedData, DEFAULT_ALIGN_ROWS_TO_WORD, DecompressFileData,
-    DecompressRandomAccessHandle, EntroGdError, FloatScalingMode, PixelGrouping,
-    PreprocessOptions, load_csv, reconstruct_feature_value, reconstruct_to_dataframe,
-    write_bitdata_as_image,
+    BitDataInfo, BitDataReconstructionInfo, CompressedData, CondensedSamples,
+    DEFAULT_ALIGN_ROWS_TO_WORD, DecompressFileData, DecompressRandomAccessHandle, EntroGdError,
+    FloatScalingMode, PixelGrouping, PreprocessOptions, load_csv, reconstruct_feature_value,
+    reconstruct_to_dataframe, write_bitdata_as_image,
 };
 use polars::prelude::{CsvWriter, SerWriter};
 use std::io::{self, Write};
@@ -79,6 +79,7 @@ enum Action {
     },
     ShowAnalytics {
         input: PathBuf,
+        output: PathBuf,
     },
 }
 
@@ -192,7 +193,8 @@ fn detect_action(args: &Args) -> Result<Action, String> {
                 ext
             ));
         }
-        return Ok(Action::ShowAnalytics { input });
+        let output = derive_output(&input, "analytics.csv");
+        return Ok(Action::ShowAnalytics { input, output });
     }
 
     match ext.as_str() {
@@ -667,7 +669,46 @@ fn decompress_image(input: &Path, output: &Path, verbose: bool) -> Result<(), En
     Ok(())
 }
 
-fn show_analytics(input: &Path, verbose: bool) -> Result<(), EntroGdError> {
+fn write_analytics_csv(
+    path: &Path,
+    metadata: &BitDataInfo,
+    samples: &CondensedSamples,
+) -> Result<(), EntroGdError> {
+    let mut file = std::fs::File::create(path)?;
+    let num_features = metadata.num_features();
+
+    write!(file, "weight")?;
+    let column_names: Vec<String> = match &metadata.reconstruction {
+        BitDataReconstructionInfo::Tabular { column_names, .. } => column_names.clone(),
+        BitDataReconstructionInfo::Image(_) => {
+            (0..num_features).map(|i| format!("feature_{}", i)).collect()
+        }
+    };
+    for name in &column_names {
+        write!(file, ",{}", name)?;
+    }
+    writeln!(file)?;
+
+    for (sample, &weight) in samples.samples.iter().zip(samples.weights.iter()) {
+        write!(file, "{}", weight)?;
+        for fi in 0..num_features {
+            let feature_start = metadata.feature_offset(fi);
+            let feature_end = feature_start + metadata.feature_bits(fi);
+            if feature_end > sample.len() {
+                write!(file, ",")?;
+                continue;
+            }
+            let feature_bits = &sample[feature_start..feature_end];
+            let value = reconstruct_feature_value(feature_bits, metadata.feature_spec(fi));
+            write!(file, ",{}", value)?;
+        }
+        writeln!(file)?;
+    }
+
+    Ok(())
+}
+
+fn show_analytics(input: &Path, output: &Path, verbose: bool) -> Result<(), EntroGdError> {
     let ext = input
         .extension()
         .and_then(|e| e.to_str())
@@ -702,6 +743,11 @@ fn show_analytics(input: &Path, verbose: bool) -> Result<(), EntroGdError> {
             println!("  Time  {}", format_duration(total_time));
         }
         Some(samples) => {
+            eprint!("Writing analytics... ");
+            io::stderr().flush().unwrap();
+            write_analytics_csv(output, &compressed_data.metadata, &samples)?;
+            eprintln!("done ({} samples)", samples.samples.len());
+
             let num_features = compressed_data.metadata.num_features();
             let num_bases = compressed_data.base_table.len();
 
@@ -809,7 +855,7 @@ fn main() {
             decompress_image(&input, &output, args.verbose)
         }
 
-        Action::ShowAnalytics { input } => show_analytics(&input, args.verbose),
+        Action::ShowAnalytics { input, output } => show_analytics(&input, &output, args.verbose),
     };
 
     if let Err(e) = result {
