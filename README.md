@@ -64,12 +64,13 @@ The action (compress, decompress, or analytics) is **auto-detected from the inpu
 | Flag                     | Default    | Description |
 |--------------------------|------------|-------------|
 | `-o`, `--output`         | *(auto)*   | Output file path (auto-derived from input if omitted) |
-| `--analytics`            | off        | Show condensed samples from a compressed file |
+| `--analytics`            | off        | Show condensed samples from a compressed file and write `input.analytics.csv` |
 | `-v`, `--verbose`        | off        | Verbose output with detailed statistics |
 | `--pixel-grouping`       | `"3x3"`    | Pixel grouping size for image compression (e.g. `"2x2"`, `"3x3"`) |
 | `--float-scaling`        | `"on"`     | Float-to-integer conversion for tabular compression (`on` or `off`) |
 | `--float-precision`      | `9`        | Decimal places preserved when float scaling is on (tabular only) |
 | `--rows`                 | *(all)*    | Decompress only specific rows, e.g. `"0,5,10-20"` (tabular only) |
+| `--crop`                 | *(none)*   | Decompress a region of an image: `"x1,y1,x2,y2"` (`.igd` only) |
 | `--base-counting`        | `"precise"`| Base-bit counting strategy: `precise` or `approximate` |
 
 ### Examples
@@ -103,6 +104,14 @@ Extract condensed analytics samples:
 
 ```bash
 gdcompress data/tabular/aarhus-citylab.tgd --analytics
+# Prints sample summary and writes data/tabular/aarhus-citylab.analytics.csv
+```
+
+Decompress a cropped region of an image:
+
+```bash
+gdcompress compressed/kodim10.igd --crop "100,50,399,349" -o crop.png
+# Decompresses only the 300x300 pixel region from (100,50) to (399,349)
 ```
 
 ## Benchmarks
