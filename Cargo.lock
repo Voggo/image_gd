@@ -1131,6 +1131,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdcompress"
+version = "0.1.0"
+dependencies = [
+ "argh",
+ "bitvec",
+ "chrono",
+ "criterion",
+ "dicom-toolkit-codec",
+ "fxhash",
+ "image",
+ "once_cell",
+ "png",
+ "polars",
+ "pretty_assertions",
+ "qoi",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1546,30 +1570,6 @@ checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
 dependencies = [
  "byteorder-lite",
  "quick-error",
-]
-
-[[package]]
-name = "image_gd"
-version = "0.1.0"
-dependencies = [
- "argh",
- "bitvec",
- "chrono",
- "criterion",
- "dicom-toolkit-codec",
- "fxhash",
- "image",
- "once_cell",
- "png",
- "polars",
- "pretty_assertions",
- "qoi",
- "rayon",
- "serde",
- "serde_json",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]

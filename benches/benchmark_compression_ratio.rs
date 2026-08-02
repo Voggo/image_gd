@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
-use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
-use image_gd::compression::encoding::BaseTable;
-use image_gd::prelude::*;
-use image_gd::{
+use gdcompress::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
+use gdcompress::compression::encoding::BaseTable;
+use gdcompress::prelude::*;
+use gdcompress::{
     BaseSelectionContext, CompressedData, EntroGdError, EntropyScoredContext, IgdFile,
     PreEncodeContext,
 };
@@ -74,7 +74,7 @@ impl SeedPreprocessing {
         self.group_w * self.group_h
     }
 
-    fn process(self, path: PathBuf) -> Result<image_gd::BitDataSet, EntroGdError> {
+    fn process(self, path: PathBuf) -> Result<gdcompress::BitDataSet, EntroGdError> {
         let image = OpenImage.process(path)?;
         BuildImageBitDataSet {
             colorspace: ImageColorSpace::SrgbWithLinearAlpha,

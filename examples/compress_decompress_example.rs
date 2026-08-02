@@ -1,5 +1,5 @@
-use image_gd::prelude::*;
-use image_gd::{
+use gdcompress::prelude::*;
+use gdcompress::{
     EntroGdError, PreprocessOptions, ScopedTimer, init_logging, load_csv,
     reconstruct_feature_value, reconstruct_to_dataframe,
 };

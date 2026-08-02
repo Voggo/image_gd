@@ -7,9 +7,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use image_gd::load_csv;
-use image_gd::prelude::*;
-use image_gd::{
+use gdcompress::load_csv;
+use gdcompress::prelude::*;
+use gdcompress::{
     BitDataSet, BuildBaseTable, BuildBitDataSet, BuildImageBitDataSet, BuildSortedBaseTable,
     EntroGdError,
 };
@@ -544,7 +544,7 @@ fn rows_from_distribution(distribution: &BTreeMap<usize, usize>) -> Vec<DeltaDis
     rows_out
 }
 
-fn build_sort_key_local_order(context: &image_gd::PreEncodeContext) -> Vec<usize> {
+fn build_sort_key_local_order(context: &gdcompress::PreEncodeContext) -> Vec<usize> {
     let row_width = context
         .variable_base_table
         .first()

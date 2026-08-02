@@ -1,6 +1,6 @@
-use image_gd::load_csv;
-use image_gd::prelude::*;
-use image_gd::{
+use gdcompress::load_csv;
+use gdcompress::prelude::*;
+use gdcompress::{
     BitDataSet, DecompressFileData, EncodedData, ImageColorModel, LoadEgdFile, PreprocessOptions,
     SaveEgdFile, SaveIgdFile, decompress_igd_to_image,
 };

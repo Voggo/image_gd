@@ -1,7 +1,7 @@
-use image_gd::compression::BaseTable;
-use image_gd::load_csv;
-use image_gd::prelude::*;
-use image_gd::{BitDataSet, DecompressFileData, LoadEgdFile, PreprocessOptions, SaveEgdFile};
+use gdcompress::compression::BaseTable;
+use gdcompress::load_csv;
+use gdcompress::prelude::*;
+use gdcompress::{BitDataSet, DecompressFileData, LoadEgdFile, PreprocessOptions, SaveEgdFile};
 use std::env;
 
 fn assert_bitstream_eq(

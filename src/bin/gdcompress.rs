@@ -1,6 +1,6 @@
 use argh::FromArgs;
-use image_gd::prelude::*;
-use image_gd::{
+use gdcompress::prelude::*;
+use gdcompress::{
     BitDataReconstructionInfo, CompressedData, DEFAULT_ALIGN_ROWS_TO_WORD, DecompressFileData,
     DecompressRandomAccessHandle, EntroGdError, FloatScalingMode, PixelGrouping,
     PreprocessOptions, load_csv, reconstruct_feature_value, reconstruct_to_dataframe,

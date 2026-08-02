@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn loads_rgb_image_as_rows_times_channels() {
-        let path = unique_tmp_path("image_gd_rgb");
+        let path = unique_tmp_path("gdcompress_rgb");
         let mut img = RgbImage::new(2, 1);
         img.put_pixel(0, 0, Rgb([10, 20, 30]));
         img.put_pixel(1, 0, Rgb([40, 50, 60]));
@@ -701,7 +701,7 @@ mod tests {
 
     #[test]
     fn loads_rgba_image_with_four_features() {
-        let path = unique_tmp_path("image_gd_rgba");
+        let path = unique_tmp_path("gdcompress_rgba");
         let mut img = RgbaImage::new(1, 2);
         img.put_pixel(0, 0, Rgba([1, 2, 3, 4]));
         img.put_pixel(0, 1, Rgba([5, 6, 7, 8]));
@@ -808,7 +808,7 @@ mod tests {
 
     #[test]
     fn loads_grouped_rgb_pixels_into_wider_features() {
-        let path = unique_tmp_path("image_gd_grouped_rgb");
+        let path = unique_tmp_path("gdcompress_grouped_rgb");
         let mut img = RgbImage::new(4, 1);
         img.put_pixel(0, 0, Rgb([1, 11, 21]));
         img.put_pixel(1, 0, Rgb([2, 12, 22]));
@@ -874,7 +874,7 @@ mod tests {
 
     #[test]
     fn zero_pads_partial_group_at_row_end() {
-        let path = unique_tmp_path("image_gd_grouped_rgb_partial");
+        let path = unique_tmp_path("gdcompress_grouped_rgb_partial");
         let mut img = RgbImage::new(3, 1);
         img.put_pixel(0, 0, Rgb([10, 20, 30]));
         img.put_pixel(1, 0, Rgb([40, 50, 60]));
@@ -924,7 +924,7 @@ mod tests {
 
     #[test]
     fn loads_grouped_rgb_pixels_with_for_min() {
-        let path = unique_tmp_path("image_gd_grouped_rgb_for_min");
+        let path = unique_tmp_path("gdcompress_grouped_rgb_for_min");
         let mut img = RgbImage::new(4, 1);
         img.put_pixel(0, 0, Rgb([9, 14, 21]));
         img.put_pixel(1, 0, Rgb([4, 18, 17]));
@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn encodes_rgb_as_ycocg_channels() {
-        let path = unique_tmp_path("image_gd_ycocg_rgb");
+        let path = unique_tmp_path("gdcompress_ycocg_rgb");
         let mut img = RgbImage::new(1, 1);
         img.put_pixel(0, 0, Rgb([10, 20, 30]));
         img.save(&path).unwrap();
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn leaves_alpha_unchanged_for_rgba_ycocg() {
-        let path = unique_tmp_path("image_gd_ycocg_rgba");
+        let path = unique_tmp_path("gdcompress_ycocg_rgba");
         let mut img = RgbaImage::new(1, 1);
         img.put_pixel(0, 0, Rgba([100, 110, 120, 130]));
         img.save(&path).unwrap();
@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn encodes_rgb_as_ycocg_r_channels() {
-        let path = unique_tmp_path("image_gd_ycocg_r_rgb");
+        let path = unique_tmp_path("gdcompress_ycocg_r_rgb");
         let mut img = RgbImage::new(1, 1);
         img.put_pixel(0, 0, Rgb([10, 20, 30]));
         img.save(&path).unwrap();
@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn leaves_alpha_unchanged_for_rgba_ycocg_r() {
-        let path = unique_tmp_path("image_gd_ycocg_r_rgba");
+        let path = unique_tmp_path("gdcompress_ycocg_r_rgba");
         let mut img = RgbaImage::new(1, 1);
         img.put_pixel(0, 0, Rgba([100, 110, 120, 130]));
         img.save(&path).unwrap();
@@ -1180,7 +1180,7 @@ mod tests {
 
     #[test]
     fn honors_row_padding_flag_for_image_bitdata() {
-        let path = unique_tmp_path("image_gd_alignment_image");
+        let path = unique_tmp_path("gdcompress_alignment_image");
         let mut img = RgbImage::new(2, 1);
         img.put_pixel(0, 0, Rgb([1, 2, 3]));
         img.put_pixel(1, 0, Rgb([4, 5, 6]));

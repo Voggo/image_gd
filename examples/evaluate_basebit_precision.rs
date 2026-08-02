@@ -1,8 +1,8 @@
-use image_gd::compression::BaseBitHyperLogLogCount;
-use image_gd::compression::base_bits::BaseBitGroups;
-use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
-use image_gd::load_csv;
-use image_gd::{
+use gdcompress::compression::BaseBitHyperLogLogCount;
+use gdcompress::compression::base_bits::BaseBitGroups;
+use gdcompress::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
+use gdcompress::load_csv;
+use gdcompress::{
     BitDataSet, BuildImageBitDataSet, EntroGdError, Filter, FilterExt, ImageColorModel,
     ImageColorSpace, ImageGroupingTransform, OpenImage, PixelGrouping, PreprocessOptions,
     calculate_entropy, init_logging,

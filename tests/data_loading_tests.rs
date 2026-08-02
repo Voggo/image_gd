@@ -1,4 +1,4 @@
-use image_gd::load_csv;
+use gdcompress::load_csv;
 use polars::prelude::*;
 
 #[test]

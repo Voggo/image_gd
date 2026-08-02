@@ -5,9 +5,9 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use bitvec::prelude::*;
-use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
-use image_gd::prelude::*;
-use image_gd::{EntroGdError, ImageColorModel, init_logging};
+use gdcompress::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
+use gdcompress::prelude::*;
+use gdcompress::{EntroGdError, ImageColorModel, init_logging};
 
 fn main() -> Result<(), EntroGdError> {
     unsafe {

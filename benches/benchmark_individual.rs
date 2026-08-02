@@ -4,9 +4,9 @@ use std::rc::Rc;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
-use image_gd::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
-use image_gd::prelude::*;
-use image_gd::{
+use gdcompress::compression::data::DEFAULT_ALIGN_ROWS_TO_WORD;
+use gdcompress::prelude::*;
+use gdcompress::{
     BaseSelectionContext, BitDataSet, CompressedData, DecompressRandomAccessHandle, EntroGdError,
     EntropyScoredContext, PreEncodeContext,
 };
