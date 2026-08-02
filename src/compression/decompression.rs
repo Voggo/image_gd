@@ -525,6 +525,116 @@ pub fn write_bitdata_as_image<P: AsRef<Path>>(
     )
 }
 
+pub fn write_cropped_bitdata_as_image<P: AsRef<Path>>(
+    bit_data: &BitDataSet,
+    row_indices: &[usize],
+    output_path: P,
+    x1: u32,
+    y1: u32,
+    x2: u32,
+    y2: u32,
+) -> Result<(), EntroGdError> {
+    let image_info = match &bit_data.info.reconstruction {
+        BitDataReconstructionInfo::Image(info) => *info,
+        BitDataReconstructionInfo::Tabular { .. } => {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "cannot write image from tabular reconstruction metadata".to_string(),
+            });
+        }
+    };
+
+    if x1 > x2 || y1 > y2 {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "invalid crop bounds: ({},{})-({},{}), x1 <= x2 and y1 <= y2 required",
+                x1, y1, x2, y2
+            ),
+        });
+    }
+    if x2 >= image_info.width || y2 >= image_info.height {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "crop ({},{})-({},{}) exceeds image dimensions {}x{}",
+                x1, y1, x2, y2, image_info.width, image_info.height
+            ),
+        });
+    }
+
+    let crop_w = (x2 - x1 + 1) as usize;
+    let crop_h = (y2 - y1 + 1) as usize;
+    let channels = image_info.channels as usize;
+    let group_w = image_info.pixel_grouping.width() as usize;
+    let group_h = image_info.pixel_grouping.height() as usize;
+    let total_pixels = group_w * group_h;
+    let grouped_width = (image_info.width as usize).div_ceil(group_w);
+
+    if row_indices.len() != bit_data.num_rows() {
+        return Err(EntroGdError::InvalidMetadata {
+            message: format!(
+                "row_indices length {} does not match bit_data row count {}",
+                row_indices.len(),
+                bit_data.num_rows()
+            ),
+        });
+    }
+
+    let mut raw = vec![0u8; crop_w * crop_h * channels];
+
+    for j in 0..bit_data.num_rows() {
+        let idx = row_indices[j];
+        let group_x = idx % grouped_width;
+        let group_y = idx / grouped_width;
+
+        let mut decoded_channels = Vec::with_capacity(channels);
+        for feature in 0..channels {
+            let feature_bits = unsafe { bit_data.get_feature_unchecked(j, feature) };
+            decoded_channels.push(decode_grouped_feature(
+                feature_bits,
+                total_pixels,
+                image_info.grouping_transform,
+            )?);
+        }
+
+        for offset in 0..total_pixels {
+            let pixel_x = group_x * group_w + (offset % group_w);
+            let pixel_y = group_y * group_h + (offset / group_w);
+
+            if pixel_x >= image_info.width as usize
+                || pixel_y >= image_info.height as usize
+            {
+                continue;
+            }
+
+            let px = pixel_x as u32;
+            let py = pixel_y as u32;
+            if px < x1 || px > x2 || py < y1 || py > y2 {
+                continue;
+            }
+
+            let out_x = (px - x1) as usize;
+            let out_y = (py - y1) as usize;
+            for (feature, channel_values) in decoded_channels.iter().enumerate() {
+                raw[out_y * crop_w * channels + out_x * channels + feature] =
+                    channel_values[offset];
+            }
+        }
+    }
+
+    let output_raw = match image_info.color_model {
+        ImageColorModel::Rgb => raw,
+        ImageColorModel::YCoCg => convert_ycocg_to_rgb_channels(&raw, channels),
+        ImageColorModel::YCoCgR => convert_ycocg_r_to_rgb_channels(&raw, channels),
+    };
+
+    save_raw_image(
+        output_path.as_ref(),
+        crop_w as u32,
+        crop_h as u32,
+        image_info.channels,
+        output_raw,
+    )
+}
+
 fn byte_from_bits(bits: &BitSlice<usize, Lsb0>) -> Result<u8, EntroGdError> {
     if bits.len() != 8 {
         return Err(EntroGdError::InvalidMetadata {

@@ -22,7 +22,7 @@ pub use compression::{
     TGD_FORMAT_VERSION, TGD_MAGIC_BYTES, TgdFile, calculate_entropy, decompress_igd_to_image,
     decompress_tgd_to_csv, load_and_decompress_egd, load_and_decompress_igd,
     load_and_decompress_tgd, reconstruct_feature_value, reconstruct_to_dataframe,
-    write_bitdata_as_image,
+    write_bitdata_as_image, write_cropped_bitdata_as_image,
 };
 pub use error::EntroGdError;
 pub use filter_pipeline::{Chain, Filter, FilterExt};

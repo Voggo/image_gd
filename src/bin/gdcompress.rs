@@ -4,7 +4,7 @@ use gdcompress::{
     BitDataInfo, BitDataReconstructionInfo, CompressedData, CondensedSamples,
     DEFAULT_ALIGN_ROWS_TO_WORD, DecompressFileData, DecompressRandomAccessHandle, EntroGdError,
     FloatScalingMode, PixelGrouping, PreprocessOptions, load_csv, reconstruct_feature_value,
-    reconstruct_to_dataframe, write_bitdata_as_image,
+    reconstruct_to_dataframe, write_bitdata_as_image, write_cropped_bitdata_as_image,
 };
 use polars::prelude::{CsvWriter, SerWriter};
 use std::io::{self, Write};
@@ -51,6 +51,10 @@ struct Args {
     /// base-bit counting: precise or approximate (default: precise)
     #[argh(option, default = "String::from(\"precise\")")]
     base_counting: String,
+
+    /// crop region for image decompression: "x1,y1,x2,y2" (upper-left, lower-right inclusive; .igd only)
+    #[argh(option)]
+    crop: Option<String>,
 }
 
 #[derive(Debug)]
@@ -76,6 +80,7 @@ enum Action {
     DecompressImage {
         input: PathBuf,
         output: PathBuf,
+        crop: Option<(u32, u32, u32, u32)>,
     },
     ShowAnalytics {
         input: PathBuf,
@@ -165,6 +170,39 @@ fn parse_base_counting(s: &str) -> Result<BaseBitImpl, String> {
     }
 }
 
+fn parse_crop(s: &str) -> Result<(u32, u32, u32, u32), String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 4 {
+        return Err(format!(
+            "invalid crop '{}', expected format: x1,y1,x2,y2",
+            s
+        ));
+    }
+    let x1: u32 = parts[0]
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid x1 in '{}'", s))?;
+    let y1: u32 = parts[1]
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid y1 in '{}'", s))?;
+    let x2: u32 = parts[2]
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid x2 in '{}'", s))?;
+    let y2: u32 = parts[3]
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid y2 in '{}'", s))?;
+    if x1 > x2 || y1 > y2 {
+        return Err(format!(
+            "invalid crop '{}': x1 <= x2 and y1 <= y2 required",
+            s
+        ));
+    }
+    Ok((x1, y1, x2, y2))
+}
+
 fn derive_output(input: &Path, target_ext: &str) -> PathBuf {
     let stem = input.file_stem().unwrap_or_else(|| input.as_os_str());
     let parent = input.parent().unwrap_or_else(|| Path::new("."));
@@ -195,6 +233,10 @@ fn detect_action(args: &Args) -> Result<Action, String> {
         }
         let output = derive_output(&input, "analytics.csv");
         return Ok(Action::ShowAnalytics { input, output });
+    }
+
+    if args.crop.is_some() && ext.as_str() != "igd" {
+        return Err("--crop is only valid for .igd image decompression".to_string());
     }
 
     match ext.as_str() {
@@ -229,12 +271,13 @@ fn detect_action(args: &Args) -> Result<Action, String> {
             })
         }
         "igd" => {
+            let crop = args.crop.as_deref().map(parse_crop).transpose()?;
             let output = args
                 .output
                 .clone()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| derive_output(&input, "png"));
-            Ok(Action::DecompressImage { input, output })
+            Ok(Action::DecompressImage { input, output, crop })
         }
         "egd" => {
             if args.output.is_none() {
@@ -256,7 +299,7 @@ fn detect_action(args: &Args) -> Result<Action, String> {
                     rows: None,
                 }),
                 "png" | "jpg" | "jpeg" | "bmp" | "gif" => {
-                    Ok(Action::DecompressImage { input, output })
+                    Ok(Action::DecompressImage { input, output, crop: None })
                 }
                 _ => Err(format!(
                     "cannot determine output format from extension '{}', use -o with .csv or .png",
@@ -617,31 +660,95 @@ fn decompress_tabular(
     Ok(())
 }
 
-fn decompress_image(input: &Path, output: &Path, verbose: bool) -> Result<(), EntroGdError> {
+fn decompress_image(
+    input: &Path,
+    output: &Path,
+    verbose: bool,
+    crop: Option<(u32, u32, u32, u32)>,
+) -> Result<(), EntroGdError> {
     let total_start = Instant::now();
 
-    eprint!("Decompressing... ");
+    eprint!("Loading... ");
     io::stderr().flush().unwrap();
-    let decompress_start = Instant::now();
+    let load_start = Instant::now();
     let compressed_data = LoadIgdFile {}.process(input.to_path_buf())?;
-    let bit_data = DecompressFileData {}.process(compressed_data.clone())?;
-    let decompress_time = decompress_start.elapsed();
-
-    eprint!("Writing... ");
-    io::stderr().flush().unwrap();
-    write_bitdata_as_image(&bit_data, output)?;
+    let load_time = load_start.elapsed();
     eprintln!("done");
+
+    let image_info = match &compressed_data.metadata.reconstruction {
+        BitDataReconstructionInfo::Image(info) => *info,
+        _ => {
+            return Err(EntroGdError::InvalidMetadata {
+                message: "expected image reconstruction info".to_string(),
+            });
+        }
+    };
+
+    let (decompress_time, num_rows_decompressed, crop_dims) = match crop {
+        Some((x1, y1, x2, y2)) => {
+            let group_w = image_info.pixel_grouping.width() as u32;
+            let group_h = image_info.pixel_grouping.height() as u32;
+            let grouped_width = image_info.width.div_ceil(group_w) as usize;
+            let grouped_height = image_info.height.div_ceil(group_h) as usize;
+
+            let gx_min = (x1 / group_w) as usize;
+            let gx_max = (x2 / group_w) as usize;
+            let gy_min = (y1 / group_h) as usize;
+            let gy_max = (y2 / group_h) as usize;
+
+            let mut indices: Vec<usize> = (gy_min..=gy_max)
+                .flat_map(|gy| (gx_min..=gx_max).map(move |gx| gy * grouped_width + gx))
+                .filter(|&i| i < grouped_width * grouped_height)
+                .collect();
+            indices.sort_unstable();
+            indices.dedup();
+
+            eprint!("Decompressing... ");
+            io::stderr().flush().unwrap();
+            let decompress_start = Instant::now();
+            let handle = DecompressRandomAccessHandle::new(compressed_data.clone())?;
+            let bit_data = handle.decompress_samples(&indices)?;
+            let decompress_time = decompress_start.elapsed();
+
+            eprint!("Writing... ");
+            io::stderr().flush().unwrap();
+            write_cropped_bitdata_as_image(&bit_data, &indices, output, x1, y1, x2, y2)?;
+            eprintln!("done");
+
+            let crop_w = (x2 - x1 + 1) as u32;
+            let crop_h = (y2 - y1 + 1) as u32;
+            (decompress_time, indices.len() as usize, Some((crop_w, crop_h)))
+        }
+        None => {
+            eprint!("Decompressing... ");
+            io::stderr().flush().unwrap();
+            let decompress_start = Instant::now();
+            let bit_data = DecompressFileData {}.process(compressed_data.clone())?;
+            let decompress_time = decompress_start.elapsed();
+
+            eprint!("Writing... ");
+            io::stderr().flush().unwrap();
+            write_bitdata_as_image(&bit_data, output)?;
+            eprintln!("done");
+
+            (decompress_time, bit_data.num_rows(), None)
+        }
+    };
 
     let original_size = std::fs::metadata(input)?.len();
     let decompressed_size = std::fs::metadata(output)?.len();
     let total_time = total_start.elapsed();
 
     println!("Decompress  {} → {}", input.display(), output.display());
-    println!(
-        "  Size     {}  ({} bytes)",
-        format_size(decompressed_size),
-        decompressed_size
-    );
+    if let Some((w, h)) = crop_dims {
+        println!("  Crop     {}x{} ({} grouped rows)", w, h, num_rows_decompressed);
+    } else {
+        println!(
+            "  Size     {}  ({} bytes)",
+            format_size(decompressed_size),
+            decompressed_size
+        );
+    }
     println!("  Time     {}", format_duration(total_time));
 
     if verbose {
@@ -651,17 +758,16 @@ fn decompress_image(input: &Path, output: &Path, verbose: bool) -> Result<(), En
             format_size(original_size),
             original_size
         );
-        if let BitDataReconstructionInfo::Image(ref recon) = bit_data.info.reconstruction {
-            println!(
-                "  Image: {}x{}, grouping {}x{}",
-                recon.width,
-                recon.height,
-                recon.pixel_grouping.width(),
-                recon.pixel_grouping.height()
-            );
-        }
+        println!(
+            "  Image: {}x{}, grouping {}x{}",
+            image_info.width,
+            image_info.height,
+            image_info.pixel_grouping.width(),
+            image_info.pixel_grouping.height()
+        );
         println!("  ─────────────────────────────");
         println!("  Timing:");
+        println!("    Load        {}", format_duration(load_time));
         println!("    Decompress  {}", format_duration(decompress_time));
         println!("    Total       {}", format_duration(total_time));
     }
@@ -680,9 +786,9 @@ fn write_analytics_csv(
     write!(file, "weight")?;
     let column_names: Vec<String> = match &metadata.reconstruction {
         BitDataReconstructionInfo::Tabular { column_names, .. } => column_names.clone(),
-        BitDataReconstructionInfo::Image(_) => {
-            (0..num_features).map(|i| format!("feature_{}", i)).collect()
-        }
+        BitDataReconstructionInfo::Image(_) => (0..num_features)
+            .map(|i| format!("feature_{}", i))
+            .collect(),
     };
     for name in &column_names {
         write!(file, ",{}", name)?;
@@ -851,8 +957,8 @@ fn main() {
             rows,
         } => decompress_tabular(&input, &output, rows, args.verbose),
 
-        Action::DecompressImage { input, output } => {
-            decompress_image(&input, &output, args.verbose)
+        Action::DecompressImage { input, output, crop } => {
+            decompress_image(&input, &output, args.verbose, crop)
         }
 
         Action::ShowAnalytics { input, output } => show_analytics(&input, &output, args.verbose),

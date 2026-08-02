@@ -26,7 +26,7 @@ pub use data::{
 };
 pub use decompression::{
     DecompressAnalytics, DecompressFileData, DecompressRandomAccessHandle, decompress_analytics,
-    decompress_file, write_bitdata_as_image,
+    decompress_file, write_bitdata_as_image, write_cropped_bitdata_as_image,
 };
 pub use encoding::{
     BaseTable, CompressedData, CondensedSamples, DeltaBaseTableData, DeviationData,
