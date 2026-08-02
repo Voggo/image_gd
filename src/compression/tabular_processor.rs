@@ -478,6 +478,13 @@ fn transform_float_column(
         .map_err(|e| cast_err(&name, e))?;
     let ca = casted.f64().map_err(|e| cast_err(&name, e))?;
 
+    if options.decimal_scale > MAX_DECIMAL_SCALE {
+        tracing::warn!(
+            "decimal_scale ({}) exceeds MAX_DECIMAL_SCALE ({}), using MAX_DECIMAL_SCALE instead",
+            options.decimal_scale,
+            MAX_DECIMAL_SCALE
+        );
+    }
     let decimal_scale = options.decimal_scale.min(MAX_DECIMAL_SCALE);
     let multiplier = 10f64.powi(decimal_scale as i32);
 
