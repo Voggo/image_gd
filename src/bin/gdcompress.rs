@@ -52,6 +52,14 @@ struct Args {
     #[argh(option, default = "String::from(\"precise\")")]
     base_counting: String,
 
+    /// encoding strategy: normal, rle, or huffman (default: normal for tabular, huffman for image)
+    #[argh(option)]
+    encoding: Option<String>,
+
+    /// delta base-table compression: on or off (default: off for tabular, on for image)
+    #[argh(option)]
+    base_compression: Option<String>,
+
     /// crop region for image decompression: "x1,y1,x2,y2" (upper-left, lower-right inclusive; .igd only)
     #[argh(option)]
     crop: Option<String>,
@@ -65,12 +73,16 @@ enum Action {
         float_scaling: FloatScalingMode,
         float_precision: u8,
         base_impl: BaseBitImpl,
+        encoding: EncodingMode,
+        base_compression: bool,
     },
     CompressImage {
         input: PathBuf,
         output: PathBuf,
         pixel_grouping: PixelGrouping,
         base_impl: BaseBitImpl,
+        encoding: EncodingMode,
+        base_compression: bool,
     },
     DecompressTabular {
         input: PathBuf,
@@ -86,6 +98,13 @@ enum Action {
         input: PathBuf,
         output: PathBuf,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EncodingMode {
+    Normal,
+    Rle,
+    Huffman,
 }
 
 fn parse_pixel_grouping(s: &str) -> Result<PixelGrouping, String> {
@@ -203,6 +222,29 @@ fn parse_crop(s: &str) -> Result<(u32, u32, u32, u32), String> {
     Ok((x1, y1, x2, y2))
 }
 
+fn parse_encoding(s: &str) -> Result<EncodingMode, String> {
+    match s.to_lowercase().as_str() {
+        "normal" => Ok(EncodingMode::Normal),
+        "rle" => Ok(EncodingMode::Rle),
+        "huffman" => Ok(EncodingMode::Huffman),
+        _ => Err(format!(
+            "invalid encoding '{}', expected: normal, rle, or huffman",
+            s
+        )),
+    }
+}
+
+fn parse_base_compression(s: &str) -> Result<bool, String> {
+    match s.to_lowercase().as_str() {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(format!(
+            "invalid base-compression '{}', expected: on or off",
+            s
+        )),
+    }
+}
+
 fn derive_output(input: &Path, target_ext: &str) -> PathBuf {
     let stem = input.file_stem().unwrap_or_else(|| input.as_os_str());
     let parent = input.parent().unwrap_or_else(|| Path::new("."));
@@ -249,12 +291,24 @@ fn detect_action(args: &Args) -> Result<Action, String> {
             let float_scaling = parse_float_scaling(&args.float_scaling)?;
             let float_precision = args.float_precision;
             let base_impl = parse_base_counting(&args.base_counting)?;
+            let encoding = args
+                .encoding
+                .as_deref()
+                .map(parse_encoding)
+                .unwrap_or(Ok(EncodingMode::Normal))?;
+            let base_compression = args
+                .base_compression
+                .as_deref()
+                .map(parse_base_compression)
+                .unwrap_or(Ok(false))?;
             Ok(Action::CompressTabular {
                 input,
                 output,
                 float_scaling,
                 float_precision,
                 base_impl,
+                encoding,
+                base_compression,
             })
         }
         "tgd" => {
@@ -315,11 +369,23 @@ fn detect_action(args: &Args) -> Result<Action, String> {
                 .unwrap_or_else(|| derive_output(&input, "igd"));
             let pixel_grouping = parse_pixel_grouping(&args.pixel_grouping)?;
             let base_impl = parse_base_counting(&args.base_counting)?;
+            let encoding = args
+                .encoding
+                .as_deref()
+                .map(parse_encoding)
+                .unwrap_or(Ok(EncodingMode::Huffman))?;
+            let base_compression = args
+                .base_compression
+                .as_deref()
+                .map(parse_base_compression)
+                .unwrap_or(Ok(true))?;
             Ok(Action::CompressImage {
                 input,
                 output,
                 pixel_grouping,
                 base_impl,
+                encoding,
+                base_compression,
             })
         }
         _ => Err(format!(
@@ -360,6 +426,8 @@ fn compress_tabular(
     float_scaling: FloatScalingMode,
     float_precision: u8,
     base_impl: BaseBitImpl,
+    encoding: EncodingMode,
+    base_compression: bool,
     verbose: bool,
 ) -> Result<(), EntroGdError> {
     let total_start = Instant::now();
@@ -398,17 +466,41 @@ fn compress_tabular(
     }
     .process(df)?;
 
-    let pipeline = Entropy {}
+    let base_pipeline = Entropy {}
         .then(GenCondensedSamples { m_max: 30 })
         .then(SelectBasesAdaptive {
             width_decay: 0.5,
             patience: 10,
             base_bit_impl: base_impl,
         })
-        .then(BuildBaseTable {})
-        .then(EncodeData {});
+        .then(BuildBaseTable {});
 
-    let compressed = pipeline.process(bit_data)?;
+    let compressed = match encoding {
+        EncodingMode::Normal => {
+            let enc = base_pipeline.then(EncodeData {});
+            if base_compression {
+                enc.then(DeltaEncodeBaseTableFixed {}).process(bit_data)?
+            } else {
+                enc.process(bit_data)?
+            }
+        }
+        EncodingMode::Rle => {
+            let enc = base_pipeline.then(EncodeDataOffsetRLE {});
+            if base_compression {
+                enc.then(DeltaEncodeBaseTableFixed {}).process(bit_data)?
+            } else {
+                enc.process(bit_data)?
+            }
+        }
+        EncodingMode::Huffman => {
+            let enc = base_pipeline.then(EncodeDataHuffman {});
+            if base_compression {
+                enc.then(DeltaEncodeBaseTableFixed {}).process(bit_data)?
+            } else {
+                enc.process(bit_data)?
+            }
+        }
+    };
     let compress_time = compress_start.elapsed();
 
     let save_start = Instant::now();
@@ -473,6 +565,8 @@ fn compress_image(
     output: &Path,
     pixel_grouping: PixelGrouping,
     base_impl: BaseBitImpl,
+    encoding: EncodingMode,
+    base_compression: bool,
     verbose: bool,
 ) -> Result<(), EntroGdError> {
     let total_start = Instant::now();
@@ -490,7 +584,7 @@ fn compress_image(
     io::stderr().flush().unwrap();
     let compress_start = Instant::now();
 
-    let pipeline = BuildImageBitDataSet {
+    let base_pipeline = BuildImageBitDataSet {
         colorspace: ImageColorSpace::SrgbWithLinearAlpha,
         color_model: ImageColorModel::YCoCgR,
         pixel_grouping,
@@ -503,11 +597,34 @@ fn compress_image(
         patience: 5,
         base_bit_impl: base_impl,
     })
-    .then(BuildSortedBaseTable {})
-    .then(EncodeDataHuffman {})
-    .then(DeltaEncodeBaseTableFixed {});
+    .then(BuildSortedBaseTable {});
 
-    let compressed = pipeline.process(image)?;
+    let compressed = match encoding {
+        EncodingMode::Normal => {
+            let enc = base_pipeline.then(EncodeData {});
+            if base_compression {
+                enc.then(DeltaEncodeBaseTableFixed {}).process(image)?
+            } else {
+                enc.process(image)?
+            }
+        }
+        EncodingMode::Rle => {
+            let enc = base_pipeline.then(EncodeDataOffsetRLE {});
+            if base_compression {
+                enc.then(DeltaEncodeBaseTableFixed {}).process(image)?
+            } else {
+                enc.process(image)?
+            }
+        }
+        EncodingMode::Huffman => {
+            let enc = base_pipeline.then(EncodeDataHuffman {});
+            if base_compression {
+                enc.then(DeltaEncodeBaseTableFixed {}).process(image)?
+            } else {
+                enc.process(image)?
+            }
+        }
+    };
     let compress_time = compress_start.elapsed();
 
     let save_start = Instant::now();
@@ -935,12 +1052,16 @@ fn main() {
             float_scaling,
             float_precision,
             base_impl,
+            encoding,
+            base_compression,
         } => compress_tabular(
             &input,
             &output,
             float_scaling,
             float_precision,
             base_impl,
+            encoding,
+            base_compression,
             args.verbose,
         ),
 
@@ -949,7 +1070,17 @@ fn main() {
             output,
             pixel_grouping,
             base_impl,
-        } => compress_image(&input, &output, pixel_grouping, base_impl, args.verbose),
+            encoding,
+            base_compression,
+        } => compress_image(
+            &input,
+            &output,
+            pixel_grouping,
+            base_impl,
+            encoding,
+            base_compression,
+            args.verbose,
+        ),
 
         Action::DecompressTabular {
             input,

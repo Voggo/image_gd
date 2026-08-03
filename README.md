@@ -71,6 +71,8 @@ The action (compress, decompress, or analytics) is **auto-detected from the inpu
 | `--float-precision`      | `9`        | Decimal places preserved when float scaling is on (tabular only) |
 | `--rows`                 | *(all)*    | Decompress only specific rows, e.g. `"0,5,10-20"` (tabular only) |
 | `--crop`                 | *(none)*   | Decompress a region of an image: `"x1,y1,x2,y2"` (`.igd` only) |
+| `--encoding`             | *(context)*| Encoding strategy: `normal`, `rle`, or `huffman` (default: `normal` for tabular, `huffman` for image) |
+| `--base-compression`     | *(context)*| Delta base-table compression: `on` or `off` (default: `off` for tabular, `on` for image) |
 | `--base-counting`        | `"precise"`| Base-bit counting strategy: `precise` or `approximate` |
 
 ### Examples
@@ -112,6 +114,16 @@ Decompress a cropped region of an image:
 ```bash
 gdcompress compressed/kodim10.igd --crop "100,50,399,349" -o crop.png
 # Decompresses only the 300x300 pixel region from (100,50) to (399,349)
+```
+
+Use a different encoding or base-table compression:
+
+```bash
+# Tabular with Huffman encoding and base-table delta compression
+gdcompress data/tabular/aarhus-citylab.csv --encoding huffman --base-compression on
+
+# Image with RLE encoding and no base-table compression
+gdcompress data/images/kodim10.png --encoding rle --base-compression off -o out.igd
 ```
 
 ## Benchmarks
